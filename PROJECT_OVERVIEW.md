@@ -1,7 +1,7 @@
 # JARVIS - Personal AI Assistant
 
-**Version:** 2.1.0 (Production Ready)
-**Last Updated:** February 17, 2026
+**Version:** 2.2.0 (Production Ready)
+**Last Updated:** February 18, 2026
 **Status:** ✅ Stable, Feature-Rich, Voice-Controlled
 
 ---
@@ -41,9 +41,11 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Speech Recognition** - Fine-tuned Whisper (CTranslate2, GPU-accelerated, 88%+ accuracy, Southern accent)
 - **Natural Language Understanding** - Semantic intent matching (sentence-transformers)
 - **Text-to-Speech** - Kokoro 82M (primary, CPU, fable+george blend) + Piper ONNX fallback
-- **LLM Intelligence** - Qwen 2.5-7B (Q5_K_M) via llama.cpp + Claude API fallback with quality gating
+- **LLM Intelligence** - Qwen 3-8B (Q5_K_M) via llama.cpp + Claude API fallback with quality gating
+- **Web Research** - Qwen 3-8B native tool calling + DuckDuckGo + trafilatura, multi-source synthesis
 - **Event-Driven Pipeline** - Coordinator with STT/TTS workers, streaming LLM, ack cache
-- **Conversation Windows** - Timer-based auto-close, multi-turn, noise filtering
+- **Gapless TTS Streaming** - StreamingAudioPipeline with single persistent aplay, background Kokoro generation
+- **Conversation Windows** - Timer-based auto-close, multi-turn, noise filtering, dismissal detection
 - **Console Mode** - Text/hybrid/speech modes with rich stats panel
 
 ### Skills (9 Active)
@@ -91,10 +93,13 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 
 ### Additional Systems
 - **Conversational Memory** - SQLite fact store + FAISS semantic search, recall, batch LLM extraction, proactive surfacing, forget/transparency
+- **Context Window** - Topic-segmented working memory, relevance-scored assembly, cross-session persistence
 - **User Profiles** - Speaker identification (resemblyzer d-vectors), dynamic honorifics, voice enrollment
 - **Google Calendar** - OAuth, event CRUD, incremental sync, background polling
 - **Cross-Session Memory** - Last 32 messages loaded from persistent history
 - **Health Check** - 5-layer system diagnostic (ANSI terminal report + voice summary)
+- **Hardware Failure Handling** - Startup retry, device monitoring, degraded mode, graceful recovery
+- **GitHub Publishing** - Automated redaction pipeline, PII verification, public repo sync
 
 ---
 
@@ -144,10 +149,10 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│  LLM (Fallback) - Qwen 2.5-7B via REST API              │
+│  LLM - Qwen 3-8B via REST API + Claude API fallback    │
 │  • Handles unmatched queries                            │
-│  • Conversational responses                             │
-│  • Technical reasoning                                  │
+│  • Web research via native tool calling                 │
+│  • Conversational responses + technical reasoning       │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -194,7 +199,7 @@ User: Hears response
 |-----------|-----------|---------|
 | **STT** | faster-whisper (CTranslate2, fine-tuned) | Speech recognition |
 | **TTS** | Kokoro 82M (primary) + Piper (fallback) | Speech synthesis |
-| **LLM** | Qwen 2.5-7B (Q5_K_M via llama.cpp) | Language understanding |
+| **LLM** | Qwen 3-8B (Q5_K_M via llama.cpp) + Claude API | Language understanding + web research |
 | **VAD** | WebRTC VAD | Voice activity detection |
 | **Wake Word** | Porcupine | Trigger detection |
 | **Embeddings** | sentence-transformers | Intent matching |
@@ -204,16 +209,20 @@ User: Hears response
 - **Python:** 3.12
 - **Service Manager:** systemd (user services)
 - **LLM Server:** llama-server (REST API)
-- **Storage:** 
+- **Storage:**
   - Code: `~/jarvis/`
   - Skills: `/mnt/storage/jarvis/skills/`
   - Models: `/mnt/models/` (4TB dedicated drive)
+  - Public repo: `~/jarvis-public/` → `github.com/InterGenJLU/jarvis`
 
 ### Key Libraries
-- `torch` - PyTorch for ML models
-- `transformers` - Hugging Face models
-- `sentence-transformers` - Semantic matching
+- `torch` (ROCm) - PyTorch for ML models (CPU-only for TTS)
+- `ctranslate2` - GPU-accelerated Whisper inference
+- `sentence-transformers` - Semantic intent matching
+- `kokoro` - Primary TTS engine (82M model)
 - `sounddevice` - Audio I/O
+- `playwright` - Headless web navigation
+- `faiss-cpu` - Vector search for conversational memory
 - `numpy` - Array operations
 - `requests` - HTTP client for LLM API
 - `pyyaml` - Configuration
@@ -237,7 +246,7 @@ User: Hears response
 
 ### Phase 3: Intelligence (Days 8-10)
 - ✅ Semantic intent matching (90% pattern reduction)
-- ✅ LLM integration (Mistral 7B, later migrated to Qwen 2.5-7B)
+- ✅ LLM integration (Mistral 7B → Qwen 2.5-7B → Qwen 3-8B)
 - ✅ Conversation context window
 - ✅ Intent confidence scoring
 
@@ -249,7 +258,7 @@ User: Hears response
 - ✅ Comprehensive documentation
 
 ### Phase 5: Major Upgrades (Feb 11) 🚀
-- ✅ **Qwen 2.5-7B LLM** (better reasoning)
+- ✅ **Qwen 3-8B LLM** (better reasoning)
 - ✅ **Custom Whisper training** (88%+ accuracy)
 - ✅ **Filesystem skill** (semantic file operations)
 - ✅ **Audio optimization** (no overflow)
@@ -275,7 +284,18 @@ User: Hears response
 - ✅ **User profile system (5 phases)** — honorific, ProfileManager, SpeakerIdentifier, pipeline, enrollment
 - ✅ **Honorific refactoring** — ~470 "sir" instances → dynamic `{honorific}` across 19 files
 - ✅ **Conversational memory (6 phases)** — SQLite facts, FAISS indexing, recall, batch extraction, proactive surfacing, forget/transparency
+- ✅ **Context window (4 phases)** — topic-segmented working memory, relevance-scored assembly, cross-session persistence
 - ✅ **System health check** — 5-layer diagnostic, ANSI terminal + voice summary
+- ✅ **Gapless TTS streaming** — StreamingAudioPipeline, single persistent aplay, zero-gap playback
+- ✅ **Hardware failure graceful degradation** — startup retry, device monitor, degraded mode
+
+### Phase 9: Web Research + Hardening (Feb 17-18) 🚀
+- ✅ **Web research (5 phases)** — Qwen 3-8B native tool calling + DuckDuckGo + trafilatura, multi-source synthesis
+- ✅ **Prescriptive prompt design** — explicit rules for Qwen tool-use decisions, 150/150 correct test decisions
+- ✅ **Streaming delivery fixes** — sentence-only chunking, per-chunk metric stripping, context flush on shutdown
+- ✅ **27 bug fixes** — ack collision, keyword greediness, dismissal detection, decimal TTS, aplay lazy open, chunker decimal split, and more
+- ✅ **Scoped TTS subprocess control** — replaced global `pkill -9` with tracked subprocess kill
+- ✅ **GitHub publishing system** — automated redaction, PII verification, public repo sync
 
 ---
 
@@ -310,13 +330,13 @@ Optimized for consumer hardware. No expensive GPUs required (though AMD GPU supp
 ## 🗺️ Roadmap
 
 ### Immediate
-- [ ] Enroll the user's voice (speaker ID)
-- [ ] Developer tools console testing (13 intents)
+- [x] ~~Enroll user voice (speaker ID)~~ — Done (Feb 16)
+- [x] ~~Developer tools console testing (13 intents)~~ — Done (Feb 15)
 - [ ] Whisper retraining from log analysis (scheduled Feb 21)
-- [ ] GitHub open source publication
+- [x] ~~GitHub open source publication~~ — Done (Feb 18)
 
 ### Short Term
-- [ ] Web Navigation Phase 3 (web research + LLM tool use)
+- [x] ~~Web Navigation Phase 3 (web research + LLM tool use)~~ — Done (Feb 18)
 - [ ] Audio recording skill
 - [ ] App launcher skill
 - [ ] Email skill (Gmail)
@@ -498,17 +518,18 @@ Include:
 
 ## 🏆 Achievements
 
-- ✅ Fully functional voice assistant
-- ✅ Custom accent training (first of its kind for personal use)
-- ✅ Production-ready architecture
-- ✅ Comprehensive documentation
-- ✅ Extensible skill system
-- ✅ Zero cloud dependencies
+- ✅ Fully functional voice assistant with gapless streaming TTS
+- ✅ Custom accent training (fine-tuned Whisper, Southern accent, 88%+)
+- ✅ Production-ready event-driven architecture
+- ✅ Web research via local LLM tool calling (no cloud required)
+- ✅ Conversational memory with semantic recall across sessions
+- ✅ Speaker identification and dynamic user profiles
+- ✅ 9 modular skills with semantic intent matching
+- ✅ Hardware failure graceful degradation
 - ✅ Sub-1-second skill responses (600-800ms)
-- ✅ 88%+ speech recognition accuracy (fine-tuned for Southern accent)
-- ✅ Natural conversation support
+- ✅ Open source on GitHub with automated PII redaction
 
-**JARVIS is now a legitimate, production-ready AI assistant!**
+**JARVIS is a legitimate, production-ready AI assistant!**
 
 ---
 
