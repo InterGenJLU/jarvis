@@ -283,18 +283,17 @@ class JarvisContinuous:
     def on_interrupt_detected(self):
         """Handle interruption during TTS playback"""
         self.logger.info("Interruption: Stopping TTS")
-        
+
         # Set interrupted flag
         self.tts_interrupted = True
-        
-        # Kill all aplay and piper processes
+
+        # Kill only our tracked audio subprocesses (scoped, not global pkill)
         try:
-            subprocess.run(["pkill", "-9", "aplay"], check=False)
-            subprocess.run(["pkill", "-9", "piper"], check=False)
+            self.tts.kill_active()
             self.logger.info("TTS processes killed")
         except Exception as e:
             self.logger.error(f"Failed to kill TTS: {e}")
-        
+
         # Wait a moment for audio buffers to drain
         import time
         time.sleep(0.5)

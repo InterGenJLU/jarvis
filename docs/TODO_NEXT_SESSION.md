@@ -133,6 +133,7 @@ Should produce: "Python is using the most CPU at the moment, sir, followed by Br
 
 | Feature | Date | Notes |
 |---------|------|-------|
+| Scoped TTS subprocess control | Feb 18 | Replaced global `pkill -9 aplay/piper` with tracked subprocess kill — `tts.kill_active()` |
 | Prescriptive Prompt + tool_choice=auto | Feb 18 | Rewrote vague prompt to explicit rules, removed tool_choice=required pattern matching. 150/150 test decisions correct (`8ae35ce`) |
 | Ack Cache Trim | Feb 18 | 7→4 neutral time-based phrases per the user's preference (`0b9c017`) |
 | Ack Cache Generic Fix | Feb 18 | Web-themed phrases replaced with generic for all-query ack cache (`046a275`) |

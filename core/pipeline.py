@@ -310,6 +310,7 @@ class StreamingAudioPipeline:
                             if aplay is None:
                                 self._error = "Failed to open audio device"
                                 break
+                            tts._track_proc(aplay)
 
                         aplay.stdin.write(pcm)
                         total_samples += len(audio_np)
@@ -375,6 +376,8 @@ class StreamingAudioPipeline:
                 aplay.wait()
 
         finally:
+            if aplay is not None:
+                tts._untrack_proc(aplay)
             self._done.set()
 
 

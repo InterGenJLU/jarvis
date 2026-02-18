@@ -28,6 +28,10 @@ class TextToSpeech:
         # TTS lock to prevent concurrent calls
         self._tts_lock = threading.Lock()
 
+        # Track active audio subprocesses for scoped interrupt/kill
+        self._active_procs: list = []
+        self._active_procs_lock = threading.Lock()
+
         # Track whether speak() was called (for caller detection)
         self._spoke = False
 
@@ -215,6 +219,7 @@ class TextToSpeech:
                 if aplay is None:
                     self.logger.error("Ack: failed to open audio device")
                     return False
+                self._track_proc(aplay)
                 aplay.stdin.write(pcm)
                 aplay.stdin.close()
                 # Set flag immediately — audio is committed to the pipe.
@@ -222,9 +227,12 @@ class TextToSpeech:
                 # otherwise the first LLM chunk races past the strip check.
                 self._ack_played = True
                 aplay.wait(timeout=5)
+                self._untrack_proc(aplay)
                 return aplay.returncode == 0
             except Exception as e:
                 self.logger.error(f"Ack playback failed: {e}")
+                if aplay is not None:
+                    self._untrack_proc(aplay)
                 return False
 
     @property
@@ -235,6 +243,35 @@ class TextToSpeech:
     def clear_ack_played(self):
         """Reset the ack-played flag (call after first LLM chunk is processed)."""
         self._ack_played = False
+
+    # ── Scoped subprocess control ─────────────────────────────────────
+
+    def _track_proc(self, proc):
+        """Register an audio subprocess for scoped interrupt control."""
+        with self._active_procs_lock:
+            self._active_procs.append(proc)
+
+    def _untrack_proc(self, proc):
+        """Unregister an audio subprocess after it finishes."""
+        with self._active_procs_lock:
+            try:
+                self._active_procs.remove(proc)
+            except ValueError:
+                pass
+
+    def kill_active(self):
+        """Kill all tracked audio subprocesses (scoped, no global pkill)."""
+        with self._active_procs_lock:
+            procs = list(self._active_procs)
+            self._active_procs.clear()
+        for proc in procs:
+            try:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                    self.logger.info(f"Killed audio subprocess pid={proc.pid}")
+            except Exception as e:
+                self.logger.warning(f"Failed to kill audio subprocess: {e}")
 
     # ── Kokoro speak ──────────────────────────────────────────────────
 
@@ -326,6 +363,7 @@ class TextToSpeech:
                     if aplay is None:
                         self.logger.error("Failed to open audio device after retries")
                         return False
+                    self._track_proc(aplay)
 
                 aplay.stdin.write(pcm)
                 total_samples += len(audio)
@@ -334,6 +372,7 @@ class TextToSpeech:
                 aplay.stdin.close()
         except BrokenPipeError:
             if aplay is not None:
+                self._untrack_proc(aplay)
                 aplay_err = aplay.stderr.read().decode().strip()
                 self.logger.error(f"aplay broken pipe (device busy?): {aplay_err}")
                 aplay.wait()
@@ -342,6 +381,7 @@ class TextToSpeech:
         if total_samples == 0:
             self.logger.error("Kokoro produced no audio")
             if aplay is not None:
+                self._untrack_proc(aplay)
                 aplay.stdin.close()
                 aplay.wait()
             return False
@@ -360,6 +400,8 @@ class TextToSpeech:
             aplay.kill()
             aplay.wait()
             return False
+        finally:
+            self._untrack_proc(aplay)
 
         if aplay_return != 0:
             aplay_err = aplay.stderr.read().decode()
@@ -393,6 +435,7 @@ class TextToSpeech:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
+            self._track_proc(piper)
 
             aplay_cmd = [
                 "aplay",
@@ -409,6 +452,7 @@ class TextToSpeech:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
+            self._track_proc(aplay)
 
             piper.stdin.write(text.encode("utf-8"))
             piper.stdin.close()
@@ -424,6 +468,9 @@ class TextToSpeech:
                 piper.kill()
                 piper.wait()
                 return False
+            finally:
+                self._untrack_proc(aplay)
+                self._untrack_proc(piper)
 
             piper_return = piper.wait(timeout=5)
 
