@@ -1,0 +1,60 @@
+name: web_navigation
+version: 1.0.0
+description: Web navigation and intelligent search - opens websites, searches multiple engines, tracks query history
+category: system
+author: Jarvis Team
+enabled: true
+priority: 5
+
+intents:
+  # General web search
+  - "search for {query}"
+  - "search {query}"
+  - "look up {query}"
+  - "find {query}"
+  - "google {query}"
+  
+  # YouTube searches
+  - "search youtube for {query}"
+  - "show me youtube results for {query}"
+  - "find {query} on youtube"
+  - "youtube {query}"
+  
+  # Amazon searches
+  - "search amazon for {query}"
+  - "look up {query} on amazon"
+  - "find {query} on amazon"
+  - "amazon {query}"
+  
+  # Wikipedia searches
+  - "search wikipedia for {query}"
+  - "look up {query} on wikipedia"
+  - "wikipedia {query}"
+  
+  # Reddit searches
+  - "search reddit for {query}"
+  - "find {query} on reddit"
+  - "reddit {query}"
+  
+  # Direct URLs
+  - "open {url}"
+  - "go to {url}"
+  - "navigate to {url}"
+  
+  # Repeat last search
+  - "show me that again"
+  - "open that again"
+
+keywords:
+  - search
+  - web
+  - google
+  - youtube
+  - amazon
+  - wikipedia
+  - reddit
+  - open
+  - website
+  - url
+
+dependencies: []

@@ -1,0 +1,22 @@
+name: reminders
+version: 1.0.0
+description: Set, manage, and track reminders with priority-based notifications
+category: personal
+author: Jarvis Team
+enabled: true
+priority: 7
+
+dependencies: []
+
+keywords:
+  - remind
+  - reminder
+  - schedule
+  - rundown
+  - snooze
+  - cancel
+  - delete
+  - list
+  - event
+  - defer
+  - acknowledge

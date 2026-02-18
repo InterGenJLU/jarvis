@@ -1,0 +1,24 @@
+name: time_info
+version: 1.0.0
+description: Provides current time and date information
+category: system
+author: Jarvis Team
+enabled: true
+priority: 5
+
+intents:
+  - "what time is it"
+  - "what's the time"
+  - "what is the time"
+  - "tell me the time"
+  - "current time"
+  - "time"
+  - "what's today's date"
+  - "what is today's date"
+  - "what's the date"
+  - "what is the date"
+  - "today's date"
+  - "current date"
+  - "what day is it"
+
+dependencies: []

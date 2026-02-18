@@ -1,0 +1,23 @@
+name: news
+version: 1.0.0
+description: News headline monitoring with RSS feeds, urgency classification, and voice delivery
+category: personal
+author: Jarvis Team
+enabled: true
+priority: 6
+
+dependencies: []
+
+keywords:
+  - news
+  - headlines
+  - articles
+  - breaking
+  - cyber
+  - tech
+  - update
+  - story
+  - stories
+  - latest
+  - current
+  - continue

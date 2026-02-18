@@ -1,0 +1,1555 @@
+"""
+Event pipeline for JARVIS — Phase 4 of the latency refactor.
+
+Provides queue-connected worker threads and a coordinator that replaces
+the ad-hoc callback architecture with a centralized event dispatch loop.
+
+Components:
+    Coordinator   — main-thread event loop, routes commands, manages state
+    STTWorker     — persistent transcription thread (replaces per-utterance daemons)
+    TTSWorker     — persistent playback thread (serializes all audio output)
+    EventBridge   — adapter that translates callback-based APIs into events
+    EventTTSProxy — drop-in TTS replacement for background services
+"""
+
+import queue
+import re
+import threading
+import time
+import logging
+import random
+from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
+from typing import Optional
+
+from core.events import Event, EventType, PipelineState
+from core.speech_chunker import SpeechChunker
+from core.logger import get_logger
+from core.honorific import get_honorific, set_honorific
+from core.llm_router import ToolCallRequest
+from core.web_research import WebResearcher, format_search_results
+
+
+# ---------------------------------------------------------------------------
+# STT Worker
+# ---------------------------------------------------------------------------
+
+class STTWorker(threading.Thread):
+    """Persistent STT worker. Reads audio from a queue, transcribes,
+    and emits TRANSCRIPTION_READY events to the coordinator.
+
+    When a SpeakerIdentifier is provided, speaker identification runs
+    in parallel with Whisper transcription via a ThreadPoolExecutor.
+    """
+
+    def __init__(self, stt, event_queue: queue.Queue, audio_queue: queue.Queue,
+                 config=None, speaker_id=None):
+        super().__init__(daemon=True, name="stt-worker")
+        self.stt = stt
+        self.event_queue = event_queue
+        self.audio_queue = audio_queue
+        self.speaker_id = speaker_id
+        self.logger = get_logger("pipeline.stt", config)
+
+    def run(self):
+        self.logger.info("STT worker started")
+        while True:
+            audio = self.audio_queue.get()
+            if audio is None:  # shutdown sentinel
+                self.logger.info("STT worker shutting down")
+                break
+            try:
+                sample_rate = 16000  # audio is always resampled to 16 kHz
+
+                if self.speaker_id is not None:
+                    # Run Whisper + speaker ID in parallel
+                    with ThreadPoolExecutor(max_workers=2) as pool:
+                        stt_future = pool.submit(self.stt.transcribe, audio, sample_rate)
+                        sid_future = pool.submit(self.speaker_id.identify, audio, sample_rate)
+                        text = stt_future.result()
+                        speaker_user_id, speaker_confidence = sid_future.result()
+                else:
+                    text = self.stt.transcribe(audio, sample_rate)
+                    speaker_user_id, speaker_confidence = None, 0.0
+
+                if text and text.strip():
+                    # Enriched event data when speaker ID is available
+                    if self.speaker_id is not None:
+                        data = {
+                            "text": text.strip(),
+                            "speaker_id": speaker_user_id,
+                            "speaker_confidence": speaker_confidence,
+                        }
+                    else:
+                        data = text.strip()
+
+                    self.event_queue.put(Event(
+                        EventType.TRANSCRIPTION_READY,
+                        data=data,
+                        source="stt_worker",
+                    ))
+                else:
+                    self.logger.info("Blank transcription")
+                    print("⚠️  (no speech detected)")
+            except Exception as e:
+                self.logger.error(f"STT worker error: {e}", exc_info=True)
+                self.event_queue.put(Event(
+                    EventType.ERROR,
+                    data={"source": "stt", "error": str(e)},
+                    source="stt_worker",
+                ))
+
+
+# ---------------------------------------------------------------------------
+# TTS Worker
+# ---------------------------------------------------------------------------
+
+class TTSWorker(threading.Thread):
+    """Persistent TTS worker. Reads speak requests from a queue and
+    plays them sequentially, emitting lifecycle events."""
+
+    def __init__(self, tts, event_queue: queue.Queue, tts_queue: queue.Queue,
+                 config=None):
+        super().__init__(daemon=True, name="tts-worker")
+        self.tts = tts
+        self.event_queue = event_queue
+        self.tts_queue = tts_queue
+        self.logger = get_logger("pipeline.tts", config)
+
+    def run(self):
+        self.logger.info("TTS worker started")
+        while True:
+            item = self.tts_queue.get()
+            if item is None:  # shutdown sentinel
+                self.logger.info("TTS worker shutting down")
+                break
+
+            event = item
+            done_event = None  # threading.Event for synchronous callers
+
+            # Emit pause + started
+            self.event_queue.put(Event(EventType.PAUSE_LISTENING, source="tts_worker"))
+            self.event_queue.put(Event(EventType.SPEECH_STARTED, source="tts_worker"))
+
+            try:
+                if event.type == EventType.SPEAK_ACK:
+                    self.tts.speak_ack()
+                elif event.type == EventType.SPEAK_REQUEST:
+                    data = event.data
+                    if isinstance(data, dict):
+                        done_event = data.get("done_event")
+                        text = data.get("text", "")
+                    else:
+                        text = str(data)
+                    if text:
+                        self.tts.speak(text)
+            except Exception as e:
+                self.logger.error(f"TTS worker error: {e}", exc_info=True)
+                self.event_queue.put(Event(
+                    EventType.ERROR,
+                    data={"source": "tts", "error": str(e)},
+                    source="tts_worker",
+                ))
+
+            # Emit finished
+            self.event_queue.put(Event(EventType.SPEECH_FINISHED, source="tts_worker"))
+
+            # Signal synchronous callers (EventTTSProxy)
+            if done_event is not None:
+                done_event.set()
+
+
+# ---------------------------------------------------------------------------
+# EventBridge — adapter for background services' listener callbacks
+# ---------------------------------------------------------------------------
+
+class EventBridge:
+    """Translates callback-based interactions into events.
+
+    Background services (reminder_manager, news_manager) were designed to
+    call listener.pause_listening() / resume_listening() directly.  This
+    adapter provides the same API but emits events instead, so the
+    coordinator can manage all listener state centrally.
+    """
+
+    def __init__(self, event_queue: queue.Queue):
+        self.event_queue = event_queue
+
+    def pause_listening(self):
+        self.event_queue.put(Event(EventType.PAUSE_LISTENING, source="bridge"))
+
+    def resume_listening(self):
+        self.event_queue.put(Event(EventType.RESUME_LISTENING, source="bridge"))
+
+    def open_conversation_window(self, duration: float = None):
+        self.event_queue.put(Event(
+            EventType.OPEN_CONVERSATION_WINDOW,
+            data=duration,
+            source="bridge",
+        ))
+
+
+# ---------------------------------------------------------------------------
+# EventTTSProxy — drop-in TTS for background services
+# ---------------------------------------------------------------------------
+
+class EventTTSProxy:
+    """Drop-in TTS replacement that routes through the TTS worker queue.
+
+    Background services (reminder_manager, news_manager) hold a reference
+    to this instead of the real TTS.  speak() blocks until playback
+    finishes, preserving the synchronous contract these services expect.
+    """
+
+    def __init__(self, tts_queue: queue.Queue, event_queue: queue.Queue):
+        self.tts_queue = tts_queue
+        self.event_queue = event_queue
+        self._spoke = False
+
+    # --- public API matching core.tts.TextToSpeech ---
+
+    def speak(self, text: str):
+        """Speak text via the TTS worker.  Blocks until playback finishes."""
+        self._spoke = True
+        done = threading.Event()
+        self.tts_queue.put(Event(
+            EventType.SPEAK_REQUEST,
+            data={"text": text, "done_event": done},
+            source="bg_service",
+        ))
+        done.wait(timeout=60)
+
+    def speak_ack(self):
+        """Play a pre-cached acknowledgment phrase (non-blocking)."""
+        self.tts_queue.put(Event(EventType.SPEAK_ACK, source="bg_service"))
+
+
+# ---------------------------------------------------------------------------
+# StreamingAudioPipeline — gapless multi-sentence TTS
+# ---------------------------------------------------------------------------
+
+class StreamingAudioPipeline:
+    """Background audio pipeline for gapless multi-sentence TTS.
+
+    Accepts sentence text via put(), generates audio via Kokoro,
+    and streams PCM to a single persistent aplay process.
+    Eliminates inter-sentence gaps by overlapping generation with playback.
+    """
+
+    def __init__(self, tts, logger):
+        self.tts = tts
+        self.logger = logger
+        self._text_queue = queue.Queue()
+        self._done = threading.Event()
+        self._error = None
+        self._total_chunks = 0
+        self._thread = None
+
+    def start(self):
+        """Start the background audio pipeline thread."""
+        self._done.clear()
+        self._error = None
+        self._total_chunks = 0
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="streaming-audio"
+        )
+        self._thread.start()
+
+    def put(self, text: str):
+        """Submit a sentence for audio generation and playback."""
+        self._text_queue.put(text)
+        self._total_chunks += 1
+
+    def finish(self):
+        """Signal no more sentences. Blocks until all audio finishes."""
+        self._text_queue.put(None)  # sentinel
+        self._done.wait(timeout=120)
+        if self._error:
+            self.logger.error(f"Streaming audio pipeline error: {self._error}")
+
+    def _run(self):
+        """Background thread: generate audio and stream to persistent aplay."""
+        import subprocess
+        import numpy as np
+
+        tts = self.tts
+        aplay = None
+        total_samples = 0
+        t0 = time.time()
+        first_chunk_logged = False
+
+        try:
+            with tts._tts_lock:
+                while True:
+                    text = self._text_queue.get()
+                    if text is None:
+                        break
+
+                    # Normalize
+                    if tts.normalization_enabled and tts.normalizer:
+                        text = tts.normalizer.normalize(text)
+
+                    if not text or not text.strip():
+                        continue
+
+                    # Stream Kokoro sub-chunks directly to aplay
+                    for gs, ps, audio in tts._kokoro_pipeline(
+                        text, voice=tts._kokoro_voice,
+                        speed=tts._kokoro_speed
+                    ):
+                        audio_np = np.asarray(audio)
+                        pcm = (audio_np * 32767).astype(
+                            np.int16
+                        ).tobytes()
+
+                        # Lazy-spawn aplay on first audio data
+                        # (not first sentence — gives PipeWire
+                        # Kokoro-generation time to release device)
+                        if aplay is None:
+                            aplay = tts._open_aplay()
+                            if aplay is None:
+                                self._error = "Failed to open audio device"
+                                break
+
+                        aplay.stdin.write(pcm)
+                        total_samples += len(audio_np)
+
+                        if not first_chunk_logged:
+                            first_chunk_logged = True
+                            self.logger.info(
+                                f"Kokoro first chunk in "
+                                f"{time.time() - t0:.3f}s"
+                            )
+
+                    if self._error:
+                        break
+
+                # All sentences done — close aplay
+                if aplay is not None:
+                    aplay.stdin.close()
+                    duration = total_samples / tts.sample_rate
+                    gen_time = time.time() - t0
+
+                    try:
+                        aplay_return = aplay.wait(
+                            timeout=max(15, duration + 5)
+                        )
+                    except subprocess.TimeoutExpired:
+                        self.logger.error("aplay timed out — killing")
+                        aplay.kill()
+                        aplay.wait()
+                        return
+
+                    if aplay_return != 0:
+                        aplay_err = aplay.stderr.read().decode().strip()
+                        self.logger.error(
+                            f"aplay error (code {aplay_return}): "
+                            f"{aplay_err}"
+                        )
+                    else:
+                        self.logger.info(
+                            f"Kokoro streamed {duration:.1f}s audio in "
+                            f"{gen_time:.3f}s across "
+                            f"{self._total_chunks} chunks "
+                            f"(RTF: {duration/gen_time:.1f}x)"
+                        )
+
+        except BrokenPipeError:
+            if aplay:
+                aplay_err = aplay.stderr.read().decode().strip()
+                self.logger.error(f"aplay broken pipe: {aplay_err}")
+                aplay.wait()
+            self._error = "aplay broken pipe"
+
+        except Exception as e:
+            self.logger.error(f"Streaming audio pipeline error: {e}")
+            import traceback
+            traceback.print_exc()
+            self._error = str(e)
+            if aplay and aplay.poll() is None:
+                try:
+                    aplay.stdin.close()
+                except Exception:
+                    pass
+                aplay.kill()
+                aplay.wait()
+
+        finally:
+            self._done.set()
+
+
+# ---------------------------------------------------------------------------
+# Coordinator — main-thread event loop
+# ---------------------------------------------------------------------------
+
+class Coordinator:
+    """Central event dispatcher running on the main thread.
+
+    Replaces the old ``while running: sleep(0.1)`` loop.  Receives typed
+    events from all workers and background services, makes routing
+    decisions, and manages conversation state.
+    """
+
+    def __init__(self, *, config, event_queue: queue.Queue,
+                 tts_queue: queue.Queue, listener, tts, llm,
+                 skill_manager, conversation, reminder_manager=None,
+                 news_manager=None, calendar_manager=None,
+                 profile_manager=None, memory_manager=None,
+                 context_window=None):
+        self.config = config
+        self.logger = get_logger("pipeline.coordinator", config)
+        self.event_queue = event_queue
+        self.tts_queue = tts_queue
+        self.listener = listener
+        self.tts = tts
+        self.llm = llm
+        self.skill_manager = skill_manager
+        self.conversation = conversation
+        self.reminder_manager = reminder_manager
+        self.news_manager = news_manager
+        self.calendar_manager = calendar_manager
+        self.profile_manager = profile_manager
+        self.memory_manager = memory_manager
+        self.context_window = context_window
+
+        # Web research (tool calling)
+        self.web_researcher = WebResearcher(config) if config.get("llm.local.tool_calling", False) else None
+        self._last_research_results = None
+        self._last_research_exchange = None  # {"query": ..., "answer": ...}
+
+        self.running = True
+        self.state = PipelineState.IDLE
+        self.wake_word = config.get("system.wake_word", "jarvis").lower()
+
+        # Session stats for health reporting
+        self.stats = {
+            'start_time': time.time(),
+            'commands_processed': 0,
+            'errors': 0,
+            'last_error_time': None,
+            'last_error_msg': None,
+        }
+
+        # Streaming LLM state
+        self._streaming_active = False
+        self._llm_responded = False
+
+        # Beep
+        from pathlib import Path
+        self.beep_path = Path(__file__).parent.parent / "assets" / "wake_word_detect.wav"
+
+        # Valid short replies (copied from continuous_listener for conversation noise filter)
+        self._valid_short_replies = {
+            "yes", "no", "yeah", "yep", "nah", "nope",
+            "thanks", "thank you", "okay", "ok", "please",
+            "stop", "cancel", "nevermind", "never mind",
+            "sure", "right", "correct", "wrong", "good", "great",
+            "hello", "hey", "hi", "bye", "goodbye",
+        }
+
+        # Bare acknowledgments that should NOT trigger web search during
+        # conversation windows.  If JARVIS just asked a question, these are
+        # answers; otherwise they're background noise to ignore.
+        self._bare_acknowledgments = {
+            "yeah", "yep", "yes", "yup", "uh huh", "uh-huh", "uhuh",
+            "ok", "okay", "sure", "right", "mm hmm", "mmhmm", "hmm",
+            "no", "nah", "nope",
+        }
+
+        # Tracks whether the last JARVIS response ended with a question
+        self._jarvis_asked_question = False
+
+    # ----- main loop -----
+
+    def run(self):
+        """Block on the event queue, dispatching events until shutdown."""
+        self.logger.info("Coordinator event loop started")
+        while self.running:
+            try:
+                event = self.event_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self._dispatch(event)
+            except Exception as e:
+                self.logger.error(f"Dispatch error for {event}: {e}", exc_info=True)
+                self.stats['errors'] += 1
+                self.stats['last_error_time'] = time.time()
+                self.stats['last_error_msg'] = f"dispatch: {e}"
+
+        self.logger.info("Coordinator event loop exited")
+
+    def shutdown(self):
+        self.running = False
+
+    def get_health(self) -> dict:
+        """Collect JARVIS internal state for health reporting."""
+        # Listener state
+        listener_health = {}
+        if self.listener:
+            listener_health = {
+                'running': getattr(self.listener, 'running', False),
+                'stream_active': getattr(self.listener, 'stream', None) is not None,
+                'device': getattr(self.listener, 'device', 'unknown'),
+                'conversation_active': getattr(self.listener, 'conversation_window_active', False),
+                'rnnoise': getattr(self.listener, 'use_rnnoise', False),
+            }
+
+        # Skills count
+        skills_loaded = 0
+        intent_count = 0
+        if self.skill_manager:
+            skills_loaded = len(getattr(self.skill_manager, 'skills', {}))
+            matcher = getattr(self.skill_manager, 'matcher', None)
+            if matcher and hasattr(matcher, 'get_intent_count'):
+                intent_count = matcher.get_intent_count()
+
+        # LLM state
+        llm_health = {}
+        if self.llm:
+            llm_health = {
+                'api_call_count': getattr(self.llm, 'api_call_count', 0),
+                'fallback_enabled': getattr(self.llm, 'fallback_enabled', False),
+                'local_model': getattr(self.llm, 'local_model_path', None) is not None,
+            }
+
+        return {
+            'running': self.running,
+            'state': self.state.name,
+            'stats': dict(self.stats),
+            'event_queue_size': self.event_queue.qsize(),
+            'tts_queue_size': self.tts_queue.qsize(),
+            'managers': {
+                'reminders': self.reminder_manager is not None,
+                'news': self.news_manager is not None,
+                'calendar': self.calendar_manager is not None,
+                'profiles': self.profile_manager is not None,
+                'memory': self.memory_manager is not None,
+                'context_window': self.context_window is not None,
+            },
+            'listener': listener_health,
+            'tts_engine': getattr(self.tts, 'engine', 'unknown'),
+            'llm': llm_health,
+            'skills_loaded': skills_loaded,
+            'semantic_intents': intent_count,
+        }
+
+    # ----- dispatch -----
+
+    def _dispatch(self, event: Event):
+        handlers = {
+            EventType.TRANSCRIPTION_READY: self._handle_transcription,
+            EventType.COMMAND_DETECTED: self._handle_command,
+            EventType.PAUSE_LISTENING: lambda e: self.listener.pause_listening(),
+            EventType.RESUME_LISTENING: self._handle_resume,
+            EventType.OPEN_CONVERSATION_WINDOW: lambda e: self.listener.open_conversation_window(e.data),
+            EventType.CLOSE_CONVERSATION_WINDOW: self._handle_close_conversation,
+            EventType.SPEECH_STARTED: self._handle_speech_started,
+            EventType.SPEECH_FINISHED: self._handle_speech_finished,
+            EventType.LLM_COMPLETE: self._handle_llm_complete,
+            EventType.SHUTDOWN: lambda e: self.shutdown(),
+            EventType.ERROR: self._handle_error,
+        }
+        handler = handlers.get(event.type)
+        if handler:
+            handler(event)
+        else:
+            self.logger.debug(f"Unhandled event: {event.type.name}")
+
+    # ----- transcription handling (extracted from _transcribe_and_check) -----
+
+    def _handle_transcription(self, event: Event):
+        """Process raw transcription text: validate, check wake word or
+        conversation window, and emit COMMAND_DETECTED if appropriate."""
+        # Extract text and speaker context from enriched or plain event data
+        if isinstance(event.data, dict):
+            raw_text = event.data["text"]
+            speaker_id = event.data.get("speaker_id")
+            speaker_confidence = event.data.get("speaker_confidence", 0.0)
+            self._apply_speaker_context(speaker_id, speaker_confidence)
+        else:
+            raw_text = event.data
+
+        text = raw_text.lower()
+
+        # Filter noise annotations
+        if (text.startswith('(') and text.endswith(')')) or \
+           (text.startswith('[') and text.endswith(']')):
+            self.logger.info(f"Ignoring noise annotation: {text}")
+            print("⚠️  Ignoring background noise")
+            return
+
+        # Filter garbage (repetitive chars)
+        unique_chars = set(text.replace(' ', '').replace('.', ''))
+        if len(unique_chars) <= 3 and len(text) > 5:
+            self.logger.info(f"Ignoring garbage transcription: {text[:30]}...")
+            return
+
+        self.logger.info(f"Transcribed: {text}")
+        print(f"📝 Heard: \"{text}\"")
+
+        # Conversation window — accept without wake word
+        if self.listener.conversation_window_active:
+            if self._is_conversation_noise(text):
+                self.logger.info(f"Filtered noise during conversation: '{text}'")
+                return
+            text = self._apply_command_corrections(text)
+            self.listener._cancel_conversation_timer()
+            self.logger.info(f"Response during conversation window: {text}")
+            self.event_queue.put(Event(
+                EventType.COMMAND_DETECTED,
+                data=text,
+                source="coordinator",
+            ))
+            return
+
+        # Wake word fuzzy match
+        words = text.split()
+        wake_word_found = False
+        matched_word = ""
+        for word in words:
+            word_clean = word.strip('.,!?;:')
+            similarity = SequenceMatcher(None, self.wake_word, word_clean).ratio()
+            if similarity >= 0.7:
+                self.logger.info(f"Wake word detected (similarity: {similarity:.2f}): {word_clean} in {text}")
+                wake_word_found = True
+                matched_word = word_clean
+                break
+
+        if wake_word_found:
+            corrected_text = text.replace(matched_word, self.wake_word)
+            self.logger.info(f"Corrected: '{text}' → '{corrected_text}'")
+            self.event_queue.put(Event(
+                EventType.COMMAND_DETECTED,
+                data=corrected_text,
+                source="coordinator",
+            ))
+        else:
+            self.logger.info(f"No wake word in: {text}")
+            print("❌ No wake word (ignored)")
+
+    # ----- command processing (extracted from on_command_detected) -----
+
+    def _handle_command(self, event: Event):
+        """Route a detected command through the priority chain."""
+        full_text = event.data
+        in_conversation = self.listener.conversation_window_active
+        self.state = PipelineState.PROCESSING_COMMAND
+        self.stats['commands_processed'] += 1
+
+        # Parse input
+        if in_conversation:
+            self.logger.info(f"Conversation continues: {full_text}")
+            print(f"\n💬 You said: {full_text}")
+            if self.wake_word in full_text.lower():
+                command = self._extract_command(full_text)
+            else:
+                command = full_text
+        else:
+            self.logger.info(f"Command detected: {full_text}")
+            print(f"\n🟡 Command detected: {full_text}")
+            command = self._extract_command(full_text)
+            # Fresh wake-word activation — reset memory surfacing window
+            # (covers conversation timeout path where no explicit close event fires)
+            if self.memory_manager:
+                self.memory_manager.reset_surfacing_window()
+
+        # Pause listening while we process
+        self.listener.pause_listening()
+
+        # Beep only for fresh wake-word activation
+        if not in_conversation and self.wake_word in full_text.lower():
+            self._play_beep()
+
+        if not command:
+            self.logger.warning("No command extracted")
+            self.listener.resume_listening()
+            self.state = PipelineState.IDLE
+            return
+
+        self.logger.info(f"Command: {repr(command.strip())}")
+
+        # --- Minimal greeting ---
+        if command.strip() == "jarvis_only" or len(command.strip()) <= 2:
+            self._handle_minimal_greeting(command, in_conversation)
+            return
+
+        # --- Process real command ---
+        print(f"📝 Processing: {command}")
+        self.logger.info(f"Processing command: {command}")
+        self.conversation.add_message("user", command)
+
+        skill_handled = False
+        response = ""
+        self.tts._spoke = False
+
+        # Priority 1: Rundown acceptance
+        if self.reminder_manager and self.reminder_manager.is_rundown_pending():
+            text_lower = command.strip().lower()
+            negative = any(w in text_lower for w in [
+                "no", "not now", "later", "not yet", "hold", "skip",
+            ])
+            if negative:
+                self.reminder_manager.defer_rundown()
+                response = f"Very well, {get_honorific()}. Just say 'daily rundown' whenever you're ready."
+                skill_handled = True
+                self._speak_and_wait(response)
+            else:
+                self.reminder_manager.deliver_rundown()
+                response = ""
+                skill_handled = True
+
+        # Priority 2: Reminder acknowledgment
+        if not skill_handled and self.reminder_manager and self.reminder_manager.is_awaiting_ack():
+            self.logger.info("Treating response as reminder acknowledgment")
+            self.reminder_manager.acknowledge_last()
+            h = get_honorific()
+            response = random.choice([
+                f"Very good, {h}.", f"Noted, {h}.",
+                f"Of course, {h}.", f"Absolutely, {h}.",
+            ])
+            skill_handled = True
+            self._speak_and_wait(response)
+
+        # Priority 2.5: Memory forget confirmation/cancellation (must intercept before skill routing)
+        if not skill_handled and self.memory_manager and self.memory_manager._pending_forget:
+            cmd_lower = command.lower().strip()
+            affirm = ("yes", "yeah", "yep", "go ahead", "do it", "proceed", "confirm", "sure", "remove", "delete")
+            deny = ("no", "nope", "nah", "cancel", "nevermind", "never mind", "keep", "don't")
+            if any(w in cmd_lower for w in affirm):
+                response = self.memory_manager.confirm_forget()
+                skill_handled = True
+                self.logger.info("Handled by memory forget confirmation")
+                self._speak_and_wait(response)
+            elif any(w in cmd_lower for w in deny):
+                response = self.memory_manager.cancel_forget()
+                skill_handled = True
+                self.logger.info("Handled by memory forget cancellation")
+                self._speak_and_wait(response)
+
+        # Priority 2.7: Dismissal detection (conversation window only)
+        # Catches "no thanks", "that's all", "I'm good" etc. before they
+        # leak to skill routing or LLM (which misreads them as commands).
+        if not skill_handled and in_conversation and self._is_dismissal(command):
+            h = get_honorific()
+            response = random.choice([
+                f"Very good, {h}.",
+                f"Of course, {h}.",
+                f"As you wish, {h}.",
+                f"Understood, {h}.",
+                f"Very well, {h}.",
+            ])
+            skill_handled = True
+            self._speak_and_wait(response)
+            self.listener.close_conversation_window()
+
+        # Priority 2.8: Bare acknowledgment filter (conversation window only)
+        # Words like "yeah", "ok", "uh huh" are noise UNLESS JARVIS just
+        # asked a question — in which case they're a legitimate answer.
+        if not skill_handled and in_conversation:
+            cmd_bare = command.strip().lower().rstrip(".,!?")
+            if cmd_bare in self._bare_acknowledgments:
+                if not self._jarvis_asked_question:
+                    self.logger.info(
+                        f"Dropping bare acknowledgment as noise: '{command}' "
+                        f"(jarvis_asked_question={self._jarvis_asked_question})"
+                    )
+                    self.listener.resume_listening()
+                    self.state = PipelineState.IDLE
+                    return
+                else:
+                    self.logger.info(
+                        f"Bare acknowledgment treated as answer: '{command}'"
+                    )
+
+        # Priority 3: Memory operations (recall, forget, transparency)
+        # Must run before skill routing — "forget my server ip" was matching network_info
+        if not skill_handled and self.memory_manager:
+            mm = self.memory_manager
+            user_id = getattr(self.conversation, 'current_user', None) or "primary_user"
+
+            if mm.is_forget_request(command):
+                response = mm.handle_forget(command, user_id)
+                skill_handled = True
+                self.logger.info("Handled by memory forget request")
+                self._speak_and_wait(response)
+                # Open follow-up window for confirmation
+                self.listener.open_conversation_window(30.0)
+
+            elif mm.is_transparency_request(command):
+                response = mm.handle_transparency(command, user_id)
+                skill_handled = True
+                self.logger.info("Handled by memory transparency")
+                self._speak_and_wait(response)
+                self.listener.open_conversation_window(15.0)
+
+            elif mm.is_fact_request(command):
+                # Fact already extracted by on_message() hook — just confirm
+                import random
+                response = random.choice([
+                    "Noted, sir.", "Very good, sir.", "Understood, sir.",
+                    "I'll remember that, sir.", "Committed to memory, sir.",
+                    "Duly noted, sir.", "Of course, sir.",
+                ])
+                skill_handled = True
+                self.logger.info("Handled by memory fact request")
+                self._speak_and_wait(response)
+
+            elif mm.is_recall_query(command):
+                recall_context = mm.handle_recall(command, user_id)
+                if recall_context:
+                    # Feed recall context + original query to LLM for natural response
+                    history = self.conversation.format_history_for_llm(include_system_prompt=False)
+                    augmented_prompt = (
+                        f"The user is asking you to recall something. Here is what you found "
+                        f"in your memory:\n\n{recall_context}\n\n"
+                        f"Now answer their question naturally based on this context. "
+                        f"If the context is relevant, reference it conversationally. "
+                        f"Be specific about dates and details."
+                    )
+                    response = self.llm.chat(
+                        user_message=f"{augmented_prompt}\n\nUser's question: {command}",
+                        conversation_history=history,
+                        max_tokens=200,
+                    )
+                    skill_handled = True
+                    self.logger.info("Handled by memory recall")
+                # If recall_context is None (nothing found), fall through to LLM
+                # which will naturally say "I don't recall that"
+
+        # Priority 3.5: Research follow-up ("tell me more about result 2")
+        # Must run BEFORE skill routing because "tell me more" semantically
+        # matches NewsSkill_continue_reading (score 0.58) and gets stolen.
+        if not skill_handled and self._last_research_results and in_conversation:
+            follow_up = self._detect_research_followup(command)
+            if follow_up is not None:
+                skill_handled = True
+                response = follow_up
+                # _detect_research_followup() speaks an interim ack which sets
+                # tts._spoke = True.  Reset it so the main flow speaks the
+                # actual synthesized answer.
+                self.tts._spoke = False
+
+        # Priority 4: Skill routing
+        if not skill_handled:
+            print("🔍 Checking skills...")
+            skill_response = self.skill_manager.execute_intent(command)
+            if skill_response:
+                response = skill_response
+                skill_handled = True
+                self.logger.info("Handled by skill")
+
+        # Priority 5: News article pull-up
+        if not skill_handled and self.news_manager and self.news_manager.get_last_read_url():
+            pull_phrases = ["pull that up", "show me that", "open that",
+                            "let me see", "show me the article", "open the article"]
+            if any(p in command.strip().lower() for p in pull_phrases):
+                url = self.news_manager.get_last_read_url()
+                browser = self.config.get("web_navigation.default_browser", "brave")
+                browser_cmd = f"{browser}-browser" if browser != "brave" else "brave-browser"
+                import subprocess as _sp
+                _sp.Popen([browser_cmd, url])
+                self.news_manager.clear_last_read()
+                h = get_honorific()
+                response = random.choice([
+                    f"Right away, {h}.",
+                    f"Pulling that up now, {h}.",
+                    f"Opening that article for you, {h}.",
+                ])
+                skill_handled = True
+                self._speak_and_wait(response)
+
+        # Priority 6: News continuation
+        if not skill_handled and self.news_manager and in_conversation:
+            continue_words = ["continue", "keep going", "more headlines",
+                              "go on", "read more"]
+            if any(w in command.strip().lower() for w in continue_words):
+                remaining = self.news_manager.get_unread_count()
+                if sum(remaining.values()) > 0:
+                    response = self.news_manager.read_headlines(limit=5)
+                    skill_handled = True
+                    self._speak_and_wait(response)
+                    self.listener.open_conversation_window(
+                        self.listener._extended_duration)
+
+
+        # Priority 7: LLM fallback (streaming)
+        if not skill_handled:
+            print("🤖 Thinking...")
+
+            # Context assembly — use context window if enabled, else flat history
+            context_messages = None
+            if self.context_window and self.context_window.enabled:
+                context_messages = self.context_window.assemble_context(command)
+            history = self.conversation.format_history_for_llm(include_system_prompt=False)
+
+            # Proactive memory surfacing — inject relevant facts into LLM context
+            memory_context = None
+            if self.memory_manager:
+                memory_context = self.memory_manager.get_proactive_context(
+                    command,
+                    user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
+                )
+
+            # Fact-extraction acknowledgment — let LLM know it just stored facts
+            llm_command = command
+            if self.memory_manager and self.memory_manager.last_extracted:
+                subjects = ", ".join(f.get("subject", "") for f in self.memory_manager.last_extracted)
+                llm_command = (
+                    f"{command}\n\n[System: you just stored these facts from the user's message: "
+                    f"{subjects}. Briefly acknowledge you'll remember this.]"
+                )
+
+            # Augment follow-ups with prior research context so the LLM
+            # knows what "the score" / "tell me more" / "try again" refers to.
+            # stream_with_tools strips all history, so we bake context into the query.
+            if in_conversation and self._last_research_exchange:
+                prev = self._last_research_exchange
+                llm_command = (
+                    f"Context: The user just asked '{prev['query']}' and I answered: "
+                    f"'{prev['answer']}'\n\n"
+                    f"Now the user asks: {llm_command}"
+                )
+
+            response = self._stream_llm_response(
+                llm_command, history, memory_context,
+                conversation_messages=context_messages,
+                raw_command=command,
+            )
+            if not response:
+                response = "I'm sorry, I'm having trouble processing that right now."
+
+        # Post-process: strip metric conversions Qwen sneaks in, then filler for history
+        response = self.llm.strip_metric(response, command) if response else response
+        stored_response = self.llm.strip_filler(response) if response else response
+        self.conversation.add_message("assistant", stored_response)
+        print(f"💬 Jarvis: {response}")
+        if not self.tts._spoke:
+            self._speak_and_wait(response)
+
+        # Track whether JARVIS asked a question — affects how bare
+        # acknowledgments ("yeah", "ok") are handled in the next turn.
+        self._jarvis_asked_question = bool(
+            response and response.rstrip().endswith("?")
+        )
+
+        # Follow-up window — use full spoken response so question detection works
+        if self.conversation.request_follow_up:
+            duration = self.conversation.request_follow_up
+            self.conversation.request_follow_up = None
+            self.listener.open_conversation_window(duration)
+        else:
+            self._manage_conversation_window(response, in_conversation)
+
+        # Stats and resume
+        stats = self.conversation.get_conversation_stats()
+        print(f"\n📊 Session: {stats['session_user_messages']} user, "
+              f"{stats['session_assistant_messages']} assistant messages\n")
+        self.listener.resume_listening()
+        self.state = PipelineState.IDLE
+
+    # ----- minimal greeting -----
+
+    def _handle_minimal_greeting(self, command: str, in_conversation: bool):
+        self.logger.info("Minimal greeting - just wake word")
+        if self.reminder_manager and self.reminder_manager.has_rundown_mention():
+            self.reminder_manager.clear_rundown_mention()
+            response = f"Good morning, {get_honorific()}. I have your daily rundown whenever you're ready."
+        else:
+            h = get_honorific()
+            responses = [
+                f"At your service, {h}.",
+                f"How may I assist you, {h}?",
+                f"You rang, {h}?",
+                f"I'm listening, {h}.",
+                f"Ready when you are, {h}.",
+                f"Standing by, {h}.",
+            ]
+            response = random.choice(responses)
+
+        self.conversation.add_message("user", "jarvis")
+        if response:
+            self.conversation.add_message("assistant", response)
+            print(f"💬 Jarvis: {response}")
+            self._speak_and_wait(response)
+
+        self.listener.open_conversation_window(self.listener._extended_duration)
+        self.listener.resume_listening()
+        self.state = PipelineState.IDLE
+
+    # ----- streaming LLM -----
+
+    def _stream_llm_response(self, command: str, history: str,
+                              memory_context: str = None,
+                              conversation_messages: list = None,
+                              raw_command: str = None) -> str:
+        """Stream LLM response with first-chunk quality gating and tool calling.
+
+        Streams tokens from Qwen, accumulates into sentence chunks,
+        and speaks each chunk via a persistent aplay process for
+        gapless multi-sentence playback.
+
+        When tool calling is enabled, the LLM may request a web_search
+        tool call instead of generating text. The pipeline will execute
+        the search, feed results back, and stream the synthesized answer.
+
+        Args:
+            command: The (possibly augmented) text to send to the LLM.
+            raw_command: The original user query before context augmentation.
+                         Used for tool_choice regex and research exchange storage.
+                         Falls back to command if not provided.
+        """
+        if raw_command is None:
+            raw_command = command
+        chunker = SpeechChunker()
+        full_response = ""
+        chunks_spoken = 0
+        first_chunk_checked = False
+
+        # Fire ack timer in case streaming is slow to start
+        ack_timer = threading.Timer(0.3, self._play_ack_if_still_thinking)
+        self._llm_responded = False
+        ack_timer.daemon = True
+        ack_timer.start()
+
+        # Gapless audio pipeline (Kokoro only; Piper falls back to blocking)
+        use_pipeline = (self.tts.engine == "kokoro")
+        audio_pipeline = None
+
+        # Choose tool-aware or plain streaming
+        use_tools = self.llm.tool_calling and self.web_researcher
+
+        try:
+            pending_chunk = None
+            tool_call_request = None
+
+            # --- Phase A: stream from LLM (may yield ToolCallRequest) ---
+            token_source = (
+                self.llm.stream_with_tools(
+                    user_message=command,
+                    conversation_history=history,
+                    memory_context=memory_context,
+                    conversation_messages=conversation_messages,
+                    raw_command=raw_command,
+                ) if use_tools else
+                self.llm.stream(
+                    user_message=command,
+                    conversation_history=history,
+                    memory_context=memory_context,
+                    conversation_messages=conversation_messages,
+                )
+            )
+
+            for item in token_source:
+                # Tool call sentinel — break to Phase B
+                if isinstance(item, ToolCallRequest):
+                    tool_call_request = item
+                    if not self._llm_responded:
+                        self._llm_responded = True
+                        ack_timer.cancel()
+                    break
+
+                # Regular token
+                token = item
+                if not self._llm_responded:
+                    self._llm_responded = True
+                    ack_timer.cancel()
+
+                full_response += token
+                chunk = chunker.feed(token)
+
+                if chunk:
+                    chunks_spoken, first_chunk_checked, pending_chunk, audio_pipeline = \
+                        self._process_speech_chunk(
+                            chunk, command, history, memory_context,
+                            conversation_messages, chunks_spoken,
+                            first_chunk_checked, pending_chunk,
+                            audio_pipeline, use_pipeline,
+                        )
+                    if chunks_spoken == -1:  # quality gate failed
+                        return pending_chunk  # contains fallback response
+
+            # --- Phase B: handle tool call if requested ---
+            if tool_call_request:
+                self.logger.info(
+                    f"🔍 Web search requested: {tool_call_request.arguments}"
+                )
+                print(f"🔍 Searching: {tool_call_request.arguments.get('query', '')}")
+
+                # No interim ack here — the 0.3s ack timer already fires
+                # one of the curated phrases before the tool call arrives.
+
+                # Execute the search
+                if tool_call_request.name == "web_search":
+                    query = tool_call_request.arguments.get("query", command)
+                    results = self.web_researcher.search(query)
+                    self._last_research_results = results
+
+                    # Fetch page content from top 3 results for richer synthesis.
+                    # Multiple sources let the LLM cross-reference and pick the best info.
+                    page_sections = []
+                    for r in results[:3]:
+                        url = r.get("url", "")
+                        if not url:
+                            continue
+                        page_text = self.web_researcher.fetch_page(url, max_chars=2000)
+                        if page_text and len(page_text) > 300:
+                            page_sections.append(
+                                f"[{r['title']}] ({url}):\n{page_text}"
+                            )
+
+                    page_content = ""
+                    if page_sections:
+                        page_content = "\n\nFull article content:\n\n" + \
+                            "\n\n---\n\n".join(page_sections)
+
+                    tool_result = format_search_results(results) + page_content
+                    print(f"📋 Found {len(results)} results")
+                else:
+                    tool_result = f"Unknown tool: {tool_call_request.name}"
+
+                # Stream synthesized answer from tool results
+                for token in self.llm.continue_after_tool_call(
+                    tool_call_request, tool_result
+                ):
+                    if not self._llm_responded:
+                        self._llm_responded = True
+
+                    full_response += token
+                    chunk = chunker.feed(token)
+
+                    if chunk:
+                        chunks_spoken, first_chunk_checked, pending_chunk, audio_pipeline = \
+                            self._process_speech_chunk(
+                                chunk, command, history, memory_context,
+                                conversation_messages, chunks_spoken,
+                                first_chunk_checked, pending_chunk,
+                                audio_pipeline, use_pipeline,
+                            )
+                        if chunks_spoken == -1:
+                            return pending_chunk
+
+            # Combine buffered last chunk + flush remnant, strip filler, then speak
+            remaining = chunker.flush()
+            final_text = (pending_chunk or "") + (" " + remaining if remaining else "")
+
+            if final_text.strip():
+                if not first_chunk_checked:
+                    quality_issue = self.llm._check_response_quality(final_text, command)
+                    if quality_issue:
+                        self.logger.warning(
+                            f"Streaming quality gate failed ({quality_issue}): "
+                            f"'{final_text[:60]}' — falling back to sync chat()"
+                        )
+                        if audio_pipeline:
+                            audio_pipeline.finish()
+                        return self.llm.chat(
+                            user_message=command,
+                            conversation_history=history,
+                            memory_context=memory_context,
+                            conversation_messages=conversation_messages,
+                        )
+                final_text = self.llm.strip_filler(self.llm.strip_metric(final_text, command))
+                if final_text.strip():
+                    if audio_pipeline:
+                        audio_pipeline.put(final_text)
+                    else:
+                        self._speak_and_wait(final_text)
+                    chunks_spoken += 1
+
+            # Wait for all audio to finish playing
+            if audio_pipeline:
+                audio_pipeline.finish()
+
+        except Exception as e:
+            self.logger.error(f"Streaming LLM error: {e}")
+            self._llm_responded = True
+            ack_timer.cancel()
+            if audio_pipeline:
+                audio_pipeline.finish()
+            if not full_response:
+                return self.llm.chat(
+                    user_message=command,
+                    conversation_history=history,
+                    memory_context=memory_context,
+                    conversation_messages=conversation_messages,
+                )
+
+        # Cancel ack timer if stream was empty
+        if not self._llm_responded:
+            self._llm_responded = True
+            ack_timer.cancel()
+
+        if chunks_spoken > 0:
+            self.logger.info(f"Streamed LLM response in {chunks_spoken} chunks")
+            self.tts._spoke = True
+
+        # Extended conversation window after research answers
+        if tool_call_request:
+            self.conversation.request_follow_up = 15.0
+            # Store the exchange so follow-ups have context.
+            # Use raw_command (not the augmented command) to prevent nested
+            # context wrapping on successive follow-ups.
+            self._last_research_exchange = {
+                "query": raw_command,
+                "answer": full_response,
+            }
+
+        return full_response
+
+    def _process_speech_chunk(self, chunk, command, history, memory_context,
+                              conversation_messages, chunks_spoken,
+                              first_chunk_checked, pending_chunk,
+                              audio_pipeline, use_pipeline):
+        """Process a completed sentence chunk for speech.
+
+        Returns updated (chunks_spoken, first_chunk_checked, pending_chunk, audio_pipeline).
+        On quality gate failure, returns (-1, ..., fallback_response, ...).
+        """
+        if not first_chunk_checked:
+            first_chunk_checked = True
+            quality_issue = self.llm._check_response_quality(chunk, command)
+            if quality_issue:
+                self.logger.warning(
+                    f"Streaming quality gate failed ({quality_issue}): "
+                    f"'{chunk[:60]}' — falling back to sync chat()"
+                )
+                fallback = self.llm.chat(
+                    user_message=command,
+                    conversation_history=history,
+                    memory_context=memory_context,
+                    conversation_messages=conversation_messages,
+                )
+                return -1, first_chunk_checked, fallback, audio_pipeline
+
+        if chunks_spoken == 0 and pending_chunk is None:
+            # First chunk — strip redundant opener if ack already played
+            if self.tts.ack_played:
+                chunk = self._strip_ack_opener(chunk)
+                self.tts.clear_ack_played()
+                if not chunk:
+                    return chunks_spoken, first_chunk_checked, pending_chunk, audio_pipeline
+            processed = self.llm.strip_metric(chunk, command)
+            self.listener.speaking = True
+            if use_pipeline:
+                audio_pipeline = StreamingAudioPipeline(
+                    self.tts, self.logger
+                )
+                audio_pipeline.start()
+                audio_pipeline.put(processed)
+            else:
+                self._speak_and_wait(processed)
+            chunks_spoken += 1
+        else:
+            # Buffer subsequent chunks; submit the previous one
+            if pending_chunk:
+                processed = self.llm.strip_metric(pending_chunk, command)
+                if audio_pipeline:
+                    audio_pipeline.put(processed)
+                else:
+                    self._speak_and_wait(processed)
+                chunks_spoken += 1
+            pending_chunk = chunk
+
+        return chunks_spoken, first_chunk_checked, pending_chunk, audio_pipeline
+
+    # ----- research follow-up -----
+
+    def _detect_research_followup(self, command: str) -> Optional[str]:
+        """Detect and handle follow-up requests about previous search results.
+
+        Matches patterns like "tell me more about result 2", "what does
+        that article say?", "open result 3".
+
+        Returns:
+            LLM-synthesized response based on full page content, or None.
+        """
+        cmd = command.strip().lower()
+        results = self._last_research_results
+        if not results:
+            return None
+
+        # Match "result N", "number N", "option N", "#N"
+        import re
+        num_match = re.search(r'(?:result|number|option|#)\s*(\d+)', cmd)
+        if num_match:
+            idx = int(num_match.group(1)) - 1
+            if 0 <= idx < len(results):
+                url = results[idx]["url"]
+                title = results[idx]["title"]
+                self.logger.info(f"Research follow-up: fetching result {idx+1}: {url}")
+                print(f"📄 Fetching: {title}")
+
+                h = get_honorific()
+                self._speak_and_wait(f"Pulling up that article now, {h}.")
+
+                content = self.web_researcher.fetch_page(url, max_chars=4000)
+                if not content:
+                    return f"I'm sorry, {h}, I wasn't able to retrieve that page."
+
+                # Feed to LLM for synthesis
+                history = self.conversation.format_history_for_llm(
+                    include_system_prompt=False
+                )
+                prompt = (
+                    f"The user asked about a search result. Here is the full article "
+                    f"content from \"{title}\":\n\n{content}\n\n"
+                    f"Summarize the key information from this article, focusing on "
+                    f"what the user was originally asking about. Be thorough but concise."
+                )
+                response = self.llm.chat(
+                    user_message=f"{prompt}\n\nUser's request: {command}",
+                    conversation_history=history,
+                    max_tokens=400,
+                )
+                self.listener.open_conversation_window(15.0)
+                return response
+
+        # Generic follow-up about the article ("what does it say?", "tell me more")
+        more_phrases = ["tell me more", "more about that", "what does it say",
+                        "elaborate", "go into detail", "expand on that"]
+        if any(p in cmd for p in more_phrases) and len(results) > 0:
+            url = results[0]["url"]
+            title = results[0]["title"]
+            self.logger.info(f"Research follow-up (generic): fetching {url}")
+            print(f"📄 Fetching: {title}")
+
+            h = get_honorific()
+            follow_up_acks = [
+                f"Pulling up more info, {h}, please give me a moment.",
+                f"I'll dig up a bit more for you, {h}, give me a moment.",
+                f"Let me see what else I can find, {h}, one moment.",
+                f"I'll see what else I can find on it, {h}, one moment.",
+                f"I'll check to see what else there is on that, {h}, one moment.",
+                f"Let me look, {h}, I'll see what else I can find, one moment.",
+                f"Let me look into that, {h}, please give me a moment.",
+            ]
+            self._speak_and_wait(random.choice(follow_up_acks))
+
+            content = self.web_researcher.fetch_page(url, max_chars=4000)
+            if not content:
+                return f"I'm sorry, {h}, I wasn't able to retrieve that page."
+
+            history = self.conversation.format_history_for_llm(
+                include_system_prompt=False
+            )
+            prompt = (
+                f"The user wants more detail about this article: \"{title}\"\n\n"
+                f"Full content:\n{content}\n\n"
+                f"Provide a thorough but spoken-word-friendly summary."
+            )
+            response = self.llm.chat(
+                user_message=f"{prompt}\n\nUser's request: {command}",
+                conversation_history=history,
+                max_tokens=400,
+            )
+            self.listener.open_conversation_window(15.0)
+            return response
+
+        return None
+
+    # ----- TTS helpers -----
+
+    def _speak_and_wait(self, text: str):
+        """Speak text synchronously (blocks until playback finishes).
+
+        For the coordinator thread this is fine — we don't need to process
+        other events while speaking a response to the current command.
+        """
+        self.listener.speaking = True
+        self.tts.speak(text)
+
+    # Regex to strip redundant LLM opening phrases when ack already played
+    _ACK_OPENER_RE = re.compile(
+        r'^(Certainly|Of course|Very well|Right away|One moment|Absolutely|Sure thing)'
+        r',?\s*(?:sir|ma\'am|miss)\.?\s*',
+        re.IGNORECASE,
+    )
+
+    def _play_ack_if_still_thinking(self):
+        """Timer callback — plays ack if LLM hasn't responded yet."""
+        if not self._llm_responded:
+            self.tts.speak_ack()
+
+    def _strip_ack_opener(self, text: str) -> str:
+        """Strip leading ack phrase from LLM text if ack was already spoken."""
+        stripped = self._ACK_OPENER_RE.sub('', text)
+        if stripped != text:
+            # Capitalize the new leading character
+            stripped = stripped.lstrip()
+            if stripped:
+                stripped = stripped[0].upper() + stripped[1:]
+            self.logger.info(f"Stripped ack opener: '{text[:40]}' → '{stripped[:40]}'")
+        return stripped
+
+    def _play_beep(self):
+        """Play wake-word acknowledgment beep."""
+        try:
+            if not self.beep_path.exists():
+                return
+            import subprocess
+            audio_device = self.config.get("audio.output_device", "plughw:0,0")
+            subprocess.run(
+                ["aplay", "-D", audio_device, str(self.beep_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to play beep: {e}")
+
+    # ----- dismissal detection -----
+
+    _DISMISSAL_PHRASES = frozenset({
+        "no", "no thanks", "no thank you", "nah", "nope",
+        "not right now", "not at the moment", "not now",
+        "that's all", "that's it", "that'll be all", "that will be all",
+        "i'm good", "i'm fine", "all good", "all set",
+        "nothing", "nothing else", "nothing for now",
+        "never mind", "nevermind", "maybe later",
+    })
+
+    def _is_dismissal(self, command: str) -> bool:
+        """Detect short dismissal phrases during a conversation window."""
+        text = command.strip().lower().rstrip(".!,")
+        if len(text.split()) > 8:
+            return False
+        if text in self._DISMISSAL_PHRASES:
+            return True
+        # "no, that's all" / "nah, I'm good" — check after the comma
+        if text.startswith(("no,", "nah,", "nope,")):
+            rest = text.split(",", 1)[1].strip()
+            if not rest or rest in self._DISMISSAL_PHRASES:
+                return True
+        return False
+
+    # ----- conversation helpers -----
+
+    def _handle_close_conversation(self, event: Event):
+        """Handle explicit conversation window close + reset memory surfacing."""
+        self.listener.close_conversation_window()
+        if self.memory_manager:
+            self.memory_manager.reset_surfacing_window()
+        if self.context_window:
+            self.context_window.reset()
+        # Clear research results cache — no longer relevant
+        self._last_research_results = None
+        self._last_research_exchange = None
+        self._jarvis_asked_question = False
+        if self.web_researcher:
+            self.web_researcher.clear_cache()
+
+    def _manage_conversation_window(self, response: str, was_in_conversation: bool):
+        """Decide whether to open/extend the conversation window."""
+        if was_in_conversation:
+            if self.conversation.should_open_follow_up_window(response):
+                duration = self.listener._extended_duration
+            else:
+                duration = self.listener._default_duration
+            self.listener.open_conversation_window(duration)
+        elif self.conversation.should_open_follow_up_window(response):
+            self.listener.open_conversation_window(self.listener._extended_duration)
+        else:
+            self.listener.open_conversation_window(self.listener._default_duration)
+
+    def _extract_command(self, full_text: str) -> str:
+        """Extract command text from transcription (remove wake word)."""
+        import string
+        text_lower = full_text.lower()
+        wake_pos = text_lower.find(self.wake_word)
+
+        if wake_pos == -1:
+            return full_text.strip()
+
+        before = full_text[:wake_pos].strip()
+        after = full_text[wake_pos + len(self.wake_word):].strip()
+
+        before = before.strip(string.punctuation + ' ')
+        after = after.strip(string.punctuation + ' ')
+
+        if after:
+            return after
+        elif before:
+            return before
+        else:
+            return "jarvis_only"
+
+    # ----- noise / correction helpers (from continuous_listener) -----
+
+    def _is_conversation_noise(self, text: str) -> bool:
+        """Check if text during conversation window is likely noise."""
+        if len(text) < 2:
+            return True
+        unique_chars = set(text.replace(' ', ''))
+        if len(unique_chars) <= 3 and len(text) > 5:
+            return True
+        words = text.strip().split()
+        if len(words) == 1 and words[0] not in self._valid_short_replies:
+            if len(words[0]) < 4:
+                return True
+        return False
+
+    def _apply_command_corrections(self, text: str) -> str:
+        """Apply corrections for common command mishearings."""
+        import re
+        if re.match(r'^i (was|analyzed)\s+', text, re.IGNORECASE):
+            return re.sub(r'^i (was|analyzed)\s+', 'analyze ', text, flags=re.IGNORECASE)
+        if text.lower().startswith("i'm "):
+            return "analyze " + text[4:]
+        return text
+
+    # ----- speaker context -----
+
+    def _apply_speaker_context(self, speaker_id: Optional[str], confidence: float):
+        """Set honorific and conversation user based on speaker identification."""
+        if speaker_id and self.profile_manager:
+            honorific = self.profile_manager.get_honorific_for(speaker_id)
+            set_honorific(honorific)
+            self.conversation.current_user = speaker_id
+            self.logger.info(
+                f"Speaker identified: {speaker_id} (confidence={confidence:.3f}, "
+                f"honorific={honorific})"
+            )
+        elif speaker_id is None and self.profile_manager:
+            # Unknown speaker — keep current honorific (default "sir")
+            self.logger.debug(f"Speaker unknown (confidence={confidence:.3f})")
+
+    # ----- resume handler -----
+
+    def _handle_resume(self, event: Event):
+        """Handle RESUME_LISTENING — suppressed while streaming is active."""
+        if self._streaming_active:
+            self.logger.debug("Suppressing resume — streaming active")
+            return
+        self.listener.resume_listening()
+
+    # ----- speech lifecycle -----
+
+    def _handle_speech_started(self, event: Event):
+        self.logger.debug("Speech started")
+
+    def _handle_speech_finished(self, event: Event):
+        self.logger.debug("Speech finished")
+
+    # ----- LLM complete -----
+
+    def _handle_llm_complete(self, event: Event):
+        """Handle LLM streaming completion."""
+        self._streaming_active = False
+        self.logger.info("LLM streaming complete")
+
+    # ----- error handling -----
+
+    def _handle_error(self, event: Event):
+        data = event.data or {}
+        source = data.get("source", "unknown")
+        error = data.get("error", "unknown error")
+        self.logger.error(f"Pipeline error from {source}: {error}")
+
+        self.stats['errors'] += 1
+        self.stats['last_error_time'] = time.time()
+        self.stats['last_error_msg'] = f"{source}: {error}"
+
+        if source == "tts":
+            # TTS failure — ensure listening resumes
+            self.listener.resume_listening()

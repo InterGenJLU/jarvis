@@ -1,0 +1,24 @@
+name: developer_tools
+version: 1.0.0
+description: Voice/text-driven Linux command execution with safety guardrails and visual output
+category: system
+author: Jarvis Team
+enabled: true
+priority: 5
+
+intents: []
+
+keywords:
+  - git
+  - repo
+  - commit
+  - branch
+  - diff
+  - codebase
+  - grep
+  - pip
+  - health check
+  - diagnostic
+  - status report
+
+dependencies: []

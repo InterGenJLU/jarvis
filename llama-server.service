@@ -1,0 +1,20 @@
+[Unit]
+Description=Llama Server for JARVIS (Qwen LLM)
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=/home/user/llama.cpp/build/bin
+ExecStart=/home/user/llama.cpp/build/bin/llama-server \
+  -m /mnt/models/llm/Qwen2.5-7B-Instruct-Q5_K_M.gguf \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --ctx-size 2048 \
+  --n-gpu-layers 999 \
+  --log-disable
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

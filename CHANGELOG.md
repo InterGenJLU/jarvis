@@ -1,0 +1,224 @@
+# JARVIS Changelog
+
+## [2026-02-17] - Conversational Memory + Health Check
+
+### Major Features
+- **Conversational Memory System (6 phases)** — `core/memory_manager.py`
+  - Phase 1: SQLite fact store, 11 regex extraction patterns, CRUD with dedup/supersede
+  - Phase 2: FAISS semantic indexing, backfill 1,225 messages (0.9s)
+  - Phase 3: Semantic search + recall detection (9 recall patterns, topic extraction)
+  - Phase 4: LLM batch extraction (background Qwen analysis every 25 messages)
+  - Phase 5: Proactive memory surfacing (confidence-gated, 1 fact per conversation window)
+  - Phase 6: Forgetting + transparency commands (pending forget with 30s expiry)
+- **System Health Check** — `core/health_check.py`
+  - 5-layer diagnostic (hardware, services, models, skills, connectivity)
+  - ANSI-colored terminal report + brief voice summary
+
+### Bug Fixes
+- Forget confirmation matching fix
+- Improved response tone for memory operations
+
+---
+
+## [2026-02-16] - Kokoro TTS + User Profiles + Latency Refactor
+
+### Major Features
+- **Kokoro TTS Integration** — 82M model, CPU, 50/50 fable+george voice blend, Piper as fallback
+- **User Profile System (5 phases)** — `core/user_profile.py`, `core/speaker_id.py`, `core/honorific.py`
+  - Phase 1: Honorific infrastructure (~470 hardcoded "sir" → dynamic `{honorific}` across 19 files)
+  - Phase 2: ProfileManager + SpeakerIdentifier (resemblyzer d-vectors)
+  - Phase 3: Pipeline integration (real-time speaker identification)
+  - Phase 4: Voice enrollment (`scripts/enroll_speaker.py`)
+  - Phase 5: Enrollment flow + dynamic honorific per identified speaker
+- **Latency Refactor (4 phases)** — all complete
+  - Phase 1: Streaming TTS (chunked audio output)
+  - Phase 2: Ack cache (pre-generated acknowledgments, no LLM call)
+  - Phase 3: Streaming LLM (token-by-token output)
+  - Phase 4: Event-driven pipeline (Coordinator + STT/TTS workers)
+- **TODO_NEXT_SESSION.md overhaul** — 1,805 → 175 lines, living document
+
+### Bug Fixes
+- Speaker-to-mic bleed mitigation (TTS mutes mic during playback)
+- TTS pronunciation fixes
+- LLM prompt leakage fix
+- Rundown routing priority fix
+
+---
+
+## [2026-02-15] - Developer Tools + Console Mode + PyTorch Unification
+
+### Major Features
+- **Developer Tools Skill** — 13 semantic intents
+  - Codebase search, git multi-repo (status/log/diff/branch), system admin
+  - General shell access, "show me" visual output, 3-tier safety system
+- **Console Mode** — `jarvis_console.py`
+  - Text mode (type commands), hybrid mode (type + spoken), speech mode
+  - Rich stats panel (match layer, skill, confidence, timing, LLM tokens)
+- **PyTorch + CTranslate2 Coexistence** — torch 2.10.0+rocm7.1 + CT2 4.7.1
+  - Both use `/opt/rocm-7.2.0/lib/` — no more version mismatch
+- **FIFINE K669B Microphone Upgrade** — udev rule (`scripts/99-fifine-k669b.rules`)
+
+---
+
+## [2026-02-14] - Bug Fix Marathon + News + Reminders + Web Nav Phase 2
+
+### Major Features
+- **News Headlines System** — `core/news_manager.py`
+  - 16 RSS feeds, 15min poll, urgency classification, semantic dedup, voice delivery
+- **Reminder System** — `core/reminder_manager.py`
+  - Priority tones, nag behavior, acknowledgment tracking
+  - Google Calendar two-way sync (dedicated JARVIS calendar)
+  - Interactive daily & weekly rundowns (state machine)
+- **Web Navigation Phase 2** — result selection, page navigation, scroll pagination (YouTube/Reddit), window management
+- **Conversation Windows** — timer-based auto-close, multi-turn, noise filter
+
+### Bug Fixes (12 total)
+- Whisper silence pre-buffer (`_trim_leading_silence()` in `core/stt.py`)
+- Semantic intent routing broken since day one (direct handler call in `execute_intent`)
+- Keyword routing Layer 4a too greedy (generic keywords blocklist)
+- VAD pre-buffer overlap (snapshot ring buffer at speech detection)
+- Double-speak bug, keyword greediness, and 8 others
+
+---
+
+## [2026-02-12/13] - GPU Breakthrough + CTranslate2 🚀
+
+### Major Features
+- **GPU-Accelerated STT** - CTranslate2 with ROCm 7.2 on RX 7900 XT
+  - 0.1-0.2s transcription (10-20x faster than CPU)
+  - Custom-built CTranslate2 with HIP/ROCm support
+  - Fine-tuned Whisper model converted to CTranslate2 format
+- **Three-repo architecture** - Code, skills, and models on separate drives
+
+### Technical Details
+- Built CTranslate2 from source with `-DWITH_HIP=ON` for AMD GPU
+- Resolved ROCm 6.2 vs 7.2 conflict (PyTorch bundles ROCm 6.2, system uses 7.2)
+- Critical rule: NO torch imports in `core/stt.py` (import order determines loaded ROCm version)
+- 18 hours of debugging to isolate the root cause
+
+### Infrastructure
+- Added third git repo for models (`/mnt/models/`)
+- Automated daily backups to `/mnt/models/backups/`
+- Systemd service updated with ROCm environment variables
+
+---
+
+## [Unreleased] - 2026-02-10
+
+### Major Features Added
+- **Semantic Intent Matching** - ML-based intent recognition using sentence transformers
+  - 90% reduction in exact patterns (218 → 22)
+  - ~100ms matching latency
+  - Works offline, no API calls needed
+
+### Skills Updated
+- **system_info** - Migrated to semantic matching (78 → 1 intent)
+- **conversation** - Migrated to semantic matching (86 → 10 intents)
+- **weather** - Hybrid approach: semantic + exact overrides (39 → 6 + 3)
+- **time_info** - Migrated to semantic matching (15 → 2 intents)
+
+### Bug Fixes
+- Fixed LLM echo bug (was returning user input verbatim)
+- Fixed LLM timeout (reduced context 8192 → 2048, added repeat penalty)
+- Optimized VAD settings (reduced phantom noise detections by 90%+)
+- Removed noisy debug logs from skill_manager
+
+### Performance Improvements
+- LLM generation: 30s timeout → 5-10s response time
+- Audio transcription accuracy improved significantly
+- VAD false positive rate reduced dramatically
+
+### Infrastructure
+- Added git version control (2 repos: core + skills)
+- Created semantic handler validation script
+- Added audio configuration validation/fix scripts
+- Disabled RNNoise (was causing audio artifacts)
+
+### Configuration Changes
+- Audio: `use_rnnoise: false`
+- VAD: `aggressiveness: 3`, `speech_frames_threshold: 15`, `silence_frames_threshold: 30`
+- LLM: `context_size: 2048`, `repeat_penalty: 1.1`, `top_p: 0.9`
+
+### Known Issues
+- Whisper struggles with "tell me" pronunciation (southern accent)
+- Some conversation responses feel unnatural (documented for future work)
+- Voice sounds too young (need to find better Piper voice model)
+
+### Development Tools Added
+- `validate_semantic_handlers.sh` - Verify semantic intent handlers exist
+- `check_audio_config.sh` - Validate audio settings
+- `fix_audio_config.sh` - Auto-fix audio configuration
+- `diagnose_audio_gremlins.sh` - Audio quality diagnostics
+
+---
+
+## [Previous] - Before 2026-02-10
+- Initial JARVIS implementation with exact pattern matching
+- Basic skills: system_info, weather, time_info, conversation
+- Whisper STT, Piper TTS, Mistral-7B LLM (since migrated to Qwen)
+
+## [2026-02-11] - LLM Upgrade + Whisper Training + Filesystem Skill 🚀
+
+### Major Features
+- **Qwen 2.5-7B LLM Integration** - Upgraded from Mistral via llama-server REST API
+- **Custom Whisper Model** - Fine-tuned on 149 phrases for Southern accent (98% accuracy)
+- **Filesystem Skill** - Semantic file search and code analysis capabilities
+- **Semantic Intent Matching** - AI-powered intent recognition using embeddings
+
+### Added
+- `llama-server.service` - Systemd service for LLM REST API
+- `core/stt.py` - Custom Whisper model via faster-whisper (CTranslate2)
+- `/mnt/storage/jarvis/skills/system/filesystem/` - New filesystem skill
+- `core/skill_manager._match_semantic_intents()` - Semantic matching layer
+- `/mnt/models/voice_training/` - Training dataset and scripts
+- `docs/SKILL_DEVELOPMENT.md` - Comprehensive skill creation guide
+- `docs/SESSION_2026-02-11.md` - Detailed session documentation
+
+### Changed
+- `core/llm_router.py` - Switched from subprocess to REST API calls
+- `config.yaml` - Added Qwen model path and fine-tuned Whisper settings
+- `jarvis_continuous.py` - Fixed TTS output for skill responses
+- `core/skill_manager.py` - Preload embedding model to prevent audio overflow
+
+### Fixed
+- Wake word recognition now 100% accurate (was ~50%)
+- Audio overflow warnings eliminated (preloaded embedding model)
+- Skill responses now properly spoken via TTS
+- File counting excludes virtual environments (accurate results)
+- LLM responses clean and concise (proper ChatML handling)
+
+### Performance
+- Whisper transcription: 2s (unchanged)
+- LLM response: 1-2s via REST (improved from 3-5s)
+- Semantic matching: <1s (preloaded model)
+- Total command latency: 3-5s (acceptable)
+
+### Technical Details
+- **Whisper Model:** Fine-tuned openai/whisper-base (290MB)
+  - Training: 149 phrases, 10 epochs, 15 minutes on Ryzen 9 5900X
+  - WER: 2.1% (98% accuracy)
+- **LLM:** Qwen2.5-7B-Instruct-Q5_K_M (5.1GB)
+  - Served via llama-server on localhost:8080
+  - Auto-starting systemd service
+- **Semantic Matching:** sentence-transformers/all-MiniLM-L6-v2
+  - Cosine similarity with 0.70+ threshold
+  - Typical match scores: 0.90-0.95
+
+### Documentation
+- Created comprehensive skill development guide
+- Documented entire session with troubleshooting steps
+- Added examples and best practices
+- Testing checklist for new skills
+
+### Known Issues
+- None currently - system stable and performant
+
+### Migration Notes
+If updating from previous version:
+1. Install llama-server systemd service
+2. Enable fine-tuned Whisper in config.yaml
+3. Restart JARVIS to load new filesystem skill
+4. Verify llama-server is running: `systemctl --user status llama-server`
+
+---
+

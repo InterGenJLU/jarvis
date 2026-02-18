@@ -1,0 +1,18 @@
+name: web_navigation
+version: 2.0.0
+description: Web navigation and intelligent search - opens websites, searches multiple engines, tracks query history
+category: system
+author: JARVIS Contributors
+enabled: true
+priority: 5
+
+keywords:
+  - google
+  - youtube
+  - amazon
+  - wikipedia
+  - reddit
+  - github
+  - website
+
+dependencies: []

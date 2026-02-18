@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily JARVIS Backup
+Requires=jarvis-backup.service
+
+[Timer]
+# Run daily at 3 AM (when system is likely idle)
+OnCalendar=daily
+OnCalendar=03:00
+# If system was off, run 15 min after boot
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

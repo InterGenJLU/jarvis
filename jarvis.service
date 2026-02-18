@@ -1,0 +1,37 @@
+# Systemd Service for Jarvis
+# This will be installed later once core system is working
+
+[Unit]
+Description=Jarvis Voice Assistant (Continuous Mode)
+After=network.target sound.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/user/jarvis
+Environment="PATH=/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="OPENWEATHER_API_KEY=YOUR_OPENWEATHER_API_KEY"
+
+# Run Jarvis in continuous listening mode
+ExecStart=/usr/bin/python3 /home/user/jarvis/jarvis_continuous.py
+
+# Restart on failure (but not on clean exit)
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jarvis
+
+[Install]
+WantedBy=default.target
+
+# Installation instructions:
+# 1. Copy this file to: ~/.config/systemd/user/jarvis.service
+# 2. Reload systemd: systemctl --user daemon-reload
+# 3. Enable on boot: systemctl --user enable jarvis.service
+# 4. Start now: systemctl --user start jarvis.service
+# 5. Check status: systemctl --user status jarvis.service
+# 6. View logs: journalctl --user -u jarvis.service -f
+# 7. Enable linger (start before login): loginctl enable-linger $USER

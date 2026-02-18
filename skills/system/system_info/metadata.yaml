@@ -1,0 +1,95 @@
+name: system_info
+version: 1.0.0
+description: Provides system information like uptime, disk space, username, and hostname
+category: system
+author: Jarvis Team
+enabled: true
+priority: 5
+
+intents:
+  - "what's my uptime"
+  - "what is my uptime"
+  - "what's my up time"
+  - "what is my up time"
+  - "how long have I been running"
+  - "system uptime"
+  - "system up time"
+  - "what's my system uptime"
+  - "what is my system uptime"
+  - "what's my system up time"
+  - "what is my system up time"
+  - "what's the system uptime"
+  - "what is the system uptime"
+  - "what's the system up time"
+  - "what is the system up time"
+  - "what's my disk space"
+  - "how much disk space"
+  - "disk usage"
+  - "check disk space"
+  - "who am i"
+  - "what's my username"
+  - "what is my username"
+  - "hostname"
+  - "what's my hostname"
+  - "what is my hostname"
+  - "what's my host name"
+  - "what is my host name"
+  - "computer name"
+  
+  # Hardware information - CPU
+  - "what cpu do i have"
+  - "what's my cpu"
+  - "what is my cpu"
+  - "what processor do i have"
+  - "what's my processor"
+  - "cpu info"
+  - "processor info"
+  - "what type of cpu"
+  - "what type of processor"
+  - "what type of proc"
+  - "what cpu am i running"
+  - "what processor am i running"
+  - "what cpu is installed"
+  - "what processor is installed"
+  - "what cpu in this machine"
+  - "what processor on this box"
+  # Note: Fuzzy matching handles variations like:
+  # - "in/on this machine/workstation/box/desktop"
+  # - "type of" variations
+  # - contractions and spacing differences
+  
+  - "how much ram do i have"
+  - "what's my ram"
+  - "what is my ram"
+  - "memory info"
+  - "how much memory"
+  
+  - "list my hard drives"
+  - "what hard drives do i have"
+  - "show me my drives"
+  - "what drives are installed"
+  
+  - "what's mounted at {path}"
+  - "what is mounted at {path}"
+  - "what drive is at {path}"
+  
+  - "what's my gpu"
+  - "what is my gpu"
+  - "what graphics card do i have"
+  - "gpu info"
+
+keywords:
+  - uptime
+  - disk
+  - space
+  - memory
+  - ram
+  - cpu
+  - processor
+  - gpu
+  - graphics
+  - storage
+  - drives
+  - hostname
+
+dependencies: []

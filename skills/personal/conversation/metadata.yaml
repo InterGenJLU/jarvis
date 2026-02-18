@@ -1,0 +1,68 @@
+name: conversation
+version: 1.0.0
+description: Natural conversation - greetings, acknowledgments, small talk
+category: personal
+author: Jarvis Team
+enabled: true
+priority: 10  # High priority - check before other skills
+
+intents:
+  # Greetings
+  - "hello"
+  - "hi"
+  - "hey"
+  - "good morning"
+  - "good afternoon"
+  - "good evening"
+  - "good night"
+  - "morning"
+  - "afternoon"
+  - "evening"
+  
+  # How are you
+  - "how are you"
+  - "how are you doing"
+  - "how's it going"
+  - "how are things"
+  - "how are you feeling"
+  - "how are you feeling today"
+  - "how do you feel"
+  - "how are you today"
+  
+  # Thank you
+  - "thank you"
+  - "thanks"
+  - "thanks a lot"
+  - "thank you very much"
+  - "appreciate it"
+  
+  # You're welcome (if user says it)
+  - "you're welcome"
+  - "no problem"
+  - "anytime"
+  
+  # Goodbye
+  - "goodbye"
+  - "bye"
+  - "see you"
+  - "see you later"
+  - "talk to you later"
+  - "goodnight"
+  
+  # Small talk
+  - "what's up"
+  - "what's new"
+  - "how's your day"
+
+keywords:
+  - hello
+  - hi
+  - thanks
+  - goodbye
+  - bye
+  - welcome
+  - morning
+  - evening
+  - goodnight
+
+dependencies: []

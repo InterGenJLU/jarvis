@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Virtual environments
+venv/
+venv-tts/
+env/
+ENV/
+
+# IDE / tools
+.vscode/
+.idea/
+.claude/plans/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.backup
+*.backup_*
+config.yaml.backup*
+config.yaml.bak
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Don't commit models (too large)
+*.gguf
+*.bin
+*.onnx
+
+# Audio files (generated/test artifacts)
+*.wav
+*.mp3
+
+# Don't commit user data
+/mnt/storage/jarvis/chat_history/
+
+# Google Calendar OAuth (NEVER commit)
+credentials.json
+token.json
+google_token.json
+google_sync_token.json
+
+# Experiments / scratch
+experiments/
+
+# Local backups & archives
+.backup/
+.archive/
+
+# Console history
+.console_history
+
+# Environment
+.env

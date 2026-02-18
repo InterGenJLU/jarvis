@@ -1,0 +1,8 @@
+name: filesystem
+version: 1.0.0
+description: File search, code analysis, and filesystem operations
+category: system
+author: JARVIS
+keywords: []
+
+dependencies: []

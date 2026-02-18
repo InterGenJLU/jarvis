@@ -1,0 +1,13 @@
+[Unit]
+Description=JARVIS Backup Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=$USER
+ExecStart=/home/user/jarvis/tools/backup_jarvis.sh
+StandardOutput=journal
+StandardError=journal
+
+# Don't fail if drive isn't mounted
+SuccessExitStatus=0 1

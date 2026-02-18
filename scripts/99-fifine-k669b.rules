@@ -1,0 +1,11 @@
+# FIFINE K669B USB Microphone — stable ALSA card name
+# Ensures the mic always appears as "fifine" regardless of USB port or boot order.
+#
+# Install:
+#   sudo cp ~/jarvis/scripts/99-fifine-k669b.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# After install the mic will appear as card "fifine" (e.g. hw:fifine,0).
+# config.yaml mic_device stays "USB PnP Audio Device" (sounddevice matches by name, not ALSA card).
+
+SUBSYSTEM=="sound", ACTION=="add", ATTRS{idVendor}=="0c76", ATTRS{idProduct}=="161e", ATTR{id}="fifine"

@@ -1,0 +1,223 @@
+system:
+  wake_word: jarvis
+  language: en-US
+  storage_path: /mnt/storage/jarvis
+audio:
+  mic_device: USB PnP Audio Device
+  sample_rate: 16000
+  channels: 1
+  output_device: plughw:0,0
+  use_rnnoise: false
+  device_monitor_interval: 5.0      # Seconds between hot-plug checks
+  startup_retry_count: 5             # Max mic retries at boot
+  startup_retry_base_delay: 2.0      # Initial retry delay (doubles each attempt)
+vad:
+  aggressiveness: 3
+  speech_frames_threshold: 15
+  silence_frames_threshold: 30
+  buffer_duration: 3.0
+llm:
+  local:
+    model_path: /mnt/models/llm/Qwen3-8B-Q5_K_M.gguf
+    context_size: 8192
+    gpu_layers: 999
+    batch_size: 512
+    ubatch_size: 128
+    temperature: 0.6
+    tool_calling: true
+    llama_cli: ~/llama.cpp/build/bin/llama-cli
+    llama_completion: ~/llama.cpp/build/bin/llama-cli
+  api:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    api_key_env: ANTHROPIC_API_KEY
+stt:
+  model_path: /mnt/models/whisper/ggml-base.bin
+  whisper_bin: ~/whisper.cpp/build/bin/whisper-cli
+  language: en
+  debug_save_audio: false          # Set true for diagnosis sessions only
+  gain_enabled: false              # FIFINE K669B has strong output; software gain was for weak EMEET webcam mic
+tts:
+  engine: kokoro                    # 'kokoro' or 'piper'
+  # Kokoro settings
+  kokoro_voice_a: bm_fable
+  kokoro_voice_b: bm_george
+  kokoro_blend_ratio: 0.5           # 0.5 = 50% fable + 50% george
+  kokoro_speed: 1.0
+  # Piper settings (fallback)
+  model_path: /mnt/models/piper/en_GB-northern_english_male-medium.onnx
+  config_path: /mnt/models/piper/en_GB-northern_english_male-medium.onnx.json
+  piper_bin: /home/user/.local/bin/piper
+  length_scale: 1.12
+  noise_scale: 0.55
+  noise_w_scale: 0.68
+  sentence_silence: 0.2
+  normalization_enabled: true
+wake_word:
+  access_key_env: PORCUPINE_ACCESS_KEY
+  sensitivity: 0.5
+conversation:
+  follow_up_window:
+    enabled: true
+    default_duration: 4.0
+    extended_duration: 7.0
+    play_tone: true
+    tone_path: ~/jarvis/assets/conv_open.wav
+    close_tone_path: ~/jarvis/assets/conv_close.wav
+  max_history_turns: 30
+  max_context_chars: 12000
+user_profiles:
+  enabled: true
+  voice_recognition: true
+  similarity_threshold: 0.85
+  auto_enroll: true
+  greet_by_name: true
+skills:
+  auto_discover: true
+  safe_mode: false
+  skills_path: /mnt/storage/jarvis/skills
+logging:
+  level: INFO
+  file: /mnt/storage/jarvis/data/logs/jarvis.log
+  console: true
+semantic_matching:
+  enabled: true
+  model: all-MiniLM-L6-v2
+  cache_dir: /mnt/models/sentence-transformers
+  default_threshold: 0.85
+  fallback_to_llm: true
+
+# Conversational memory system (fact store + FAISS RAG + proactive surfacing)
+conversational_memory:
+  enabled: true                 # Enabled Feb 17 — all 6 phases complete
+  db_path: /mnt/storage/jarvis/data/memory.db
+  faiss_index_path: /mnt/storage/jarvis/data/memory_faiss
+  batch_extraction_interval: 25
+  proactive_surfacing: true
+  proactive_confidence_threshold: 0.45
+
+# Context window (working memory — topic-segmented context assembly)
+context_window:
+  enabled: true
+  topic_shift_threshold: 0.35
+  max_segments: 20
+  verbatim_recent_messages: 6
+  token_budget: 6500
+  summarize_closed_segments: true
+  db_path: /mnt/storage/jarvis/data/memory.db
+  segment_retention_days: 7
+
+# System health check
+health_check:
+  run_on_startup: true
+
+# Event pipeline (Phase 4 latency refactor)
+pipeline:
+  event_mode: true              # true = coordinator + workers; false = legacy callbacks
+
+# Reminder system
+reminders:
+  enabled: true
+  db_path: /mnt/storage/jarvis/data/reminders.db
+  poll_interval_seconds: 30
+  missed_lookback_hours: 24
+  startup_announce_delay_seconds: 5
+  default_snooze_minutes: 15
+  daily_rundown:
+    enabled: true
+    time: "08:15"
+    offer_timeout_seconds: 30
+    retry_delay_minutes: 5
+  weekly_rundown:
+    enabled: true
+    day: monday
+  nag:
+    critical_minutes: 5
+    high_minutes: 15
+    backoff_after_count: 3
+    backoff_minutes: 30
+
+# Google Calendar integration
+google_calendar:
+  enabled: true
+  credentials_path: ~/jarvis/credentials.json
+  token_path: /mnt/storage/jarvis/data/google_token.json
+  sync_token_path: /mnt/storage/jarvis/data/google_sync_token.json
+  sync_interval_seconds: 300
+  jarvis_calendar_name: "JARVIS"
+  include_primary_in_rundown: true
+  timezone: "America/Your_Timezone"
+
+# News headlines monitoring
+news:
+  enabled: true
+  db_path: /mnt/storage/jarvis/data/news_headlines.db
+  poll_interval_seconds: 900
+  max_headlines_per_feed: 20
+  dedup_threshold: 0.82
+  headline_retention_days: 7
+  feeds:
+    # Technology
+    - name: "Ars Technica"
+      url: "https://feeds.arstechnica.com/arstechnica/index"
+      category: "tech"
+    - name: "TechCrunch"
+      url: "https://techcrunch.com/feed/"
+      category: "tech"
+    - name: "Hacker News"
+      url: "https://hnrss.org/newest?points=50"
+      category: "tech"
+    - name: "Wired"
+      url: "https://www.wired.com/feed/rss"
+      category: "tech"
+    - name: "The Verge"
+      url: "https://www.theverge.com/rss/index.xml"
+      category: "tech"
+    # Politics
+    - name: "Daily Wire"
+      url: "https://www.dailywire.com/feeds/rss.xml"
+      category: "politics"
+    - name: "Fox News"
+      url: "https://moxie.foxnews.com/google-publisher/latest.xml"
+      category: "politics"
+    - name: "National Review"
+      url: "https://www.nationalreview.com/feed/"
+      category: "politics"
+    # General
+    - name: "BBC News"
+      url: "https://feeds.bbci.co.uk/news/rss.xml"
+      category: "general"
+    - name: "AP News"
+      url: "https://news.google.com/rss/search?q=when:24h+allinurl:apnews.com&ceid=US:en&hl=en-US&gl=US"
+      category: "general"
+    # Cybersecurity
+    - name: "Krebs on Security"
+      url: "https://krebsonsecurity.com/feed/"
+      category: "cyber"
+    - name: "BleepingComputer"
+      url: "https://www.bleepingcomputer.com/feed/"
+      category: "cyber"
+    - name: "Dark Reading"
+      url: "https://www.darkreading.com/rss.xml"
+      category: "cyber"
+    - name: "The Hacker News"
+      url: "https://feeds.feedburner.com/TheHackersNews"
+      category: "cyber"
+    # Local (Your City)
+    - name: "Your Local News"
+      url: "https://news.google.com/rss/search?q=when:24h+Your+City&ceid=US:en&hl=en-US&gl=US"
+      category: "local"
+
+# Web navigation settings
+web_navigation:
+  default_browser: brave
+  default_search_engine: google
+  screen:
+    width: 2560
+    height: 1440
+  follow_up_duration: 10.0
+
+# Fine-tuned Whisper model (custom accent training)
+stt_finetuned:
+  enabled: true
+  model_path: /mnt/models/voice_training/whisper_finetuned/final
