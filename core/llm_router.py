@@ -80,6 +80,8 @@ class LLMRouter:
         self.batch_size = config.get("llm.local.batch_size", 512)
         self.ubatch_size = config.get("llm.local.ubatch_size", 128)
         self.temperature = config.get("llm.local.temperature", 0.6)
+        self.top_p = config.get("llm.local.top_p", 0.8)
+        self.top_k = config.get("llm.local.top_k", 20)
         self.tool_calling = config.get("llm.local.tool_calling", False)
 
         # Verify local model exists
@@ -214,6 +216,8 @@ class LLMRouter:
                         {"role": "user", "content": user_message}
                     ],
                     "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "top_k": self.top_k,
                     "max_tokens": max_tokens
                 },
                 timeout=30
@@ -695,6 +699,8 @@ class LLMRouter:
                 json={
                     "messages": messages,
                     "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "top_k": self.top_k,
                     "max_tokens": max_tokens,
                     "stream": True,
                 },
@@ -723,6 +729,8 @@ class LLMRouter:
                         json={
                             "messages": messages,
                             "temperature": self.temperature,
+                            "top_p": self.top_p,
+                            "top_k": self.top_k,
                             "max_tokens": max_tokens,
                             "stream": True,
                         },
@@ -829,6 +837,8 @@ class LLMRouter:
                 json={
                     "messages": messages,
                     "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "top_k": self.top_k,
                     "max_tokens": max_tokens,
                     "stream": True,
                     "tools": [WEB_SEARCH_TOOL],
@@ -857,6 +867,8 @@ class LLMRouter:
                         json={
                             "messages": messages,
                             "temperature": self.temperature,
+                            "top_p": self.top_p,
+                            "top_k": self.top_k,
                             "max_tokens": max_tokens,
                             "stream": True,
                             "tools": [WEB_SEARCH_TOOL],
@@ -1015,6 +1027,8 @@ class LLMRouter:
                 json={
                     "messages": messages,
                     "temperature": self.temperature,
+                    "top_p": self.top_p,
+                    "top_k": self.top_k,
                     "max_tokens": max_tokens,
                     "stream": True,
                 },

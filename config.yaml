@@ -24,6 +24,8 @@ llm:
     batch_size: 512
     ubatch_size: 128
     temperature: 0.6
+    top_p: 0.8
+    top_k: 20
     tool_calling: true
     llama_cli: ~/llama.cpp/build/bin/llama-cli
     llama_completion: ~/llama.cpp/build/bin/llama-cli

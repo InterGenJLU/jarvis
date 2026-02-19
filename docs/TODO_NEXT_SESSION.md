@@ -128,6 +128,7 @@ None!
 
 | Feature | Date | Notes |
 |---------|------|-------|
+| Qwen Sampling Params + API Key Rotation | Feb 19 | top_p=0.8, top_k=20 in all 6 llama.cpp payloads. Rotated OpenWeather API key, updated redact.conf |
 | Document Ingestion Phase 3 | Feb 19 | Tab completion (slash commands + /file paths), doc-aware LLM hint, dynamic max_tokens=600 |
 | Document Ingestion Phase 2 | Feb 19 | /file (binary reject, --tail, 500KB warn), /clipboard (wl-paste), /append, drag-and-drop auto-detect |
 | Document Ingestion Phase 1 | Feb 19 | prompt_toolkit, DocumentBuffer, /paste + /context + /clear + /help, LLM injection |
