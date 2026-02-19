@@ -286,7 +286,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
     return full_response
 
 
-def _handle_slash_command(command, doc_buffer, console, pt_session):
+def _handle_slash_command(command, doc_buffer, console, pt_history):
     """Handle slash commands. Returns True if handled, False if not a slash command."""
     parts = command.split(None, 1)
     cmd = parts[0].lower()
@@ -307,7 +307,11 @@ def _handle_slash_command(command, doc_buffer, console, pt_session):
             event.current_buffer.insert_text('\n')
 
         try:
-            text = pt_session.prompt(
+            # Separate session avoids contaminating the main prompt with
+            # sticky multiline/key_bindings params. Shares FileHistory
+            # so up-arrow still recalls previous pastes.
+            paste_session = PromptSession(history=pt_history)
+            text = paste_session.prompt(
                 "paste> ",
                 multiline=True,
                 key_bindings=paste_bindings,
@@ -524,7 +528,7 @@ def run_console(config, mode):
 
             # Slash commands — handle before any skill routing
             if command.startswith("/"):
-                _handle_slash_command(command, doc_buffer, console, pt_session)
+                _handle_slash_command(command, doc_buffer, console, pt_history)
                 continue
 
             # --- Process command ---
@@ -635,7 +639,10 @@ def run_console(config, mode):
                         used_llm = True
 
             # Priority 4: Skill routing
-            if not skill_handled:
+            # When document buffer is active, skip skill routing — the user
+            # is asking the LLM about their document, not invoking a skill.
+            # Priorities 1-3 (rundowns, reminders, memory) still work normally.
+            if not skill_handled and not doc_buffer.active:
                 skill_response = skill_manager.execute_intent(command)
                 skill_already_spoke = len(tts_proxy.get_pending_announcements()) > 0
                 match_info = skill_manager._last_match_info

@@ -103,4 +103,4 @@ DocCtx  ~820 tok (paste)
 - The document is **never saved** to chat history — it only lives in memory for the current session
 - Large documents are automatically truncated to ~4000 tokens (roughly 3000 words) to leave room for the LLM's context window
 - You can load a new document at any time with `/paste` — it replaces the previous one
-- Normal JARVIS commands ("what time is it", "weather", etc.) still work exactly the same with or without a document loaded
+- When a document is loaded, all queries go to the LLM (skill routing is bypassed) so JARVIS focuses on your document. Use `/clear` to return to normal skill routing.
