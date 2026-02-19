@@ -59,6 +59,11 @@ class SkillManager:
         except Exception as e:
             self.logger.warning(f"Failed to pre-load embedding model: {e}")
 
+        # Pre-computed embeddings for semantic intent examples.
+        # Populated during load_skill() so match-time encoding is query-only.
+        # Key: (skill_name, intent_id) → tensor of example embeddings.
+        self._semantic_embedding_cache: dict = {}
+
         # Match metadata for console stats panel
         self._last_match_info = None
 
@@ -161,13 +166,17 @@ class SkillManager:
             # Register intent patterns
             self._register_skill_intents(metadata.name, skill)
             
-            # Log semantic intents
+            # Log semantic intents and pre-compute embeddings
             if hasattr(skill, 'semantic_intents') and skill.semantic_intents:
                 for intent_id in skill.semantic_intents:
                     data = skill.semantic_intents[intent_id]
-                    num_ex = len(data.get('examples', []))
+                    examples = data.get('examples', [])
                     thresh = data.get('threshold', 0.75)
-                    self.logger.info(f"  📋 {intent_id}: {num_ex} examples, threshold={thresh}")
+                    self.logger.info(f"  📋 {intent_id}: {len(examples)} examples, threshold={thresh}")
+                    # Cache embeddings at load time — eliminates per-query re-encoding
+                    if examples and hasattr(self, '_embedding_model'):
+                        self._semantic_embedding_cache[(metadata.name, intent_id)] = \
+                            self._embedding_model.encode(examples, convert_to_tensor=True)
             
             self.logger.info(f"✅ Loaded skill: {metadata.name} ({metadata.category})")
             return True
@@ -291,37 +300,40 @@ class SkillManager:
     
     def _match_semantic_intents(self, user_text: str) -> Optional[Tuple[str, str, Dict]]:
         """Match using semantic intents (embedding similarity)"""
-        from sentence_transformers import SentenceTransformer, util
-        
-        # Cache embedding model
+        from sentence_transformers import util
+
         if not hasattr(self, '_embedding_model'):
-            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-        
+            return None
+
         user_embedding = self._embedding_model.encode(user_text, convert_to_tensor=True)
-        
+
         best_match = None
         best_score = 0.0
-        
-        # Check all skills' semantic intents
+
+        # Check all skills' semantic intents using pre-computed embeddings
         for skill_name, skill in self.skills.items():
             if not hasattr(skill, 'semantic_intents') or not skill.semantic_intents:
                 continue
-            
+
             for intent_id, data in skill.semantic_intents.items():
-                examples = data.get('examples', [])
                 threshold = data.get('threshold', 0.75)
-                
-                example_embeddings = self._embedding_model.encode(examples, convert_to_tensor=True)
+
+                # Use cached embeddings (populated at skill load time)
+                cache_key = (skill_name, intent_id)
+                example_embeddings = self._semantic_embedding_cache.get(cache_key)
+                if example_embeddings is None:
+                    continue
+
                 similarities = util.cos_sim(user_embedding, example_embeddings)
                 max_sim = float(similarities.max())
-                
+
                 if max_sim > best_score and max_sim >= threshold:
                     best_score = max_sim
                     best_match = (skill_name, intent_id, {'original_text': user_text, 'similarity': max_sim})
-        
+
         if best_match:
             self.logger.info(f"🎯 Semantic score={best_score:.2f}")
-        
+
         return best_match
     
     def _match_by_keywords(self, normalized_text: str) -> Optional[Tuple[str, str, Dict[str, Any]]]:
@@ -527,8 +539,11 @@ class SkillManager:
                     best_score = 0.0
                     best_intent = None
                     for intent_id, intent_data in skill.semantic_intents.items():
-                        examples = intent_data.get('examples', [])
-                        ex_embs = self._embedding_model.encode(examples, convert_to_tensor=True)
+                        # Use cached embeddings (populated at skill load time)
+                        cache_key = (skill_name, intent_id)
+                        ex_embs = self._semantic_embedding_cache.get(cache_key)
+                        if ex_embs is None:
+                            continue
                         sims = util.cos_sim(user_emb, ex_embs)
                         max_sim = float(sims.max())
                         if max_sim > best_score:

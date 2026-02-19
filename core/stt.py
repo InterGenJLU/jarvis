@@ -86,8 +86,14 @@ class SpeechToText:
             )
             
             self.logger.info("🚀 GPU ACTIVE")
-            self.logger.info("✓ faster-whisper model loaded")
-            
+
+            # Warm-up: run a dummy transcription to force CTranslate2 to
+            # fully load weights into GPU memory.  Without this, the first
+            # real transcription pays a ~500ms-1s lazy-load penalty.
+            dummy = np.zeros(16000, dtype=np.float32)  # 1s silence
+            list(self.model.transcribe(dummy, language="en")[0])
+            self.logger.info("✓ faster-whisper model loaded (warm-up complete)")
+
         except ImportError:
             self.logger.error("faster-whisper not available")
             raise ImportError("Install: pip install faster-whisper")
