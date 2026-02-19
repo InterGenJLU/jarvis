@@ -480,12 +480,30 @@ class GoogleCalendarManager:
         except ValueError:
             return None
 
+        # Extract reminder offset (minutes before event)
+        # Google API: reminders.overrides = [{"method": "popup", "minutes": 15}, ...]
+        # Use the earliest (largest minutes value) so JARVIS reminds at first alert
+        reminder_minutes = None
+        reminders_data = event.get("reminders", {})
+        if reminders_data.get("useDefault"):
+            # Default reminders are typically 10-30 min; use 15 as safe default
+            reminder_minutes = 15
+        else:
+            overrides = reminders_data.get("overrides", [])
+            popup_minutes = [
+                r["minutes"] for r in overrides
+                if r.get("method") in ("popup", "email") and "minutes" in r
+            ]
+            if popup_minutes:
+                reminder_minutes = max(popup_minutes)  # earliest alert
+
         return {
             "title": clean_title,
             "start_time": start_time,
             "priority": priority,
             "description": event.get("description", ""),
             "google_event_id": event.get("id"),
+            "reminder_minutes": reminder_minutes,
         }
 
     def _tz_offset(self) -> str:
@@ -529,7 +547,7 @@ class GoogleCalendarManager:
     def set_sync_callbacks(self, on_new_event: Callable, on_cancel_event: Callable):
         """Set callbacks for when events are synced from Google.
 
-        on_new_event(title, start_time, priority, google_event_id) -> int (local reminder ID)
+        on_new_event(title, start_time, priority, google_event_id, reminder_minutes) -> int
         on_cancel_event(google_event_id) -> bool
         """
         self._on_new_event = on_new_event
@@ -567,6 +585,7 @@ class GoogleCalendarManager:
                             start_time=event["start_time"],
                             priority=event["priority"],
                             google_event_id=event["google_event_id"],
+                            reminder_minutes=event.get("reminder_minutes"),
                         )
 
                 # Process deleted events → cancel local reminders

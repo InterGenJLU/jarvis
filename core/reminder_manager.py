@@ -137,18 +137,23 @@ class ReminderManager:
                         last_fired_at   TEXT DEFAULT NULL,
                         snooze_until    TEXT DEFAULT NULL,
                         google_event_id TEXT DEFAULT NULL,
+                        event_time      TEXT DEFAULT NULL,
                         created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                         updated_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
                     )
                 """)
                 conn.commit()
 
-                # Migration: add google_event_id if table already existed without it
+                # Migrations: add columns if table already existed without them
                 columns = [row[1] for row in conn.execute("PRAGMA table_info(reminders)")]
                 if "google_event_id" not in columns:
                     conn.execute("ALTER TABLE reminders ADD COLUMN google_event_id TEXT DEFAULT NULL")
                     conn.commit()
                     self.logger.info("Migrated: added google_event_id column")
+                if "event_time" not in columns:
+                    conn.execute("ALTER TABLE reminders ADD COLUMN event_time TEXT DEFAULT NULL")
+                    conn.commit()
+                    self.logger.info("Migrated: added event_time column")
 
                 # Indexes (after migrations so all columns exist)
                 conn.execute("""
@@ -182,20 +187,28 @@ class ReminderManager:
     def add_reminder(self, title: str, reminder_time: datetime,
                      priority: int = 3, reminder_type: str = "one_time",
                      recurrence_rule: str = None, description: str = "",
-                     _skip_calendar_push: bool = False) -> int:
+                     _skip_calendar_push: bool = False,
+                     event_time: datetime = None) -> int:
         """Add a new reminder. Returns the reminder ID.
 
         _skip_calendar_push is used internally when creating from Google sync
         to avoid pushing back to Google in a loop.
+
+        event_time: the actual event start time when reminder_time is offset
+        (e.g., reminder fires 15 min before the event). Used for speech:
+        "You have X in 15 minutes."
         """
         requires_ack = 1 if priority <= 2 else 0
         time_str = reminder_time.strftime("%Y-%m-%d %H:%M:%S")
+        event_time_str = event_time.strftime("%Y-%m-%d %H:%M:%S") if event_time else None
 
         # Push to Google Calendar first (so we can store the event ID)
         google_event_id = None
         if not _skip_calendar_push and self._calendar_manager:
+            # Push the actual event time, not the offset reminder time
+            push_time = event_time if event_time else reminder_time
             google_event_id = self._calendar_manager.create_event(
-                title, reminder_time, priority, description
+                title, push_time, priority, description
             )
 
         with self._db_lock:
@@ -204,10 +217,12 @@ class ReminderManager:
                 cur = conn.execute("""
                     INSERT INTO reminders
                         (title, description, reminder_time, reminder_type,
-                         recurrence_rule, priority, requires_ack, google_event_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         recurrence_rule, priority, requires_ack, google_event_id,
+                         event_time)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (title, description, time_str, reminder_type,
-                      recurrence_rule, priority, requires_ack, google_event_id))
+                      recurrence_rule, priority, requires_ack, google_event_id,
+                      event_time_str))
                 conn.commit()
                 rid = cur.lastrowid
             finally:
@@ -215,6 +230,7 @@ class ReminderManager:
 
         self.logger.info(
             f"Reminder #{rid} created: '{title}' at {time_str} "
+            f"{'(event at ' + event_time_str + ') ' if event_time_str else ''}"
             f"(priority={priority}, type={reminder_type}"
             f"{', gcal=' + google_event_id if google_event_id else ''})"
         )
@@ -494,7 +510,29 @@ class ReminderManager:
         else:
             prefix = f"By the way, {get_honorific()}."
 
-        self.tts.speak(f"{prefix} {cap_title}.")
+        # When fired before event time, add "in X minutes" context
+        time_phrase = None
+        event_time_str = reminder.get("event_time")
+        if event_time_str:
+            try:
+                event_dt = datetime.strptime(event_time_str, "%Y-%m-%d %H:%M:%S")
+                minutes_until = max(1, int((event_dt - datetime.now()).total_seconds() / 60))
+                if minutes_until >= 60:
+                    hours = minutes_until // 60
+                    remaining = minutes_until % 60
+                    if remaining:
+                        time_phrase = f"in {hours} hour{'s' if hours != 1 else ''} and {remaining} minutes"
+                    else:
+                        time_phrase = f"in {hours} hour{'s' if hours != 1 else ''}"
+                else:
+                    time_phrase = f"in {minutes_until} minute{'s' if minutes_until != 1 else ''}"
+            except (ValueError, TypeError):
+                pass
+
+        if time_phrase:
+            self.tts.speak(f"{prefix} {cap_title}, {time_phrase}.")
+        else:
+            self.tts.speak(f"{prefix} {cap_title}.")
 
         # Desktop notification (visual companion to voice)
         try:
@@ -502,7 +540,8 @@ class ReminderManager:
             dm = get_desktop_manager()
             if dm:
                 urgency = "critical" if priority <= 1 else "normal" if priority <= 2 else "low"
-                dm.send_notification(f"JARVIS Reminder", cap_title, urgency)
+                notif_body = f"{cap_title} ({time_phrase})" if time_phrase else cap_title
+                dm.send_notification(f"JARVIS Reminder", notif_body, urgency)
         except Exception:
             pass  # notification is best-effort
 
@@ -1277,22 +1316,47 @@ class ReminderManager:
         self.logger.info("Google Calendar integration active")
 
     def _on_google_new_event(self, title: str, start_time: datetime,
-                             priority: int, google_event_id: str) -> int:
-        """Callback: a new event was added on Google Calendar → create local reminder."""
+                             priority: int, google_event_id: str,
+                             reminder_minutes: int = None) -> int:
+        """Callback: a new event was added on Google Calendar → create local reminder.
+
+        reminder_minutes: offset from Google Calendar reminders (e.g., 30 = fire 30 min before).
+        When set, reminder_time = start_time - offset, and event_time = start_time.
+        """
+        # Apply reminder offset: fire BEFORE the event, not at event time
+        if reminder_minutes and reminder_minutes > 0:
+            reminder_time = start_time - timedelta(minutes=reminder_minutes)
+            event_time = start_time
+        else:
+            reminder_time = start_time
+            event_time = None
+
         # Check if we already have this event
         existing = self._find_by_google_event_id(google_event_id)
         if existing:
             # Update if time changed
             existing_time = datetime.strptime(existing["reminder_time"], "%Y-%m-%d %H:%M:%S")
-            if existing_time != start_time:
-                time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+            if existing_time != reminder_time:
+                time_str = reminder_time.strftime("%Y-%m-%d %H:%M:%S")
+                event_time_str = event_time.strftime("%Y-%m-%d %H:%M:%S") if event_time else None
                 self._update_status(existing["id"], existing["status"],
                                     reminder_time=time_str, title=title, priority=priority)
+                # Also update event_time
+                if event_time_str:
+                    with self._db_lock:
+                        conn = self._conn()
+                        try:
+                            conn.execute("UPDATE reminders SET event_time = ? WHERE id = ?",
+                                         (event_time_str, existing["id"]))
+                            conn.commit()
+                        finally:
+                            conn.close()
                 self.logger.info(f"Updated reminder #{existing['id']} from Google sync")
             return existing["id"]
 
         # Create new local reminder
-        rid = self.add_reminder(title, start_time, priority, _skip_calendar_push=True)
+        rid = self.add_reminder(title, reminder_time, priority,
+                                _skip_calendar_push=True, event_time=event_time)
         # Store the google_event_id
         with self._db_lock:
             conn = self._conn()
@@ -1302,7 +1366,8 @@ class ReminderManager:
                 conn.commit()
             finally:
                 conn.close()
-        self.logger.info(f"Created reminder #{rid} from Google Calendar event {google_event_id}")
+        self.logger.info(f"Created reminder #{rid} from Google Calendar event {google_event_id}"
+                         f"{f' (fires {reminder_minutes}min before event)' if reminder_minutes else ''}")
         return rid
 
     def _on_google_cancel_event(self, google_event_id: str) -> bool:
