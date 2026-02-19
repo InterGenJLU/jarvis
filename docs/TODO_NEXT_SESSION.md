@@ -133,6 +133,7 @@ None!
 | Document Ingestion Phase 3 | Feb 19 | Tab completion (slash commands + /file paths), doc-aware LLM hint, dynamic max_tokens=600 |
 | Document Ingestion Phase 2 | Feb 19 | /file (binary reject, --tail, 500KB warn), /clipboard (wl-paste), /append, drag-and-drop auto-detect |
 | Document Ingestion Phase 1 | Feb 19 | prompt_toolkit, DocumentBuffer, /paste + /context + /clear + /help, LLM injection |
+| Embedding Cache + STT Warm-up | Feb 20 | Pre-compute semantic embeddings at load time (`_semantic_embedding_cache`), STT dummy transcription warm-up. Grok review items #8+#9 (`56f5037`) |
 | Publish Script Non-Interactive | Feb 20 | `--auto` flag for CI-friendly publish (auto-generate commit msg + push) |
 | GNOME Desktop Integration (5 phases) | Feb 19 | Extension (D-Bus bridge), desktop_manager, app launcher migration, volume, workspace, clipboard, notifications — 16 intents |
 | Developer Tools Polish | Feb 19 | HAL 9000 Easter eggs for blocked commands, smart port summary, conversational process summary |
