@@ -409,6 +409,16 @@ def check_internals(coordinator=None):
             f"API calls: {llm.get('api_call_count', 0)}",
         ))
 
+        # Desktop manager
+        if coord.desktop_manager:
+            dh = coord.desktop_manager.get_health()
+            ext_avail = dh.get("extension_available", False)
+            results.append(_check(
+                "Desktop",
+                "green" if ext_avail else "yellow",
+                f"Extension: {'connected' if ext_avail else 'not available (wmctrl fallback)'}",
+            ))
+
         # Managers
         mgrs = health.get('managers', {})
         enabled = [k for k, v in mgrs.items() if v]

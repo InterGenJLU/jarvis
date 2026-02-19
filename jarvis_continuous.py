@@ -61,6 +61,7 @@ from core.pipeline import (
 from core.user_profile import get_profile_manager
 from core.speaker_id import SpeakerIdentifier
 from core.context_window import get_context_window
+from core.desktop_manager import get_desktop_manager
 
 
 class JarvisContinuous:
@@ -132,6 +133,12 @@ class JarvisContinuous:
             )
 
             self.logger.info("Context window (working memory) enabled")
+
+        # --- Desktop manager (GNOME integration) ---
+        self.desktop_manager = None
+        if config.get("desktop.enabled", True):
+            self.desktop_manager = get_desktop_manager(config)
+            self.logger.info("Desktop manager initialized")
 
         # --- Event pipeline mode (Phase 4) ---
         self.event_mode = config.get("pipeline.event_mode", False)
@@ -255,6 +262,7 @@ class JarvisContinuous:
                 profile_manager=self.profile_manager,
                 memory_manager=self.memory_manager,
                 context_window=self.context_window,
+                desktop_manager=self.desktop_manager,
             )
             self.logger.info("Event pipeline mode enabled")
 

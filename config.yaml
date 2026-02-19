@@ -236,6 +236,12 @@ app_launcher:
       exec: "gnome-control-center"
       name: "Settings"
 
+# Desktop integration (GNOME Shell extension + pactl + notify-send + wl-clipboard)
+desktop:
+  enabled: true
+  extension_uuid: jarvis-desktop@jarvis
+  fallback_wmctrl: true
+
 # Web navigation settings
 web_navigation:
   default_browser: brave

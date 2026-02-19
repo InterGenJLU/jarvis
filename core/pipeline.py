@@ -398,7 +398,7 @@ class Coordinator:
                  skill_manager, conversation, reminder_manager=None,
                  news_manager=None, calendar_manager=None,
                  profile_manager=None, memory_manager=None,
-                 context_window=None):
+                 context_window=None, desktop_manager=None):
         self.config = config
         self.logger = get_logger("pipeline.coordinator", config)
         self.event_queue = event_queue
@@ -414,6 +414,7 @@ class Coordinator:
         self.profile_manager = profile_manager
         self.memory_manager = memory_manager
         self.context_window = context_window
+        self.desktop_manager = desktop_manager
 
         # Web research (tool calling)
         self.web_researcher = WebResearcher(config) if config.get("llm.local.tool_calling", False) else None
@@ -529,6 +530,7 @@ class Coordinator:
                 'profiles': self.profile_manager is not None,
                 'memory': self.memory_manager is not None,
                 'context_window': self.context_window is not None,
+                'desktop': self.desktop_manager is not None,
             },
             'listener': listener_health,
             'tts_engine': getattr(self.tts, 'engine', 'unknown'),

@@ -1,6 +1,6 @@
 name: app_launcher
-version: 1.0.0
-description: Launch applications and manage windows by voice — open, close, fullscreen, minimize, maximize
+version: 2.0.0
+description: Desktop control — launch apps, manage windows, volume, workspaces, focus, clipboard
 category: system
 author: JARVIS Contributors
 enabled: true
@@ -17,5 +17,13 @@ keywords:
   - fullscreen
   - minimize
   - maximize
+  - volume
+  - mute
+  - louder
+  - quieter
+  - workspace
+  - focus
+  - window
+  - clipboard
 
 dependencies: []

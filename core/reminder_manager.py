@@ -496,6 +496,16 @@ class ReminderManager:
 
         self.tts.speak(f"{prefix} {cap_title}.")
 
+        # Desktop notification (visual companion to voice)
+        try:
+            from core.desktop_manager import get_desktop_manager
+            dm = get_desktop_manager()
+            if dm:
+                urgency = "critical" if priority <= 1 else "normal" if priority <= 2 else "low"
+                dm.send_notification(f"JARVIS Reminder", cap_title, urgency)
+        except Exception:
+            pass  # notification is best-effort
+
         # Resume listening after announcement
         if self._resume_listener_callback:
             self._resume_listener_callback()
