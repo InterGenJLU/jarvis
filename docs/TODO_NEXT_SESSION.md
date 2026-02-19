@@ -16,8 +16,8 @@
 **Files:** `core/stt.py`, `/mnt/models/voice_training/`
 **Note:** Remove `_debug_save_audio()` from `stt.py` after retraining
 
-### 2. Quick Wins
-- **News urgency filtering** — add urgency param to existing intent handler (~30 min)
+### 2. Quick Wins — All Complete!
+- ~~News urgency filtering~~ — Done (Feb 19, `1d447c2` + `e1c4611`). "read critical headlines" works
 - ~~Qwen sampling params~~ — Done (Feb 19, `25b5f0a`). top_p=0.8, top_k=20
 - ~~Rotate OpenWeather API key~~ — Done (Feb 19, `25b5f0a`)
 
