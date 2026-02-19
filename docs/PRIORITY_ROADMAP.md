@@ -38,7 +38,7 @@
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
 | 7 | **Inject user facts into web research** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Risk: history poisoning needs careful scoping |
-| 8 | **Minimize web search latency** — caching, parallel fetch, snippet-only mode | 3-4 hours | Reduce 5-8s forced search overhead | TODO |
+| ~~8~~ | ~~**Minimize web search latency**~~ | ~~3-4 hours~~ | ~~Reduce 5-8s forced search overhead~~ | Done (Feb 19, `c93670a`). Parallel page fetches, rate limit 2s→1s |
 | 9 | **Email skill (Gmail)** — voice-composed email via Gmail API + OAuth | 6-8 hours | Major productivity — compose, read, reply, search, archive by voice | Same OAuth pattern as Calendar. Full schema in MASTER_DESIGN.md |
 | 10 | **Google Keep integration** — shared grocery/todo lists with secondary user | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user's account |
 | 11 | **"Onscreen please" — retroactive visual display** — buffer last raw output, display on command | 2-3 hours | Bridge voice→visual gap. "Show me that" after JARVIS speaks an answer | TODO |
@@ -80,7 +80,7 @@
 | 26 | **STT worker process** — GPU isolation via separate subprocess | 2-3 hours | Only needed if GPU conflicts resurface. Currently stable | STT_WORKER_PROCESS.md |
 | 27 | **Mobile access** — remote command via phone | 20+ hours | Entirely different tech stack | TODO |
 | 28 | **GitHub publishing cleanup** — CONTRIBUTING.md, INSTALLATION.md, API_KEYS.md, setup.sh | 3-4 hours | Community-facing polish. Only matters if users adopt | GITHUB_PUBLISHING_PLAN.md |
-| 29 | **Console logging fix** — `JARVIS_LOG_FILE_ONLY=1` not producing file logs | 1-2 hours | Developer convenience. Not urgent | TODO |
+| ~~29~~ | ~~**Console logging fix**~~ | ~~1-2 hours~~ | ~~Developer convenience~~ | Done (Feb 19). logger.py override now always uses console.log |
 | 30 | **Multi-speaker conversation tracking** — who said what when both speak | 4-6 hours | Speaker ID Phase 3+. Requires reliable speaker identification first | MASTER_DESIGN.md |
 
 ---
@@ -105,9 +105,9 @@
 
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
-| B1 | "Fullscreen" Whisper misrecognition | Medium | Covered by Whisper retraining (#3) |
+| ~~B1~~ | ~~"Fullscreen" Whisper misrecognition~~ | ~~Resolved~~ | Fixed by mic upgrade (FIFINE K669B). No longer reproduces |
 | B2 | Batch extraction (Phase 4) untested | Low | Needs 25+ messages in one session to trigger |
-| B3 | Console logging broken | Low | `JARVIS_LOG_FILE_ONLY=1` not working (also #29) |
+| ~~B3~~ | ~~Console logging broken~~ | ~~Resolved~~ | Fixed (Feb 19, logger.py). Was writing to jarvis.log instead of console.log |
 | ~~B4~~ | ~~Topic shift threshold~~ | ~~Resolved~~ | Already set to 0.35 in config.yaml, confirmed in production |
 | B5 | `_in_development/web_navigation/skill.py` has TODO: load prefs from YAML | None (archived prototype) | Not in production code |
 

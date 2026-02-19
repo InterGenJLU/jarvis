@@ -117,7 +117,7 @@ None!
 
 - **Voice testing: bare ack as answer** — JARVIS asks question → "yeah" → treated as answer (needs reliable trigger)
 - **Batch extraction (Phase 4) untested** — conversational memory batch fact extraction needs 25+ messages in one session to trigger
-- **Console logging** — `JARVIS_LOG_FILE_ONLY=1` not producing logs in file (deferred, not urgent)
+- ~~Console logging~~ — Fixed (Feb 19). Was writing to jarvis.log instead of dedicated console.log
 - ~~Topic shift threshold tuning~~ — Already set to 0.35 in config.yaml, confirmed live
 
 ---
