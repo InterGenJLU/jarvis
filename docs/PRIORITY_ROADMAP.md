@@ -16,7 +16,7 @@
 - ~~Qwen sampling params~~ — Done (Feb 19, `25b5f0a`). top_p=0.8, top_k=20 in all 6 llama.cpp payloads
 - ~~Install wl-clipboard~~ — Done (Feb 19)
 - ~~Enable GNOME extension~~ — Done (Feb 19, logout/login completed)
-- ~~Enroll the user's voice~~ — Done (Feb 16, `christopher.npy`). Secondary user has profile entry but no voice embedding yet
+- ~~Enroll the user's voice~~ — Done (Feb 16). Secondary user has profile entry but no voice embedding yet
 
 ---
 
