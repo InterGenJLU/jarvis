@@ -1,6 +1,6 @@
 # TODO — Next Session
 
-**Updated:** February 20, 2026
+**Updated:** February 19, 2026
 
 ---
 
@@ -128,6 +128,7 @@ None!
 
 | Feature | Date | Notes |
 |---------|------|-------|
+| Document Ingestion Phase 1 | Feb 19 | prompt_toolkit, DocumentBuffer, /paste + /context + /clear + /help, LLM injection |
 | Publish Script Non-Interactive | Feb 20 | `--auto` flag for CI-friendly publish (auto-generate commit msg + push) |
 | GNOME Desktop Integration (5 phases) | Feb 19 | Extension (D-Bus bridge), desktop_manager, app launcher migration, volume, workspace, clipboard, notifications — 16 intents |
 | Developer Tools Polish | Feb 19 | HAL 9000 Easter eggs for blocked commands, smart port summary, conversational process summary |

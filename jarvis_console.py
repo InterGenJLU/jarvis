@@ -19,12 +19,16 @@ os.environ['ROCM_PATH'] = '/opt/rocm-7.2.0'
 import sys
 import time
 import random
-import readline
 import argparse
 import threading
 import warnings
 from pathlib import Path
 from dataclasses import dataclass
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -47,7 +51,7 @@ from core.reminder_manager import get_reminder_manager
 from core.news_manager import get_news_manager
 from core.honorific import get_honorific
 from core.speech_chunker import SpeechChunker
-from core.context_window import get_context_window
+from core.context_window import get_context_window, estimate_tokens, TOKEN_RATIO
 
 
 class TTSProxy:
@@ -105,7 +109,58 @@ class SessionStats:
             self.llm_hits += 1
 
 
-def render_stats(console, match_info, llm, used_llm, t_start, t_match, t_end, session):
+class DocumentBuffer:
+    """In-memory document context that persists until /clear."""
+
+    def __init__(self, max_tokens: int = 4000):
+        self.content: str = ""
+        self.source: str = ""       # "paste", "file:name.py", "clipboard"
+        self.token_estimate: int = 0
+        self.max_tokens = max_tokens
+
+    def load(self, text: str, source: str = "paste"):
+        self.content = text
+        self.source = source
+        self.token_estimate = estimate_tokens(text)
+        self.truncate_to_budget()
+
+    def append(self, text: str, source: str = "paste"):
+        self.content = self.content + "\n\n" + text if self.content else text
+        self.source = f"{self.source} + {source}" if self.source else source
+        self.token_estimate = estimate_tokens(self.content)
+        self.truncate_to_budget()
+
+    def clear(self):
+        old_source = self.source
+        old_tokens = self.token_estimate
+        self.content = ""
+        self.source = ""
+        self.token_estimate = 0
+        return old_source, old_tokens
+
+    @property
+    def active(self) -> bool:
+        return bool(self.content)
+
+    def build_augmented_message(self, user_query: str) -> str:
+        if not self.content:
+            return user_query
+        return f"<document>\n{self.content}\n</document>\n\n{user_query}"
+
+    def truncate_to_budget(self) -> bool:
+        if self.token_estimate <= self.max_tokens:
+            return False
+        words = self.content.split()
+        target_words = int(self.max_tokens / TOKEN_RATIO)
+        self.content = " ".join(words[:target_words])
+        self.token_estimate = estimate_tokens(self.content)
+        if "(truncated)" not in self.source:
+            self.source += " (truncated)"
+        return True
+
+
+def render_stats(console, match_info, llm, used_llm, t_start, t_match, t_end, session,
+                  doc_buffer=None):
     """Render a compact stats panel with adaptive column layout."""
     total_ms = (t_end - t_start) * 1000
     match_ms = (t_match - t_start) * 1000
@@ -128,6 +183,9 @@ def render_stats(console, match_info, llm, used_llm, t_start, t_match, t_end, se
         info = llm.last_call_info
         tokens = f"{info.get('input_tokens', '?')}+{info.get('output_tokens', '?')}"
         pairs.append(("LLM", f"{info['provider']} ({tokens} tok)"))
+
+    if doc_buffer and doc_buffer.active:
+        pairs.append(("DocCtx", f"~{doc_buffer.token_estimate} tok ({doc_buffer.source})"))
 
     pairs.append(("Session", f"{session.total} cmd | Skill {session.skill_hits} | LLM {session.llm_hits}"))
 
@@ -228,6 +286,98 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
     return full_response
 
 
+def _handle_slash_command(command, doc_buffer, console, pt_session):
+    """Handle slash commands. Returns True if handled, False if not a slash command."""
+    parts = command.split(None, 1)
+    cmd = parts[0].lower()
+    # arg = parts[1] if len(parts) > 1 else ""
+
+    if cmd == "/paste":
+        console.print("[cyan]Paste mode — type or paste text. Press [bold]Esc then Enter[/bold] to submit, [bold]Ctrl+C[/bold] to cancel.[/cyan]")
+
+        # Multi-line key bindings: Enter = newline, Esc+Enter = submit
+        paste_bindings = KeyBindings()
+
+        @paste_bindings.add('escape', 'enter')
+        def _submit(event):
+            event.current_buffer.validate_and_handle()
+
+        @paste_bindings.add('enter')
+        def _newline(event):
+            event.current_buffer.insert_text('\n')
+
+        try:
+            text = pt_session.prompt(
+                "paste> ",
+                multiline=True,
+                key_bindings=paste_bindings,
+                bottom_toolbar=HTML('<b>Esc+Enter</b> to submit | <b>Ctrl+C</b> to cancel'),
+            )
+        except KeyboardInterrupt:
+            console.print("[dim]Paste cancelled.[/dim]")
+            return True
+
+        text = text.strip()
+        if not text:
+            console.print("[yellow]Nothing pasted.[/yellow]")
+            return True
+
+        doc_buffer.load(text, "paste")
+        lines = text.count('\n') + 1
+        preview = text[:200] + ("..." if len(text) > 200 else "")
+        console.print(Panel(
+            f"[bold green]Loaded[/bold green] ~{doc_buffer.token_estimate} tokens, "
+            f"{lines} lines ({doc_buffer.source})\n\n"
+            f"[dim]{preview}[/dim]",
+            title="[cyan]Document Buffer[/cyan]",
+            border_style="cyan",
+        ))
+        return True
+
+    elif cmd == "/context":
+        if not doc_buffer.active:
+            console.print("[dim]No document loaded. Use /paste or /file to load one.[/dim]")
+            return True
+        lines = doc_buffer.content.count('\n') + 1
+        chars = len(doc_buffer.content)
+        preview = doc_buffer.content[:500] + ("..." if chars > 500 else "")
+        console.print(Panel(
+            f"[bold]Source:[/bold] {doc_buffer.source}\n"
+            f"[bold]Tokens:[/bold] ~{doc_buffer.token_estimate} / {doc_buffer.max_tokens} max\n"
+            f"[bold]Size:[/bold] {chars:,} chars, {lines} lines\n\n"
+            f"[dim]{preview}[/dim]",
+            title="[cyan]Document Context[/cyan]",
+            border_style="cyan",
+        ))
+        return True
+
+    elif cmd == "/clear":
+        if not doc_buffer.active:
+            console.print("[dim]Nothing to clear — buffer is empty.[/dim]")
+            return True
+        old_source, old_tokens = doc_buffer.clear()
+        console.print(f"[green]Cleared[/green] document buffer ({old_source}, ~{old_tokens} tokens)")
+        return True
+
+    elif cmd in ("/help", "/?"):
+        help_table = Table(title="Slash Commands", box=box.SIMPLE, show_edge=False)
+        help_table.add_column("Command", style="cyan bold", no_wrap=True)
+        help_table.add_column("Description")
+        help_table.add_row("/paste", "Multi-line paste mode (Esc+Enter to submit)")
+        help_table.add_row("/file <path>", "Load a file into document buffer (Phase 2)")
+        help_table.add_row("/clipboard", "Load clipboard contents (Phase 2)")
+        help_table.add_row("/append", "Append to existing buffer (Phase 2)")
+        help_table.add_row("/context", "Show current document buffer info")
+        help_table.add_row("/clear", "Clear document buffer")
+        help_table.add_row("/help", "Show this help")
+        console.print(help_table)
+        return True
+
+    else:
+        console.print(f"[yellow]Unknown command: {cmd}[/yellow] — type /help for available commands")
+        return True
+
+
 def run_console(config, mode):
     """Main REPL loop."""
     console = Console()
@@ -313,17 +463,29 @@ def run_console(config, mode):
                        f"threshold={context_window.topic_shift_threshold}, "
                        f"prior={cw_stats['segments']} seg(s))")
 
-    # Command history (persists across sessions)
+    # Command history (persists across sessions) + document buffer
     history_file = Path(__file__).parent / ".console_history"
-    readline.set_history_length(1000)
-    try:
-        readline.read_history_file(history_file)
-    except FileNotFoundError:
-        pass
+    pt_history = FileHistory(str(history_file))
+    doc_buffer = DocumentBuffer()
+
+    def _bottom_toolbar():
+        if doc_buffer.active:
+            return HTML(
+                f'<b>DocCtx:</b> ~{doc_buffer.token_estimate} tok '
+                f'({doc_buffer.source}) — /context to view, /clear to remove'
+            )
+        return HTML('<b>/paste</b> load text  <b>/file</b> load file  <b>/help</b> commands')
+
+    pt_session = PromptSession(
+        history=pt_history,
+        bottom_toolbar=_bottom_toolbar,
+        enable_history_search=True,
+    )
 
     console.print(Panel(
         f"[bold]JARVIS Console[/bold] — {mode} mode\n"
-        f"Type commands directly. Type [bold]quit[/bold] to exit.",
+        f"Type commands directly. Type [bold]quit[/bold] to exit.\n"
+        f"Slash commands: /paste /file /clipboard /context /clear /help",
         border_style="cyan"
     ))
 
@@ -336,7 +498,7 @@ def run_console(config, mode):
                 console.print(Panel(ann, title="[yellow]Announcement[/yellow]", border_style="yellow"))
 
             try:
-                command = input("You > ").strip()
+                command = pt_session.prompt("You > ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -358,9 +520,12 @@ def run_console(config, mode):
                     calendar_manager.stop()
                 if reminder_manager:
                     reminder_manager.stop()
-                readline.write_history_file(history_file)
                 os.execv(sys.executable, [sys.executable] + sys.argv)
 
+            # Slash commands — handle before any skill routing
+            if command.startswith("/"):
+                _handle_slash_command(command, doc_buffer, console, pt_session)
+                continue
 
             # --- Process command ---
             # Strip wake word prefixes (voice mode does this in continuous_listener)
@@ -533,6 +698,10 @@ def run_console(config, mode):
                         f"{subjects}. Briefly acknowledge you'll remember this.]"
                     )
 
+                # Document buffer injection — prepend document in XML tags
+                if doc_buffer.active:
+                    llm_command = doc_buffer.build_augmented_message(llm_command)
+
                 response = _stream_llm_console(
                     llm, llm_command, history, console, mode, real_tts,
                     memory_context=memory_context,
@@ -557,13 +726,13 @@ def run_console(config, mode):
 
             # Stats panel
             session_stats.update(skill_handled, used_llm)
-            render_stats(console, match_info, llm, used_llm, t_start, t_match, t_end, session_stats)
+            render_stats(console, match_info, llm, used_llm, t_start, t_match, t_end, session_stats,
+                         doc_buffer=doc_buffer)
 
             # Wait for any background speech to finish before next prompt
             tts_proxy._wait_for_speech()
 
     finally:
-        readline.write_history_file(history_file)
         console.print("\n[dim]Shutting down...[/dim]")
         if memory_manager:
             memory_manager.save()
