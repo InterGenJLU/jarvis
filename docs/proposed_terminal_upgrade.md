@@ -217,4 +217,4 @@ When document buffer is active, pass explicit `max_tokens=600` to allow longer a
 
 ---
 
-## Status: Phase 2 COMPLETE — /file, /clipboard, /append, drag-and-drop
+## Status: Phase 3 COMPLETE — All phases implemented

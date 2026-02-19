@@ -128,6 +128,7 @@ None!
 
 | Feature | Date | Notes |
 |---------|------|-------|
+| Document Ingestion Phase 3 | Feb 19 | Tab completion (slash commands + /file paths), doc-aware LLM hint, dynamic max_tokens=600 |
 | Document Ingestion Phase 2 | Feb 19 | /file (binary reject, --tail, 500KB warn), /clipboard (wl-paste), /append, drag-and-drop auto-detect |
 | Document Ingestion Phase 1 | Feb 19 | prompt_toolkit, DocumentBuffer, /paste + /context + /clear + /help, LLM injection |
 | Publish Script Non-Interactive | Feb 20 | `--auto` flag for CI-friendly publish (auto-generate commit msg + push) |

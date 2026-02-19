@@ -121,10 +121,15 @@ The buffer also clears automatically when you exit the console.
 |-----|--------|
 | **Up/Down** | Navigate command history |
 | **Ctrl+R** | Reverse search through history |
+| **Tab** | Auto-complete slash commands and file paths |
 | **Ctrl+C** | Cancel current input |
 | **Ctrl+D** | Exit console |
 
 Command history persists across sessions automatically.
+
+Tab completion works for:
+- Slash commands: type `/` then Tab to see all commands, or `/fi` Tab to complete `/file`
+- File paths after `/file`: type `/file ~/` then Tab to browse directories
 
 ## The Bottom Toolbar
 

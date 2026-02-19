@@ -26,6 +26,8 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion, PathCompleter
+from prompt_toolkit.document import Document as PTDocument
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
@@ -107,6 +109,29 @@ class SessionStats:
             self.skill_hits += 1
         if used_llm:
             self.llm_hits += 1
+
+
+class SlashCompleter(Completer):
+    """Tab completion for slash commands and /file paths."""
+
+    _commands = ["/paste", "/file", "/clipboard", "/append", "/context", "/clear", "/help"]
+    _path_completer = PathCompleter(expanduser=True)
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+
+        # After "/file " — complete file paths
+        if text.startswith("/file "):
+            path_text = text[6:]
+            path_doc = PTDocument(path_text, len(path_text))
+            yield from self._path_completer.get_completions(path_doc, complete_event)
+            return
+
+        # After "/" — complete slash command names
+        if text.startswith("/") and " " not in text:
+            for cmd in self._commands:
+                if cmd.startswith(text):
+                    yield Completion(cmd, start_position=-len(text))
 
 
 class DocumentBuffer:
@@ -229,7 +254,8 @@ def render_stats(console, match_info, llm, used_llm, t_start, t_match, t_end, se
 
 
 def _stream_llm_console(llm, command, history, console, mode, real_tts,
-                        memory_context=None, conversation_messages=None):
+                        memory_context=None, conversation_messages=None,
+                        max_tokens=None):
     """Stream LLM response with typewriter output and first-chunk quality gate.
 
     Returns the full accumulated response text, or empty string on failure.
@@ -247,6 +273,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
             conversation_history=history,
             memory_context=memory_context,
             conversation_messages=conversation_messages,
+            max_tokens=max_tokens,
         ):
             full_response += token
 
@@ -642,6 +669,8 @@ def run_console(config, mode):
         history=pt_history,
         bottom_toolbar=_bottom_toolbar,
         enable_history_search=True,
+        completer=SlashCompleter(),
+        complete_while_typing=False,
     )
 
     console.print(Panel(
@@ -862,6 +891,13 @@ def run_console(config, mode):
                 if memory_manager:
                     memory_context = memory_manager.get_proactive_context(command, "primary_user")
 
+                # Document-aware LLM hint — tell the LLM a document is loaded
+                if doc_buffer.active:
+                    doc_hint = ("The user has loaded a document into the context buffer. "
+                                "Refer to the <document> tags in their message. "
+                                "Be analytical and specific in your response.")
+                    memory_context = f"{doc_hint}\n\n{memory_context}" if memory_context else doc_hint
+
                 # Fact-extraction acknowledgment — let LLM know it just stored facts
                 llm_command = command
                 if memory_manager and memory_manager.last_extracted:
@@ -879,6 +915,7 @@ def run_console(config, mode):
                     llm, llm_command, history, console, mode, real_tts,
                     memory_context=memory_context,
                     conversation_messages=context_messages,
+                    max_tokens=600 if doc_buffer.active else None,
                 )
                 if not response:
                     response = "I'm sorry, I'm having trouble processing that right now."
