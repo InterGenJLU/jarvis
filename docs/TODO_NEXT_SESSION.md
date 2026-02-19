@@ -43,12 +43,7 @@
 
 ## Active Bugs
 
-### "Fullscreen" Misrecognized by Whisper
-**Priority:** LOW — waiting for Feb 21 retraining
-
-### News Skill: No Urgency Filtering
-**Priority:** LOW
-**Problem:** "Read critical headlines" matches count intent, no way to filter by urgency level.
+None! 🎉
 
 ---
 
@@ -64,6 +59,7 @@
 - **Inject user facts into web research** — JARVIS should reason about what it knows about the user (location, preferences) during `stream_with_tools()`. Needs careful scoping to avoid history poisoning.
 - **Minimize web search latency** — forced search adds ~5-8s; explore caching, parallel fetch, snippet-only mode.
 - **Qwen sampling params** — Qwen team recommends temp=0.7, top_p=0.8, top_k=20 for non-thinking mode. Current: temp=0.6 only. Not urgent — prescriptive prompt works without them.
+- **News urgency filtering** — "Read critical headlines" should filter by urgency level. Currently matches count intent with no urgency parameter.
 
 ---
 
@@ -99,6 +95,15 @@ Should produce: "Python is using the most CPU at the moment, sir, followed by Br
 ### "Onscreen Please" — Retroactive Visual Display
 **Priority:** MEDIUM
 **Concept:** Buffer last raw output. "Onscreen please" displays it retroactively.
+
+### Web Dashboard
+**Priority:** LOW (demo/showoff feature)
+**Concept:** Local Flask/FastAPI web UI for JARVIS management.
+- System stats page (live health check data, GPU/CPU/RAM, pipeline status)
+- Configuration page (config.yaml rendered as a clean editable form)
+- Skill manager (browse installed skills, add from template, view metadata)
+- Database viewer (CRUD for memory.db facts, topic_segments, chat history)
+- Separate process, read-only by default, localhost only
 
 ---
 
