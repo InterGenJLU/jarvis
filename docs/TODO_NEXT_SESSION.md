@@ -63,18 +63,6 @@ None! 🎉
 
 ---
 
-## Developer Tools Polish
-
-### HAL 9000 Easter Egg for Blocked Commands
-When user requests a blocked command (`sudo`, `dd`, `shutdown`, etc.), respond with "I'm sorry, Dave, I'm afraid I can't do that." (~50% chance) alongside butler alternatives.
-**File:** `skills/system/developer_tools/skill.py`
-
-### network_info — Smart Port Summary
-Raw output dumps all open ports. Voice should summarize: "I see 47 open ports, sir. Notable ones are SSH on 22 and llama-server on 8081." Show full list on request.
-
-### process_info — Conversational LLM Summary
-Should produce: "Python is using the most CPU at the moment, sir, followed by Brave." Qwen returned empty during testing (Feb 16). Likely needs pre-processed input.
-
 ---
 
 ## Designed Features — Not Yet Started
@@ -132,12 +120,13 @@ Should produce: "Python is using the most CPU at the moment, sir, followed by Br
 
 ---
 
-## Completed (Feb 10-18)
+## Completed (Feb 10-19)
 
 *Brief summary. Full details in `memory/` files and git history.*
 
 | Feature | Date | Notes |
 |---------|------|-------|
+| Developer Tools Polish | Feb 19 | HAL 9000 Easter eggs for blocked commands, smart port summary, conversational process summary |
 | Scoped TTS subprocess control | Feb 18 | Replaced global `pkill -9 aplay/piper` with tracked subprocess kill — `tts.kill_active()` |
 | Prescriptive Prompt + tool_choice=auto | Feb 18 | Rewrote vague prompt to explicit rules, removed tool_choice=required pattern matching. 150/150 test decisions correct (`8ae35ce`) |
 | Ack Cache Trim | Feb 18 | 7→4 neutral time-based phrases per the user's preference (`0b9c017`) |

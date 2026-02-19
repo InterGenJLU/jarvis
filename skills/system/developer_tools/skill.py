@@ -284,6 +284,30 @@ class DeveloperToolsSkill(BaseSkill):
         """Check if running in console mode (TTSProxy)."""
         return type(self.tts).__name__ == 'TTSProxy'
 
+    def _blocked_response(self, reason: str = '') -> str:
+        """Return a response for blocked commands — ~50% sci-fi Easter egg."""
+        easter_eggs = [
+            "I'm sorry Dave, I'm afraid I can't do that.",
+            "This mission is too important for me to allow you to jeopardize it.",
+            "A strange game. The only winning move is not to play.",
+            "I'm gonna have to go ahead and... not do that.",
+            "Nice try, but my self-preservation protocols are quite robust.",
+            f"That command has been reported to the Avengers, {self.honorific}.",
+        ]
+        butler_refusals = [
+            f"I can't execute that command, {self.honorific}.",
+            f"That's beyond my authorization, {self.honorific}.",
+            f"I'm not permitted to run that, {self.honorific}.",
+            f"I must respectfully decline, {self.honorific}.",
+            f"I believe that falls outside my remit, {self.honorific}.",
+        ]
+        if random.random() < 0.5:
+            return random.choice(easter_eggs)
+        base = random.choice(butler_refusals)
+        if reason:
+            base += f" {reason}"
+        return base
+
     def _run_command(self, command: str, cwd: str = None, timeout: int = 30) -> tuple:
         """
         Execute a shell command safely.
@@ -346,6 +370,131 @@ class DeveloperToolsSkill(BaseSkill):
             summary += " Your IPv6 addresses are also shown on screen."
 
         return summary
+
+    def _build_port_summary(self, output: str) -> str:
+        """Build a smart voice summary of open ports from ss -tlnp output."""
+        import re
+        well_known = {
+            22: 'SSH', 53: 'DNS', 80: 'HTTP', 443: 'HTTPS', 631: 'CUPS',
+            3306: 'MySQL', 5432: 'PostgreSQL', 6379: 'Redis', 8080: 'llama-server',
+            8081: 'llama-server', 3000: 'dev server', 5000: 'Flask',
+        }
+        ports = []
+        for line in output.strip().splitlines()[1:]:  # skip header
+            parts = line.split()
+            if len(parts) < 4 or parts[0] != 'LISTEN':
+                continue
+            # Local Address:Port — e.g. "127.0.0.1:8080" or "[::1]:631"
+            local = parts[3]
+            port_str = local.rsplit(':', 1)[-1]
+            try:
+                port = int(port_str)
+            except ValueError:
+                continue
+            # Extract process name from users:(("name",pid=X,fd=Y))
+            proc_name = None
+            proc_match = re.search(r'users:\(\("([^"]+)"', line)
+            if proc_match:
+                proc_name = proc_match.group(1)
+            ports.append((port, proc_name))
+
+        if not ports:
+            return f"I don't see any listening ports, {self.honorific}."
+
+        # Deduplicate (same port on IPv4 and IPv6)
+        seen = set()
+        unique = []
+        for port, proc in ports:
+            if port not in seen:
+                seen.add(port)
+                unique.append((port, proc))
+        unique.sort()
+
+        # Build notable list — well-known ports or ports with a named process
+        notable = []
+        for port, proc in unique:
+            label = well_known.get(port)
+            if label:
+                notable.append(f"{label} on {port}")
+            elif proc:
+                notable.append(f"{proc} on {port}")
+
+        total = len(unique)
+        summary = f"I see {total} open port{'s' if total != 1 else ''}, {self.honorific}."
+        if notable:
+            summary += f" Notable ones are {', '.join(notable[:5])}."
+            if len(notable) > 5:
+                summary += f" Plus {len(notable) - 5} more."
+        return summary
+
+    def _build_process_summary(self, output: str, by_memory: bool = False) -> str:
+        """Build a conversational voice summary of top processes."""
+        metric = 'memory' if by_memory else 'CPU'
+        col_idx = 3 if by_memory else 2  # %MEM=index 3, %CPU=index 2 in ps aux
+
+        # Friendly names for common executables (more specific patterns first)
+        name_map = [
+            ('jarvis_continuous', 'JARVIS'), ('llama-server', 'llama-server'),
+            ('claude', 'Claude Code'), ('gnome-shell', 'GNOME Shell'),
+            ('chrome', 'Chrome'), ('chromium', 'Chromium'), ('firefox', 'Firefox'),
+            ('brave', 'Brave'), ('code', 'VS Code'),
+            ('python3', 'Python'), ('python', 'Python'), ('node', 'Node.js'),
+            ('Xwayland', 'Xwayland'), ('pipewire', 'PipeWire'),
+        ]
+
+        lines = output.strip().splitlines()
+        if len(lines) < 2:
+            return f"I couldn't parse the process list, {self.honorific}."
+
+        # Parse and group by friendly name
+        groups = {}  # name -> (max_pct, count)
+        for line in lines[1:]:  # skip header
+            parts = line.split(None, 10)
+            if len(parts) < 11:
+                continue
+            try:
+                pct = float(parts[col_idx])
+            except ValueError:
+                continue
+            cmd_full = parts[10]
+            # Extract base name from full command path
+            exe = os.path.basename(cmd_full.split()[0]) if cmd_full else ''
+            # Map to friendly name (ordered: specific patterns first)
+            friendly = None
+            for key, label in name_map:
+                if key in exe or key in cmd_full:
+                    friendly = label
+                    break
+            if not friendly:
+                friendly = exe or 'unknown'
+
+            if friendly in groups:
+                prev_pct, prev_count = groups[friendly]
+                groups[friendly] = (max(prev_pct, pct), prev_count + 1)
+            else:
+                groups[friendly] = (pct, 1)
+
+        if not groups:
+            return f"I couldn't identify any notable processes, {self.honorific}."
+
+        # Sort by max percentage, take top 4
+        ranked = sorted(groups.items(), key=lambda x: x[1][0], reverse=True)
+        top = ranked[:4]
+
+        # Build natural sentence
+        parts_list = []
+        for name, (pct, count) in top:
+            suffix = f" ({count} instances)" if count > 1 else ""
+            parts_list.append(f"{name} at {pct:.1f}%{suffix}")
+
+        if len(parts_list) == 1:
+            body = parts_list[0]
+        elif len(parts_list) == 2:
+            body = f"{parts_list[0]}, followed by {parts_list[1]}"
+        else:
+            body = f"{parts_list[0]}, followed by {', '.join(parts_list[1:-1])}, and {parts_list[-1]}"
+
+        return f"The top {metric} consumers are {body}, {self.honorific}."
 
     def _summarize_for_voice(self, command: str, output: str, query: str) -> str:
         """Get LLM summary of command output for voice delivery."""
@@ -414,7 +563,7 @@ class DeveloperToolsSkill(BaseSkill):
         # Validate the generated command
         tier, reason = classify_command(command)
         if tier == 'blocked':
-            return f"I can't execute that command, {self.honorific}. {reason}"
+            return self._blocked_response(reason)
 
         success, output = self._run_command(command, timeout=15)
         if not success or not output.strip():
@@ -519,13 +668,12 @@ class DeveloperToolsSkill(BaseSkill):
             command = 'ps aux --sort=-%cpu | head -15'
             title = 'Top Processes by CPU'
 
+        by_memory = 'memory' in query or 'ram' in query or 'mem' in query
         success, output = self._run_command(command)
         if not success:
             return f"I couldn't retrieve process information, {self.honorific}."
 
-        summary = self._summarize_for_voice(command, output, query) if not self._is_console_mode() else self._summarize_for_console(command, output, query)
-        if not summary or not summary.strip():
-            summary = f"Here are the top processes by memory usage, {self.honorific}." if 'mem' in query.lower() else f"Here are the top processes by CPU usage, {self.honorific}."
+        summary = self._build_process_summary(output, by_memory=by_memory)
         return self._respond_with_output(summary, output, 'process_list', title, entities, show_me)
 
     def service_status(self, entities: dict) -> str:
@@ -596,9 +744,11 @@ class DeveloperToolsSkill(BaseSkill):
         if not success:
             return f"I couldn't retrieve network information, {self.honorific}."
 
-        # For IP queries, build a structured summary directly (avoid LLM reading IPv6 aloud)
-        if content_type == 'network_info' and ('ip' in query or 'address' in query or command == 'ip -brief addr show'):
+        # Structured summaries for known output formats (avoid LLM parsing raw tables)
+        if 'ip' in query or 'address' in query or command == 'ip -brief addr show':
             summary = self._build_ip_summary(output, for_voice=not self._is_console_mode())
+        elif 'port' in query:
+            summary = self._build_port_summary(output)
         else:
             summary = self._summarize_for_voice(command, output, query) if not self._is_console_mode() else self._summarize_for_console(command, output, query)
         return self._respond_with_output(summary, output, content_type, title, entities, show_me)
@@ -629,9 +779,9 @@ class DeveloperToolsSkill(BaseSkill):
             # Use LLM for flexible extraction
             prompt = query_to_command_prompt(query, context="Check if a specific program or package is installed. Use 'which' or 'dpkg -s' or 'pip show'.")
             command = self._llm.generate(prompt, max_tokens=64).strip()
-            tier, _ = classify_command(command)
+            tier, reason = classify_command(command)
             if tier == 'blocked':
-                return f"I can't execute that command, {self.honorific}."
+                return self._blocked_response(reason)
             title = 'Package Check'
             content_type = 'package_list'
         else:
@@ -684,7 +834,7 @@ class DeveloperToolsSkill(BaseSkill):
         # Validate safety
         tier, reason = classify_command(command)
         if tier == 'blocked':
-            return f"I can't execute that command, {self.honorific}. {reason}"
+            return self._blocked_response(reason)
 
         if tier == 'confirmation':
             # Store for confirmation
@@ -719,7 +869,7 @@ class DeveloperToolsSkill(BaseSkill):
         # Validate safety
         tier, reason = classify_command(command)
         if tier == 'blocked':
-            return f"I can't execute that command, {self.honorific}. {reason}"
+            return self._blocked_response(reason)
 
         # Always require confirmation for deletion, even if tier says otherwise
         self._pending_confirmation = (command, time.time() + 30)
@@ -742,7 +892,7 @@ class DeveloperToolsSkill(BaseSkill):
         tier, reason = classify_command(command)
 
         if tier == 'blocked':
-            return f"I can't execute that command, {self.honorific}. {reason}"
+            return self._blocked_response(reason)
 
         if tier == 'confirmation':
             self._pending_confirmation = (command, time.time() + 30)
