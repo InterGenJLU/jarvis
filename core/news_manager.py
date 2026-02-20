@@ -101,7 +101,7 @@ class NewsManager:
         self.feeds: List[Dict] = config.get("news.feeds", [])
         self.poll_interval: int = config.get("news.poll_interval_seconds", 900)
         self.max_per_feed: int = config.get("news.max_headlines_per_feed", 20)
-        self.retention_days: int = config.get("news.headline_retention_days", 7)
+        self.max_per_category: int = config.get("news.max_per_category", 25)
         self.dedup_threshold: float = config.get("news.dedup_threshold", 0.82)
 
         # Background thread
@@ -266,17 +266,28 @@ class NewsManager:
                 conn.close()
 
     def _cleanup_old(self):
-        """Delete headlines older than retention period."""
-        cutoff = (datetime.now() - timedelta(days=self.retention_days)).strftime("%Y-%m-%d %H:%M:%S")
+        """Keep only the N most recent headlines per category."""
         with self._db_lock:
             conn = self._conn()
             try:
-                deleted = conn.execute(
-                    "DELETE FROM news_headlines WHERE detected_at < ?", (cutoff,)
-                ).rowcount
+                # Get distinct categories
+                categories = [row[0] for row in conn.execute(
+                    "SELECT DISTINCT category FROM news_headlines"
+                ).fetchall()]
+
+                total_deleted = 0
+                for cat in categories:
+                    deleted = conn.execute(
+                        """DELETE FROM news_headlines WHERE category = ? AND id NOT IN (
+                            SELECT id FROM news_headlines WHERE category = ?
+                            ORDER BY detected_at DESC LIMIT ?
+                        )""", (cat, cat, self.max_per_category)
+                    ).rowcount
+                    total_deleted += deleted
+
                 conn.commit()
-                if deleted:
-                    self.logger.info(f"Cleaned up {deleted} old headlines")
+                if total_deleted:
+                    self.logger.info(f"Trimmed {total_deleted} headlines (keeping {self.max_per_category}/category)")
             finally:
                 conn.close()
 

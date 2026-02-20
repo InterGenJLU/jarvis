@@ -56,7 +56,7 @@
 | 15 | **Screenshot via GNOME extension** — add screenshot D-Bus method, bypass portal dialog | 2-3 hours | Developer tools "show me" integration, visual debugging | Phase 5c from desktop plan |
 | 16 | **Unknown speaker / guest mode** — unknown voice → limited access, no personal data | 3-4 hours | Security + graceful handling of guests. Emergency override for voice re-enrollment | MASTER_DESIGN.md |
 | 17 | **LLM news classification** — activate `_llm_classify()` in news_manager.py | 2-3 hours | Better urgency classification than keyword rules. Method already exists (reserved) | news_manager.py:378 |
-| 40 | **News headline age trimming** — auto-purge headlines older than N days from news_headlines.db | 30 min | DB has 2900+ rows, most stale. Add `DELETE WHERE published_at < ?` to poll loop or startup | news_manager.py |
+| 40 | ~~**News headline trimming**~~ — DONE (Feb 20). Keep 25 most recent per category, replaces 7-day retention | ✅ | `_cleanup_old()` rewritten, `max_per_category: 25` in config | news_manager.py |
 | 18 | **Bare ack as answer** — detect "yeah"/"no" as answers to JARVIS questions vs new commands | 3-4 hours | Conversational naturalness. Currently "yeah" after a question = treated as command | TODO |
 | 19 | **Web query memory** — SQLite DB of last 100 web queries + results, "what did we look up?" | 3-4 hours | Some functionality in conversational memory already. Dedicated lookup is cleaner | MASTER_DESIGN.md |
 

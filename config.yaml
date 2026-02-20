@@ -157,7 +157,7 @@ news:
   poll_interval_seconds: 900
   max_headlines_per_feed: 20
   dedup_threshold: 0.82
-  headline_retention_days: 7
+  max_per_category: 25
   feeds:
     # Technology
     - name: "Ars Technica"
