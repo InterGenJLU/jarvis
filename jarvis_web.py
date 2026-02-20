@@ -130,7 +130,9 @@ def init_components(config, tts_proxy):
             except Exception as e:
                 logger.warning("Calendar init failed: %s", e)
 
-        rm.start()
+        # Don't start RM background polling in web mode — the voice pipeline
+        # handles proactive reminders/rundowns.  The RM is still available for
+        # explicit commands ("daily rundown", "remind me...").
         components['reminder_manager'] = rm
 
     # News
@@ -207,18 +209,26 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     match_info = None
 
     # Priority 1: Rundown acceptance
+    # NOTE: Only intercept when the rundown was explicitly triggered via web UI
+    # (not background polling, which duplicates the voice pipeline's offers).
     if reminder_manager and reminder_manager.is_rundown_pending():
         text_lower = command.strip().lower()
-        negative = any(w in text_lower for w in [
-            "no", "not now", "later", "not yet", "hold", "skip",
-        ])
+        words = set(re.findall(r'\b\w+\b', text_lower))
+        negative = bool(
+            words & {"no", "later", "hold", "skip"}
+            or "not now" in text_lower
+            or "not yet" in text_lower
+        )
         if negative:
             reminder_manager.defer_rundown()
             response = f"Very well, {get_honorific()}. Just say 'daily rundown' whenever you're ready."
-        else:
+            skill_handled = True
+        elif words & {"yes", "yeah", "yep", "sure", "go", "ready", "proceed"}:
             await asyncio.to_thread(reminder_manager.deliver_rundown)
             response = ""
-        skill_handled = True
+            skill_handled = True
+        # If neither affirmative nor negative, fall through to normal routing
+        # (user typed an unrelated command while rundown was pending)
 
     # Priority 2: Reminder acknowledgment
     if not skill_handled and reminder_manager and reminder_manager.is_awaiting_ack():

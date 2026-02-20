@@ -38,6 +38,11 @@
     let reconnectDelay = 1000;
     const MAX_RECONNECT_DELAY = 30000;
 
+    // Command history
+    const commandHistory = [];
+    let historyIndex = -1;
+    let pendingInput = '';
+
     // --- WebSocket ---
     function connect() {
         setStatus('connecting');
@@ -376,6 +381,13 @@
         const text = userInput.value.trim();
         if (!text || processing || !ws || ws.readyState !== WebSocket.OPEN) return;
 
+        // Record in command history (avoid duplicating last entry)
+        if (commandHistory.length === 0 || commandHistory[commandHistory.length - 1] !== text) {
+            commandHistory.push(text);
+        }
+        historyIndex = -1;
+        pendingInput = '';
+
         addMessage('user', text);
         ws.send(JSON.stringify({ type: 'message', content: text }));
         userInput.value = '';
@@ -390,11 +402,36 @@
         this.style.height = Math.min(this.scrollHeight, 200) + 'px';
     });
 
-    // --- Keyboard: Enter to send, Shift+Enter for newline ---
+    // --- Keyboard: Enter to send, Shift+Enter for newline, Up/Down for history ---
     userInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
+        } else if (e.key === 'ArrowUp' && commandHistory.length > 0) {
+            // Only navigate history when cursor is at position 0 (or input is single-line)
+            if (userInput.selectionStart === 0 || !userInput.value.includes('\n')) {
+                e.preventDefault();
+                if (historyIndex === -1) {
+                    pendingInput = userInput.value;
+                    historyIndex = commandHistory.length - 1;
+                } else if (historyIndex > 0) {
+                    historyIndex--;
+                }
+                userInput.value = commandHistory[historyIndex];
+                userInput.style.height = 'auto';
+                userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
+            }
+        } else if (e.key === 'ArrowDown' && historyIndex !== -1) {
+            e.preventDefault();
+            if (historyIndex < commandHistory.length - 1) {
+                historyIndex++;
+                userInput.value = commandHistory[historyIndex];
+            } else {
+                historyIndex = -1;
+                userInput.value = pendingInput;
+            }
+            userInput.style.height = 'auto';
+            userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
         }
     });
 

@@ -832,9 +832,12 @@ def run_console(config, mode):
             # Priority 1: Rundown acceptance (must intercept before skill routing)
             if reminder_manager and reminder_manager.is_rundown_pending():
                 text_lower = command.strip().lower()
-                negative = any(w in text_lower for w in [
-                    "no", "not now", "later", "not yet", "hold", "skip",
-                ])
+                words = set(re.findall(r'\b\w+\b', text_lower))
+                negative = bool(
+                    words & {"no", "later", "hold", "skip"}
+                    or "not now" in text_lower
+                    or "not yet" in text_lower
+                )
                 if negative:
                     reminder_manager.defer_rundown()
                     response = f"Very well, {get_honorific()}. Just say 'daily rundown' whenever you're ready."
