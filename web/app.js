@@ -71,16 +71,28 @@
     const browserList = document.getElementById('browser-list');
     const browserCurrentPath = document.getElementById('browser-current-path');
 
+    // Sidebar
+    const sidebar = document.getElementById('sidebar');
+    const sidebarOverlay = document.getElementById('sidebar-overlay');
+    const sidebarClose = document.getElementById('sidebar-close');
+    const sessionListEl = document.getElementById('session-list');
+    const btnViewMore = document.getElementById('btn-view-more');
+    const btnHamburger = document.getElementById('btn-hamburger');
+
     // --- State ---
     let ws = null;
     let processing = false;
     let reconnectDelay = 1000;
     const MAX_RECONNECT_DELAY = 30000;
-    let historyLoaded = false;
-    let oldestTimestamp = null; // For scroll-to-load-more pagination
-    let loadingHistory = false;
     let reconnectAttempt = 0;
     let reconnectTimer = null;
+
+    // Session sidebar state
+    let sessions = [];
+    let activeSessionId = null;
+    let sessionOffset = 0;
+    let sidebarOpen = false;
+    let sessionsHasMore = false;
 
     // Command history
     const commandHistory = [];
@@ -176,7 +188,11 @@
                 break;
 
             case 'history':
-                loadHistory(msg.messages);
+                loadHistory(msg.messages, msg.session_id || null);
+                break;
+
+            case 'session_list':
+                handleSessionList(msg);
                 break;
 
             case 'system_stats':
@@ -951,11 +967,12 @@
                 browserVisible = false;
                 btnBrowseToggle.textContent = 'Browse';
             }
+            if (sidebarOpen) {
+                toggleSidebar();
+            }
         } else if (e.key === 'l' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             messagesEl.innerHTML = '';
-            oldestTimestamp = null;
-            historyLoaded = false;
         }
     });
 
@@ -976,21 +993,16 @@
     });
 
     // --- History loading ---
-    function loadHistory(messages) {
+    function loadHistory(messages, sessionId) {
         if (!messages || messages.length === 0) return;
 
-        // Track oldest timestamp for pagination
-        oldestTimestamp = messages[0].timestamp || null;
-        historyLoaded = true;
+        if (sessionId) {
+            activeSessionId = sessionId;
+            highlightActiveSession();
+        }
 
         // Build a document fragment for performance
         var frag = document.createDocumentFragment();
-        var separator = document.createElement('div');
-        separator.className = 'history-separator';
-        separator.id = 'history-separator';
-        separator.textContent = 'Previous conversation';
-
-        frag.appendChild(separator);
 
         messages.forEach(function (msg) {
             var role = msg.role === 'user' ? 'user' : 'jarvis';
@@ -1011,7 +1023,6 @@
             }
             messageDiv.appendChild(bubble);
 
-            // Timestamp
             if (msg.timestamp) {
                 var ts = document.createElement('div');
                 ts.className = 'message-timestamp';
@@ -1022,7 +1033,7 @@
             frag.appendChild(messageDiv);
         });
 
-        // Insert before any existing messages
+        // Insert before any existing live messages
         if (messagesEl.firstChild) {
             messagesEl.insertBefore(frag, messagesEl.firstChild);
         } else {
@@ -1030,52 +1041,6 @@
         }
 
         scrollToBottom();
-    }
-
-    function prependHistory(messages) {
-        if (!messages || messages.length === 0) return;
-
-        oldestTimestamp = messages[0].timestamp || null;
-
-        var frag = document.createDocumentFragment();
-        messages.forEach(function (msg) {
-            var role = msg.role === 'user' ? 'user' : 'jarvis';
-            var messageDiv = document.createElement('div');
-            messageDiv.className = 'message ' + role + ' history-msg';
-
-            var sender = document.createElement('div');
-            sender.className = 'message-sender';
-            sender.textContent = role === 'user' ? 'YOU' : 'J.A.R.V.I.S.';
-            messageDiv.appendChild(sender);
-
-            var bubble = document.createElement('div');
-            bubble.className = 'message-bubble';
-            if (role === 'jarvis') {
-                bubble.innerHTML = renderMarkdown(msg.content || '');
-            } else {
-                bubble.textContent = msg.content || '';
-            }
-            messageDiv.appendChild(bubble);
-
-            if (msg.timestamp) {
-                var ts = document.createElement('div');
-                ts.className = 'message-timestamp';
-                ts.textContent = formatTimestamp(msg.timestamp);
-                messageDiv.appendChild(ts);
-            }
-
-            frag.appendChild(messageDiv);
-        });
-
-        // Insert at the very top (before history separator)
-        var sep = document.getElementById('history-separator');
-        if (sep) {
-            messagesEl.insertBefore(frag, sep);
-        } else if (messagesEl.firstChild) {
-            messagesEl.insertBefore(frag, messagesEl.firstChild);
-        } else {
-            messagesEl.appendChild(frag);
-        }
     }
 
     function formatTimestamp(ts) {
@@ -1094,40 +1059,6 @@
         }
         return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
             d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    }
-
-    // --- Scroll-to-load-more ---
-    chatArea.addEventListener('scroll', function () {
-        if (loadingHistory || !historyLoaded || !oldestTimestamp) return;
-        // Trigger when scrolled near the top
-        if (chatArea.scrollTop < 80) {
-            loadOlderMessages();
-        }
-    });
-
-    function loadOlderMessages() {
-        if (loadingHistory || !oldestTimestamp) return;
-        loadingHistory = true;
-
-        var prevHeight = chatArea.scrollHeight;
-
-        fetch('/api/history?before=' + oldestTimestamp + '&limit=30')
-            .then(function (resp) { return resp.json(); })
-            .then(function (data) {
-                if (data.messages && data.messages.length > 0) {
-                    prependHistory(data.messages);
-                    // Maintain scroll position
-                    var newHeight = chatArea.scrollHeight;
-                    chatArea.scrollTop += (newHeight - prevHeight);
-                }
-                if (!data.has_more) {
-                    oldestTimestamp = null; // No more pages
-                }
-                loadingHistory = false;
-            })
-            .catch(function () {
-                loadingHistory = false;
-            });
     }
 
     // --- Markdown rendering (no library) ---
@@ -1186,6 +1117,239 @@
             chatArea.scrollTop = chatArea.scrollHeight;
         });
     }
+
+    // --- Session sidebar ---
+
+    function toggleSidebar() {
+        sidebarOpen = !sidebarOpen;
+        sidebar.classList.toggle('open', sidebarOpen);
+        btnHamburger.classList.toggle('active', sidebarOpen);
+        document.body.classList.toggle('sidebar-open', sidebarOpen);
+
+        // Mobile overlay
+        if (sidebarOpen) {
+            sidebarOverlay.classList.remove('hidden');
+            // Slight delay for transition
+            requestAnimationFrame(function () {
+                sidebarOverlay.classList.add('visible');
+            });
+        } else {
+            sidebarOverlay.classList.remove('visible');
+            setTimeout(function () {
+                sidebarOverlay.classList.add('hidden');
+            }, 250);
+        }
+
+        // Load sessions on first open
+        if (sidebarOpen && sessions.length === 0) {
+            fetchSessions(0);
+        }
+    }
+
+    function fetchSessions(offset) {
+        fetch('/api/sessions?offset=' + offset + '&limit=10')
+            .then(function (resp) { return resp.json(); })
+            .then(function (data) {
+                if (data.sessions) {
+                    if (offset === 0) {
+                        sessions = data.sessions;
+                    } else {
+                        sessions = sessions.concat(data.sessions);
+                    }
+                    sessionsHasMore = data.has_more;
+                    sessionOffset = offset + data.sessions.length;
+                    renderSessionList();
+                }
+            })
+            .catch(function () {
+                sessionListEl.innerHTML = '<div style="padding:16px;color:var(--text-dim);font-size:0.82rem;">Failed to load sessions</div>';
+            });
+    }
+
+    function renderSessionList() {
+        sessionListEl.innerHTML = '';
+
+        sessions.forEach(function (s, idx) {
+            var entry = document.createElement('div');
+            entry.className = 'session-entry';
+            entry.setAttribute('data-session-id', s.id);
+            if (s.id === activeSessionId) {
+                entry.classList.add('active');
+            }
+
+            // Time row
+            var timeEl = document.createElement('div');
+            timeEl.className = 'session-entry-time';
+            timeEl.textContent = formatTimestamp(s.start_ts);
+
+            // Live badge for most recent session
+            if (idx === 0) {
+                var badge = document.createElement('span');
+                badge.className = 'session-live-badge';
+                badge.textContent = 'LIVE';
+                timeEl.appendChild(badge);
+            }
+            entry.appendChild(timeEl);
+
+            // Name/preview
+            var nameEl = document.createElement('div');
+            nameEl.className = 'session-entry-name';
+            nameEl.textContent = s.custom_name || s.preview || '(empty session)';
+            entry.appendChild(nameEl);
+
+            // Meta (message count)
+            var metaEl = document.createElement('div');
+            metaEl.className = 'session-entry-meta';
+            metaEl.textContent = s.message_count + ' message' + (s.message_count !== 1 ? 's' : '');
+            entry.appendChild(metaEl);
+
+            // Click to load session
+            entry.addEventListener('click', function () {
+                loadSessionById(s.id);
+            });
+
+            // Double-click to rename
+            nameEl.addEventListener('dblclick', function (e) {
+                e.stopPropagation();
+                startRename(s.id, nameEl, s);
+            });
+
+            sessionListEl.appendChild(entry);
+        });
+
+        // View more button
+        if (sessionsHasMore) {
+            btnViewMore.classList.remove('hidden');
+        } else {
+            btnViewMore.classList.add('hidden');
+        }
+    }
+
+    function highlightActiveSession() {
+        var entries = sessionListEl.querySelectorAll('.session-entry');
+        entries.forEach(function (el) {
+            var id = el.getAttribute('data-session-id');
+            el.classList.toggle('active', id === activeSessionId);
+        });
+    }
+
+    function loadSessionById(sessionId) {
+        activeSessionId = sessionId;
+        highlightActiveSession();
+
+        // Clear chat and show loading
+        messagesEl.innerHTML = '';
+        addInfoMessage('Loading session...');
+
+        fetch('/api/session/' + encodeURIComponent(sessionId))
+            .then(function (resp) { return resp.json(); })
+            .then(function (data) {
+                messagesEl.innerHTML = '';
+                if (data.messages && data.messages.length > 0) {
+                    var frag = document.createDocumentFragment();
+                    data.messages.forEach(function (msg) {
+                        var role = msg.role === 'user' ? 'user' : 'jarvis';
+                        var messageDiv = document.createElement('div');
+                        messageDiv.className = 'message ' + role;
+
+                        var sender = document.createElement('div');
+                        sender.className = 'message-sender';
+                        sender.textContent = role === 'user' ? 'YOU' : 'J.A.R.V.I.S.';
+                        messageDiv.appendChild(sender);
+
+                        var bubble = document.createElement('div');
+                        bubble.className = 'message-bubble';
+                        if (role === 'jarvis') {
+                            bubble.innerHTML = renderMarkdown(msg.content || '');
+                        } else {
+                            bubble.textContent = msg.content || '';
+                        }
+                        messageDiv.appendChild(bubble);
+
+                        if (msg.timestamp) {
+                            var ts = document.createElement('div');
+                            ts.className = 'message-timestamp';
+                            ts.textContent = formatTimestamp(msg.timestamp);
+                            messageDiv.appendChild(ts);
+                        }
+
+                        frag.appendChild(messageDiv);
+                    });
+                    messagesEl.appendChild(frag);
+                } else {
+                    addInfoMessage('No messages in this session');
+                }
+                scrollToBottom();
+            })
+            .catch(function () {
+                messagesEl.innerHTML = '';
+                addInfoMessage('Failed to load session');
+            });
+
+        // Close sidebar on mobile after selection
+        if (window.innerWidth <= 768 && sidebarOpen) {
+            toggleSidebar();
+        }
+    }
+
+    function startRename(sessionId, nameEl, session) {
+        var currentName = session.custom_name || session.preview || '';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'session-rename-input';
+        input.value = currentName;
+
+        nameEl.textContent = '';
+        nameEl.appendChild(input);
+        input.focus();
+        input.select();
+
+        function save() {
+            var newName = input.value.trim();
+            if (newName && newName !== currentName) {
+                session.custom_name = newName;
+                fetch('/api/session/' + encodeURIComponent(sessionId) + '/rename', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName }),
+                });
+            }
+            nameEl.textContent = newName || session.preview || '(empty session)';
+        }
+
+        function cancel() {
+            nameEl.textContent = currentName || session.preview || '(empty session)';
+        }
+
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                input.removeEventListener('blur', save);
+                save();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                input.removeEventListener('blur', save);
+                cancel();
+            }
+        });
+    }
+
+    function handleSessionList(msg) {
+        sessions = msg.sessions || [];
+        sessionsHasMore = msg.has_more || false;
+        sessionOffset = sessions.length;
+        renderSessionList();
+    }
+
+    // Sidebar event handlers
+    btnHamburger.addEventListener('click', toggleSidebar);
+    sidebarClose.addEventListener('click', toggleSidebar);
+    sidebarOverlay.addEventListener('click', toggleSidebar);
+
+    btnViewMore.addEventListener('click', function () {
+        fetchSessions(sessionOffset);
+    });
 
     // --- Init ---
     connect();

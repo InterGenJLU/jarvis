@@ -8,10 +8,30 @@
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+    <!-- Sidebar overlay (mobile) -->
+    <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+
+    <!-- Session sidebar -->
+    <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+            <h2>Sessions</h2>
+            <button id="sidebar-close" class="sidebar-close" title="Close sidebar">&times;</button>
+        </div>
+        <div id="session-list" class="session-list"></div>
+        <button id="btn-view-more" class="view-more-btn hidden">View more sessions</button>
+    </aside>
+
     <!-- Header -->
     <header id="header">
         <div class="header-left">
             <div class="header-title-row">
+                <button id="btn-hamburger" class="hamburger-btn" title="Toggle sessions sidebar">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="6" x2="21" y2="6"/>
+                        <line x1="3" y1="12" x2="21" y2="12"/>
+                        <line x1="3" y1="18" x2="21" y2="18"/>
+                    </svg>
+                </button>
                 <h1>J.A.R.V.I.S.</h1>
                 <span id="connection-status" class="status disconnected">Disconnected</span>
             </div>
@@ -204,8 +224,10 @@
                     <tr><td><kbd>Shift+Enter</kbd></td><td>New line</td></tr>
                     <tr><td><kbd>Ctrl+L</kbd></td><td>Clear chat display</td></tr>
                     <tr><td><kbd>&uarr;</kbd> / <kbd>&darr;</kbd></td><td>Command history</td></tr>
-                    <tr><td><kbd>Esc</kbd></td><td>Close modals</td></tr>
+                    <tr><td><kbd>Esc</kbd></td><td>Close modals / sidebar</td></tr>
                 </table>
+                <h3>Sessions</h3>
+                <p>Click the hamburger menu to browse past conversations. Double-click a session name to rename it.</p>
             </div>
             <div class="modal-footer">
                 <button id="help-close" class="btn btn-primary">Got it</button>

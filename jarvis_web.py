@@ -793,12 +793,37 @@ async def websocket_handler(request):
 
     pump_task = asyncio.create_task(announcement_pump())
 
-    # Send recent history on connect so the client can populate scroll-back
+    # Send current session messages + session list on connect
     try:
         conversation = components['conversation']
-        recent = await asyncio.to_thread(conversation.load_full_history, 50)
-        if recent:
-            await ws.send_json({'type': 'history', 'messages': recent})
+        all_messages = await asyncio.to_thread(conversation.load_full_history)
+        sessions = _detect_sessions(all_messages)
+        meta = _load_sessions_meta(config)
+
+        # Apply custom names
+        for s in sessions:
+            s['custom_name'] = meta.get(s['id'], None)
+
+        # Send session list (first 10)
+        await ws.send_json({
+            'type': 'session_list',
+            'sessions': sessions[:10],
+            'has_more': len(sessions) > 10,
+            'total': len(sessions),
+        })
+
+        # Send current (most recent) session's messages
+        if sessions:
+            current = sessions[0]
+            current_msgs = [
+                m for m in all_messages
+                if current['start_ts'] <= m.get('timestamp', 0) <= current['end_ts']
+            ]
+            await ws.send_json({
+                'type': 'history',
+                'messages': current_msgs,
+                'session_id': current['id'],
+            })
     except Exception:
         logger.exception("Failed to send history on connect")
 
@@ -1088,8 +1113,167 @@ async def _load_file_into_buffer(ws, doc_buffer, file_path):
 
 
 # ---------------------------------------------------------------------------
+# Session detection
+# ---------------------------------------------------------------------------
+
+SESSION_GAP_SECONDS = 1800  # 30 minutes
+
+def _detect_sessions(messages: list[dict], gap_seconds: int = SESSION_GAP_SECONDS) -> list[dict]:
+    """Detect session boundaries from timestamp gaps in message history.
+
+    Returns list of sessions (most recent first), each with:
+        id, start_ts, end_ts, message_count, preview
+    """
+    if not messages:
+        return []
+
+    sessions = []
+    current_start = 0  # index into messages
+
+    for i in range(1, len(messages)):
+        prev_ts = messages[i - 1].get('timestamp', 0)
+        curr_ts = messages[i].get('timestamp', 0)
+        if curr_ts - prev_ts > gap_seconds:
+            # Close current session
+            session_msgs = messages[current_start:i]
+            sessions.append(_build_session(session_msgs))
+            current_start = i
+
+    # Final session (always exists if messages is non-empty)
+    session_msgs = messages[current_start:]
+    sessions.append(_build_session(session_msgs))
+
+    sessions.reverse()  # Most recent first
+    return sessions
+
+
+def _build_session(msgs: list[dict]) -> dict:
+    """Build a session dict from a slice of messages."""
+    start_ts = msgs[0].get('timestamp', 0)
+    end_ts = msgs[-1].get('timestamp', 0)
+    # Preview = first user message, truncated
+    preview = ''
+    for m in msgs:
+        if m.get('role') == 'user':
+            preview = m.get('content', '')[:80]
+            break
+    return {
+        'id': str(start_ts),
+        'start_ts': start_ts,
+        'end_ts': end_ts,
+        'message_count': len(msgs),
+        'preview': preview,
+    }
+
+
+def _sessions_meta_path(config) -> Path:
+    storage = Path(config.get("system.storage_path"))
+    return storage / "data" / "conversations" / "sessions_meta.json"
+
+
+def _load_sessions_meta(config) -> dict:
+    """Load custom session names from disk."""
+    p = _sessions_meta_path(config)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_sessions_meta(config, meta: dict):
+    """Persist custom session names to disk."""
+    p = _sessions_meta_path(config)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(meta, indent=2), encoding='utf-8')
+
+
+# ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
+
+async def sessions_handler(request):
+    """GET /api/sessions — Return session list for sidebar.
+
+    Query params:
+        offset: Number of sessions to skip (default 0)
+        limit: Max sessions to return (default 10, max 50)
+    """
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    config = request.app['config']
+    conversation = components['conversation']
+    offset = int(request.query.get('offset', 0))
+    limit = min(int(request.query.get('limit', 10)), 50)
+
+    all_messages = await asyncio.to_thread(conversation.load_full_history)
+    sessions = _detect_sessions(all_messages)
+    meta = _load_sessions_meta(config)
+
+    # Apply custom names
+    for s in sessions:
+        s['custom_name'] = meta.get(s['id'], None)
+
+    total = len(sessions)
+    page = sessions[offset:offset + limit]
+
+    return web.json_response({
+        'sessions': page,
+        'has_more': (offset + limit) < total,
+        'total': total,
+    })
+
+
+async def session_messages_handler(request):
+    """GET /api/session/{session_id} — Return messages for a specific session."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    session_id = request.match_info['session_id']
+    conversation = components['conversation']
+
+    all_messages = await asyncio.to_thread(conversation.load_full_history)
+    sessions = _detect_sessions(all_messages)
+
+    # Find matching session — session_id is the start_ts as string
+    for s in sessions:
+        if s['id'] == session_id:
+            # Extract messages in this time range from the original (chronological) list
+            msgs = [
+                m for m in all_messages
+                if s['start_ts'] <= m.get('timestamp', 0) <= s['end_ts']
+            ]
+            return web.json_response({'messages': msgs, 'session': s})
+
+    return web.json_response({'error': 'Session not found'}, status=404)
+
+
+async def session_rename_handler(request):
+    """PUT /api/session/{session_id}/rename — Rename a session."""
+    config = request.app['config']
+
+    session_id = request.match_info['session_id']
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    name = body.get('name', '').strip()
+    if not name:
+        return web.json_response({'error': 'Name required'}, status=400)
+    if len(name) > 200:
+        return web.json_response({'error': 'Name too long (max 200 chars)'}, status=400)
+
+    meta = _load_sessions_meta(config)
+    meta[session_id] = name
+    _save_sessions_meta(config, meta)
+
+    return web.json_response({'ok': True})
+
 
 async def history_handler(request):
     """GET /api/history — Return recent chat messages for scroll-back.
@@ -1299,6 +1483,9 @@ def create_app(config) -> web.Application:
     # Routes: WebSocket, API, root index, then static assets
     app.router.add_get('/ws', websocket_handler)
     app.router.add_get('/api/history', history_handler)
+    app.router.add_get('/api/sessions', sessions_handler)
+    app.router.add_get('/api/session/{session_id}', session_messages_handler)
+    app.router.add_put('/api/session/{session_id}/rename', session_rename_handler)
     app.router.add_post('/api/upload', upload_handler)
     app.router.add_get('/api/browse', browse_handler)
     app.router.add_get('/api/stats', stats_overview_handler)
