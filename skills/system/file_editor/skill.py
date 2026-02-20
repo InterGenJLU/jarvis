@@ -92,6 +92,8 @@ class FileEditorSkill(BaseSkill):
                 "read the file I saved in the share folder",
                 "display my notes from the share",
                 "let me see what's in test.py",
+                "what's in the config.txt file",
+                "show me what's in jarvis_test.sh",
             ],
             handler=self.read_file,
             threshold=0.50,
@@ -104,6 +106,9 @@ class FileEditorSkill(BaseSkill):
                 "get rid of that file in the share",
                 "clean up the share directory",
                 "remove notes.txt from the share",
+                "delete jarvis_test.sh",
+                "remove test.py",
+                "delete the file I created",
             ],
             handler=self.delete_file,
             threshold=0.50,
@@ -179,6 +184,7 @@ class FileEditorSkill(BaseSkill):
     def write_file(self, entities: dict) -> str:
         """Create a new file in the share/ directory using LLM content generation."""
         user_text = entities.get('original_text', '')
+        self.logger.info(f"[file_editor] write_file request: {user_text[:80]}")
 
         # Check file count limit
         existing_count = len(list(SHARE_DIR.iterdir())) if SHARE_DIR.exists() else 0
@@ -287,6 +293,7 @@ class FileEditorSkill(BaseSkill):
 
         size = target.stat().st_size
         lines = content.count('\n') + 1
+        self.logger.info(f"[file_editor] write_file → share/{filename} ({size} bytes, {lines} lines)")
         return (f"Done, {self.honorific}. I've created {filename} in the share folder — "
                 f"{lines} lines, {self._human_size(size)}.")
 
@@ -297,6 +304,7 @@ class FileEditorSkill(BaseSkill):
     def edit_file(self, entities: dict) -> str:
         """Edit an existing file in the share/ directory using LLM rewrite."""
         user_text = entities.get('original_text', '')
+        self.logger.info(f"[file_editor] edit_file request: {user_text[:80]}")
 
         filename = self._extract_filename(user_text)
         if not filename:
@@ -344,6 +352,7 @@ class FileEditorSkill(BaseSkill):
 
         new_lines = new_content.count('\n') + 1
         new_size = target.stat().st_size
+        self.logger.info(f"[file_editor] edit_file → {filename} ({new_size} bytes, {new_lines} lines)")
         return (f"Done, {self.honorific}. I've updated {filename} — "
                 f"{new_lines} lines, {self._human_size(new_size)}.")
 
@@ -353,6 +362,7 @@ class FileEditorSkill(BaseSkill):
 
     def list_share_contents(self, entities: dict) -> str:
         """List files in the share/ directory."""
+        self.logger.info("[file_editor] list_share_contents")
         if not SHARE_DIR.exists():
             return f"The share folder is empty, {self.honorific}."
 
@@ -382,6 +392,7 @@ class FileEditorSkill(BaseSkill):
     def read_file(self, entities: dict) -> str:
         """Read and display a file from the share/ directory."""
         user_text = entities.get('original_text', '')
+        self.logger.info(f"[file_editor] read_file request: {user_text[:80]}")
 
         filename = self._extract_filename(user_text)
         if not filename:
@@ -413,6 +424,7 @@ class FileEditorSkill(BaseSkill):
     def delete_file(self, entities: dict) -> str:
         """Delete a file from share/ with confirmation."""
         user_text = entities.get('original_text', '')
+        self.logger.info(f"[file_editor] delete_file request: {user_text[:80]}")
 
         filename = self._extract_filename(user_text)
         if not filename:
@@ -458,6 +470,7 @@ class FileEditorSkill(BaseSkill):
                 target = self._safe_path(detail['filename'])
                 if target and target.exists():
                     target.unlink()
+                    self.logger.info(f"[file_editor] deleted share/{detail['filename']}")
                     return random.choice([
                         f"Done, {self.honorific}. {detail['filename']} has been deleted.",
                         f"{detail['filename']} removed, {self.honorific}.",
@@ -466,6 +479,7 @@ class FileEditorSkill(BaseSkill):
                 return f"The file no longer exists, {self.honorific}."
 
             elif action == 'overwrite':
+                self.logger.info(f"[file_editor] overwriting share/{detail['filename']}")
                 return self._generate_and_save(
                     detail['filename'], detail['filetype'],
                     detail['description'], detail['user_text']
