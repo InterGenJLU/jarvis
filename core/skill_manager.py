@@ -568,8 +568,29 @@ class SkillManager:
                                 response = best_handler(entities=entities or {}) if 'entities' in inspect.signature(best_handler).parameters else best_handler()
                                 return response
                             else:
-                                # Keyword matched but semantic rejected — fall through to LLM
-                                self.logger.info(f"Keyword->semantic rejected all intents for {skill_name} (best={best_score:.2f} < relaxed={relaxed_threshold:.2f}), falling through to LLM")
+                                # Keyword matched but semantic rejected — try global semantic before LLM
+                                self.logger.info(f"Keyword->semantic rejected for {skill_name} (best={best_score:.2f} < relaxed={relaxed_threshold:.2f}), trying global semantic fallback")
+                                normalized_fallback = user_text.strip().lower().translate(str.maketrans('', '', '?.!,;:'))
+                                semantic_match = self._match_semantic_intents(normalized_fallback)
+                                if semantic_match:
+                                    fb_skill_name, fb_intent_id, fb_entities = semantic_match
+                                    fb_skill = self.skills.get(fb_skill_name)
+                                    if fb_skill and hasattr(fb_skill, 'semantic_intents') and fb_intent_id in fb_skill.semantic_intents:
+                                        fb_entities['original_text'] = user_text  # Use original, not normalized (preserves periods in filenames)
+                                        handler = fb_skill.semantic_intents[fb_intent_id]['handler']
+                                        self._last_match_info = {
+                                            "layer": "keyword_global_semantic",
+                                            "skill_name": fb_skill_name,
+                                            "intent_id": fb_intent_id,
+                                            "confidence": fb_entities.get("similarity"),
+                                            "handler_name": handler.__name__
+                                        }
+                                        sig = inspect.signature(handler)
+                                        response = handler(entities=fb_entities) if 'entities' in sig.parameters else handler()
+                                        if isinstance(response, str):
+                                            response = resolve_honorific(response)
+                                        return response
+                                self.logger.info(f"Global semantic fallback also failed, falling through to LLM")
                                 return None
 
             # Execute skill handler for pattern-based matches
