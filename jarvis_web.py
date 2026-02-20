@@ -802,6 +802,13 @@ async def websocket_handler(request):
     except Exception:
         logger.exception("Failed to send history on connect")
 
+    # Send system stats on connect for header readout
+    try:
+        sys_stats = _gather_system_stats(components)
+        await ws.send_json({'type': 'system_stats', 'data': sys_stats})
+    except Exception:
+        logger.exception("Failed to send system stats on connect")
+
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.TEXT:
@@ -860,6 +867,11 @@ async def websocket_handler(request):
                                 'active': doc_buffer.active,
                                 'tokens': doc_buffer.token_estimate,
                                 'source': doc_buffer.source,
+                            })
+                            # Send updated system stats for header readout
+                            await ws.send_json({
+                                'type': 'system_stats',
+                                'data': _gather_system_stats(components),
                             })
                         except Exception:
                             logger.exception("Error processing command")
@@ -1158,6 +1170,121 @@ async def upload_handler(request):
         return web.json_response({'error': str(e)}, status=500)
 
 
+def _gather_system_stats(components: dict) -> dict:
+    """Collect system-level stats from all components for header readout."""
+    data = {}
+
+    # LLM
+    llm = components.get('llm')
+    if llm:
+        model_name = Path(llm.local_model_path).stem if llm.local_model_path else None
+        data['llm'] = {
+            'model': model_name,
+            'api_fallback': llm.api_model if llm.api_key_env else None,
+        }
+    else:
+        data['llm'] = None
+
+    # Web research
+    data['web_research'] = components.get('web_researcher') is not None
+
+    # Memory
+    mm = components.get('memory_manager')
+    if mm:
+        data['memory'] = {
+            'vectors': mm.faiss_index.ntotal if mm.faiss_index else 0,
+            'proactive': mm.proactive_enabled,
+        }
+    else:
+        data['memory'] = None
+
+    # Context window
+    cw = components.get('context_window')
+    if cw and cw.enabled:
+        cw_stats = cw.get_stats()
+        data['context_window'] = {
+            'segments': cw_stats['segments'],
+            'tokens': cw_stats['estimated_tokens'],
+            'open': cw_stats['open_segment'],
+        }
+    else:
+        data['context_window'] = None
+
+    # Skills
+    sm = components.get('skill_manager')
+    data['skills_loaded'] = len(sm.skills) if sm else 0
+
+    # Reminders
+    rm = components.get('reminder_manager')
+    if rm:
+        pending = rm.list_reminders(status="pending")
+        data['reminders'] = {'active': len(pending)}
+    else:
+        data['reminders'] = None
+
+    # News
+    nm = components.get('news_manager')
+    if nm:
+        data['news'] = {'feeds': len(nm.feeds)}
+    else:
+        data['news'] = None
+
+    # Calendar
+    data['calendar'] = components.get('calendar_manager') is not None
+
+    return data
+
+
+async def browse_handler(request):
+    """GET /api/browse — List directory contents for file browser.
+
+    Query params:
+        path: Directory path to list (default: /home/user)
+    """
+    raw_path = request.query.get('path', '/home/user')
+    p = Path(raw_path).expanduser().resolve()
+
+    if not p.is_dir():
+        return web.json_response({'error': f'Not a directory: {raw_path}'}, status=400)
+
+    entries = []
+    try:
+        for item in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            if item.name.startswith('.'):
+                continue
+            entry = {'name': item.name, 'type': 'dir' if item.is_dir() else 'file'}
+            if item.is_file():
+                try:
+                    entry['size'] = item.stat().st_size
+                except OSError:
+                    entry['size'] = 0
+                entry['ext'] = item.suffix.lower()
+                entry['binary'] = item.suffix.lower() in BINARY_EXTENSIONS
+            entries.append(entry)
+            if len(entries) >= 200:
+                break
+    except PermissionError:
+        return web.json_response({'error': f'Permission denied: {p}'}, status=403)
+
+    parent = str(p.parent) if p != p.parent else None
+
+    return web.json_response({
+        'path': str(p),
+        'parent': parent,
+        'entries': entries,
+    })
+
+
+async def stats_overview_handler(request):
+    """GET /api/stats — Return system overview stats for header readout."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    data = _gather_system_stats(components)
+    return web.json_response(data)
+
+
 async def index_handler(request):
     """Serve index.html for the root path."""
     return web.FileResponse(Path(__file__).parent / 'web' / 'index.html')
@@ -1173,6 +1300,8 @@ def create_app(config) -> web.Application:
     app.router.add_get('/ws', websocket_handler)
     app.router.add_get('/api/history', history_handler)
     app.router.add_post('/api/upload', upload_handler)
+    app.router.add_get('/api/browse', browse_handler)
+    app.router.add_get('/api/stats', stats_overview_handler)
     app.router.add_get('/', index_handler)
     app.router.add_static('/', web_dir)
 

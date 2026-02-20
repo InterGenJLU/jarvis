@@ -46,7 +46,7 @@ header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 20px;
+    padding: 12px 24px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
@@ -55,15 +55,75 @@ header {
 
 .header-left {
     display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.header-left .header-title-row {
+    display: flex;
     align-items: center;
     gap: 14px;
 }
 
 header h1 {
-    font-size: 1.25rem;
+    font-size: 1.4rem;
     font-weight: 700;
     color: var(--accent);
-    letter-spacing: 2px;
+    letter-spacing: 3px;
+}
+
+/* Header stats readout — HUD grid */
+.header-stats {
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    gap: 2px 24px;
+    background: var(--stats-bg);
+    border: 1px solid rgba(56, 189, 248, 0.15);
+    border-radius: 4px;
+    padding: 8px 18px;
+    font-family: 'Consolas', 'Fira Code', 'JetBrains Mono', monospace;
+    position: relative;
+}
+
+.header-stats::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.4), transparent);
+}
+
+.hud-stat {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 2px 0;
+    white-space: nowrap;
+}
+
+.hud-label {
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: rgba(56, 189, 248, 0.6);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    min-width: 56px;
+}
+
+.hud-value {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.hud-value.active {
+    color: var(--success);
+}
+
+.hud-value.inactive {
+    color: var(--text-dim);
 }
 
 .status {
@@ -85,7 +145,8 @@ header h1 {
     border: 1px solid rgba(248, 113, 113, 0.3);
 }
 
-.status.connecting {
+.status.connecting,
+.status.reconnecting {
     background: rgba(251, 191, 36, 0.15);
     color: var(--warning);
     border: 1px solid rgba(251, 191, 36, 0.3);
@@ -100,28 +161,30 @@ header h1 {
     user-select: none;
 }
 
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}
-
+/* Restart button — now in input-col-right */
 .restart-btn {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-dim);
-    padding: 5px 8px;
+    padding: 5px 12px;
     border-radius: 6px;
     cursor: pointer;
     display: flex;
     align-items: center;
+    gap: 6px;
     transition: all 0.15s;
+    font-size: 0.75rem;
 }
 
 .restart-btn:hover {
     color: var(--warning);
     border-color: var(--warning);
     background: rgba(251, 191, 36, 0.1);
+}
+
+.restart-label {
+    font-size: 0.72rem;
+    color: inherit;
 }
 
 .voice-label {
@@ -396,26 +459,47 @@ header h1 {
     opacity: 1;
 }
 
-/* Input area */
+/* Input area — 3-column layout */
 #input-area {
-    padding: 10px 20px 16px;
+    padding: 12px 20px 16px;
     background: var(--bg-secondary);
     border-top: 1px solid var(--border);
     flex-shrink: 0;
 }
 
-.input-toolbar {
+.input-columns {
+    display: grid;
+    grid-template-columns: 1fr 3fr 1fr;
+    gap: 32px;
+    align-items: center;
+}
+
+/* Left column — toolbar icons in two rows */
+.input-col-left {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: center;
+}
+
+.toolbar-group {
     display: flex;
     gap: 4px;
-    margin-bottom: 6px;
-    padding-left: 2px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.toolbar-sep {
+    width: 80%;
+    height: 1px;
+    background: var(--border);
 }
 
 .toolbar-btn {
     background: none;
     border: 1px solid transparent;
     color: var(--text-dim);
-    padding: 4px 8px;
+    padding: 6px 8px;
     border-radius: 6px;
     cursor: pointer;
     display: flex;
@@ -429,10 +513,26 @@ header h1 {
     border-color: var(--border);
 }
 
+/* Center column — textarea centered */
+.input-col-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .input-row {
     display: flex;
     gap: 8px;
     align-items: flex-end;
+    width: 100%;
+}
+
+/* Right column — voice + restart */
+.input-col-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
 }
 
 #user-input {
@@ -593,37 +693,144 @@ header h1 {
     color: var(--text-primary);
 }
 
-/* File path modal */
-.modal-narrow {
-    max-width: 480px;
+/* File browser modal */
+.modal-file-browser {
+    max-width: 560px;
 }
 
 .file-modal-body {
-    padding: 16px 20px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
 }
 
-.file-modal-body label {
+.file-path-row {
+    padding: 12px 20px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.file-path-row label {
     font-size: 0.85rem;
     color: var(--text-secondary);
 }
 
-.file-modal-body input[type="text"] {
+.file-path-input-row {
+    display: flex;
+    gap: 8px;
+}
+
+.file-path-input-row input[type="text"] {
+    flex: 1;
     background: var(--bg-input);
     border: 1px solid var(--border);
     border-radius: 8px;
     color: var(--text-primary);
     font-family: 'Consolas', 'Fira Code', monospace;
     font-size: 0.85rem;
-    padding: 10px 14px;
+    padding: 8px 12px;
     outline: none;
     transition: border-color 0.15s;
 }
 
-.file-modal-body input[type="text"]:focus {
+.file-path-input-row input[type="text"]:focus {
     border-color: var(--accent);
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 0.78rem;
+}
+
+/* File browser listing */
+.file-browser {
+    border-top: 1px solid var(--border);
+    max-height: 320px;
+    display: flex;
+    flex-direction: column;
+}
+
+.file-browser.hidden {
+    display: none;
+}
+
+.file-browser-path {
+    padding: 6px 20px;
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    background: var(--stats-bg);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-browser-list {
+    overflow-y: auto;
+    padding: 4px 0;
+    max-height: 280px;
+}
+
+.file-entry {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 20px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    transition: background 0.1s;
+    user-select: none;
+}
+
+.file-entry:hover {
+    background: var(--bg-tertiary);
+}
+
+.file-entry.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.file-entry-icon {
+    font-size: 0.9rem;
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.file-entry-icon.dir {
+    color: var(--accent);
+}
+
+.file-entry-icon.file {
+    color: var(--text-dim);
+}
+
+.file-entry-name {
+    flex: 1;
+    color: var(--text-primary);
+    font-family: 'Consolas', 'Fira Code', monospace;
+}
+
+.file-entry.dir .file-entry-name {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.file-entry-size {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    font-family: 'Consolas', 'Fira Code', monospace;
+    min-width: 60px;
+    text-align: right;
+}
+
+.file-browser-loading {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.82rem;
 }
 
 /* Help modal specifics */
@@ -979,6 +1186,96 @@ header h1 {
     padding-right: 2px;
 }
 
+/* Markdown — inline code */
+.inline-code {
+    background: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: 0.84em;
+    color: var(--accent-hover);
+}
+
+/* Markdown — fenced code blocks */
+.code-block {
+    position: relative;
+    margin: 8px 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.code-block pre {
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: 'Consolas', 'Fira Code', monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre;
+}
+
+.code-block code {
+    font-family: inherit;
+    font-size: inherit;
+}
+
+.code-lang {
+    position: absolute;
+    top: 6px;
+    left: 12px;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.code-copy {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.code-copy:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+/* Markdown — bold/italic */
+.message-bubble strong {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.message-bubble em {
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* Markdown — links */
+.message-bubble a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.3);
+    transition: border-color 0.15s;
+}
+
+.message-bubble a:hover {
+    border-bottom-color: var(--accent);
+}
+
 /* Scrollbar */
 #chat-area::-webkit-scrollbar {
     width: 6px;
@@ -997,7 +1294,47 @@ header h1 {
     background: var(--border-light);
 }
 
-/* Responsive */
+/* Responsive — tablets */
+@media (max-width: 768px) {
+    #messages {
+        max-width: 100%;
+    }
+
+    .health-report {
+        max-width: 95%;
+    }
+
+    .health-name {
+        min-width: 100px;
+    }
+
+    .input-columns {
+        grid-template-columns: 1fr;
+        gap: 8px;
+    }
+
+    .input-col-left {
+        flex-direction: row;
+        gap: 4px;
+    }
+
+    .toolbar-sep {
+        width: 1px;
+        height: 24px;
+    }
+
+    .input-col-right {
+        flex-direction: row;
+        justify-content: center;
+        gap: 16px;
+    }
+
+    .header-stats {
+        display: none;
+    }
+}
+
+/* Responsive — phones */
 @media (max-width: 600px) {
     #chat-area {
         padding: 12px;
@@ -1013,5 +1350,49 @@ header h1 {
 
     header {
         padding: 8px 12px;
+    }
+
+    header h1 {
+        font-size: 1.1rem;
+        letter-spacing: 2px;
+    }
+
+    .voice-label {
+        display: none;
+    }
+
+    .toolbar-group {
+        gap: 2px;
+    }
+
+    .toolbar-btn svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .restart-label {
+        display: none;
+    }
+
+    .modal-content {
+        width: 96%;
+        max-height: 90vh;
+    }
+
+    .code-block pre {
+        font-size: 0.75rem;
+        padding: 10px;
+    }
+
+    .health-check {
+        flex-wrap: wrap;
+    }
+
+    .health-name {
+        min-width: auto;
+    }
+
+    .health-summary {
+        padding-left: 24px;
     }
 }

@@ -703,6 +703,9 @@ class NewsManager:
 
         return response
 
+    # Shuffled follow-up template queue — prevents consecutive repeats
+    _follow_queue: list = []
+
     @staticmethod
     def _format_headline_for_speech(source: str, headline: str,
                                      index: int, total: int) -> str:
@@ -740,11 +743,16 @@ class NewsManager:
         ]
 
         if index == 0:
+            NewsManager._follow_queue.clear()
             template = random.choice(_LEAD_INS)
         elif index == total - 1 and total > 1:
             template = random.choice(_FINAL_INS)
         else:
-            template = random.choice(_FOLLOW_INS)
+            # Shuffle-cycle: refill queue when empty, pop one each time
+            if not NewsManager._follow_queue:
+                NewsManager._follow_queue = _FOLLOW_INS[:]
+                random.shuffle(NewsManager._follow_queue)
+            template = NewsManager._follow_queue.pop()
 
         headline = NewsManager._clean_headline_for_speech(headline)
         return template.format(source=source, headline=headline)

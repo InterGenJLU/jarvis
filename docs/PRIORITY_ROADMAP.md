@@ -43,6 +43,7 @@
 | 10 | **Google Keep integration** — shared grocery/todo lists with secondary user | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user's account |
 | 11 | **"Onscreen please" — retroactive visual display** — buffer last raw output, display on command | 2-3 hours | Bridge voice→visual gap. "Show me that" after JARVIS speaks an answer | TODO |
 | 12 | **Profile-aware commands (multi-user)** — "my calendar" loads the user's vs secondary user's based on who spoke | 3-4 hours | Infrastructure already built (speaker ID + profiles). Just needs skill-level integration | MASTER_DESIGN.md |
+| 41 | **Web UI session sidebar** — replace infinite scroll with session-based navigation, collapsible sidebar, timestamp-gap detection | 6-8 hours | Much better UX than scrolling through all history. Session = >30min gap. See `memory/plan_web_chat_ui.md` Phase 5 | Web UI Phase 5 |
 
 ---
 
@@ -134,4 +135,4 @@
 
 ---
 
-**Total: 39 active development ideas + 5 bugs, sourced from 12+ documents across the entire project.**
+**Total: 40 active development ideas + 5 bugs, sourced from 12+ documents across the entire project.**

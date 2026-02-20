@@ -55,6 +55,22 @@
     // Announcement banner container
     const announcementContainer = document.getElementById('announcement-container');
 
+    // Header stats
+    const statLlm = document.getElementById('stat-llm');
+    const statSkills = document.getElementById('stat-skills');
+    const statMemory = document.getElementById('stat-memory');
+    const statContext = document.getElementById('stat-context');
+    const statWeb = document.getElementById('stat-web');
+    const statNews = document.getElementById('stat-news');
+    const statReminders = document.getElementById('stat-reminders');
+    const statCalendar = document.getElementById('stat-calendar');
+
+    // File browser
+    const btnBrowseToggle = document.getElementById('btn-browse-toggle');
+    const fileBrowser = document.getElementById('file-browser');
+    const browserList = document.getElementById('browser-list');
+    const browserCurrentPath = document.getElementById('browser-current-path');
+
     // --- State ---
     let ws = null;
     let processing = false;
@@ -63,6 +79,8 @@
     let historyLoaded = false;
     let oldestTimestamp = null; // For scroll-to-load-more pagination
     let loadingHistory = false;
+    let reconnectAttempt = 0;
+    let reconnectTimer = null;
 
     // Command history
     const commandHistory = [];
@@ -78,6 +96,10 @@
         ws.onopen = function () {
             setStatus('connected');
             reconnectDelay = 1000;
+            if (reconnectAttempt > 0) {
+                addInfoMessage('Reconnected to server');
+            }
+            reconnectAttempt = 0;
             // Restore voice preference
             const voicePref = localStorage.getItem('jarvis-voice') === 'true';
             voiceToggle.checked = voicePref;
@@ -95,9 +117,12 @@
         };
 
         ws.onclose = function () {
-            setStatus('disconnected');
             ws = null;
-            setTimeout(connect, reconnectDelay);
+            reconnectAttempt++;
+            var delay = reconnectDelay;
+            setStatus('reconnecting');
+            statusEl.textContent = 'Reconnecting (#' + reconnectAttempt + ')...';
+            reconnectTimer = setTimeout(connect, delay);
             reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
         };
 
@@ -154,6 +179,10 @@
                 loadHistory(msg.messages);
                 break;
 
+            case 'system_stats':
+                updateSystemStats(msg.data);
+                break;
+
             case 'stream_start':
                 removeThinking();
                 startStreaming();
@@ -202,7 +231,15 @@
         if (streamingBubble) {
             streamingBubble.classList.remove('streaming');
             if (fullResponse) {
-                streamingBubble.textContent = fullResponse;
+                streamingBubble.innerHTML = renderMarkdown(fullResponse);
+            }
+            // Add timestamp to the streamed message
+            var parent = streamingBubble.parentElement;
+            if (parent) {
+                var ts = document.createElement('div');
+                ts.className = 'message-timestamp';
+                ts.textContent = formatTimestamp(Date.now() / 1000);
+                parent.appendChild(ts);
             }
         }
         streamingBubble = null;
@@ -225,8 +262,20 @@
 
         const bubble = document.createElement('div');
         bubble.className = 'message-bubble';
-        bubble.textContent = content;
+        if (role === 'jarvis') {
+            bubble.innerHTML = renderMarkdown(content);
+        } else {
+            bubble.textContent = content;
+        }
         messageDiv.appendChild(bubble);
+
+        // Timestamp on live messages
+        if (role !== 'error') {
+            const ts = document.createElement('div');
+            ts.className = 'message-timestamp';
+            ts.textContent = formatTimestamp(Date.now() / 1000);
+            messageDiv.appendChild(ts);
+        }
 
         messagesEl.appendChild(messageDiv);
         scrollToBottom();
@@ -257,6 +306,77 @@
 
         last.appendChild(panel);
         scrollToBottom();
+    }
+
+    function updateSystemStats(data) {
+        // LLM
+        if (data.llm && data.llm.model) {
+            statLlm.textContent = data.llm.model;
+            statLlm.className = 'hud-value active';
+        } else {
+            statLlm.textContent = 'OFF';
+            statLlm.className = 'hud-value inactive';
+        }
+
+        // Skills
+        statSkills.textContent = data.skills_loaded;
+        statSkills.className = 'hud-value active';
+
+        // Memory
+        if (data.memory) {
+            statMemory.textContent = data.memory.vectors + ' vectors' +
+                (data.memory.proactive ? ' · proactive' : '');
+            statMemory.className = 'hud-value active';
+        } else {
+            statMemory.textContent = 'OFF';
+            statMemory.className = 'hud-value inactive';
+        }
+
+        // Context window
+        if (data.context_window) {
+            statContext.textContent = data.context_window.segments + ' seg · ' +
+                data.context_window.tokens + ' tok';
+            statContext.className = 'hud-value';
+        } else {
+            statContext.textContent = 'OFF';
+            statContext.className = 'hud-value inactive';
+        }
+
+        // Web research
+        if (data.web_research) {
+            statWeb.textContent = 'ON';
+            statWeb.className = 'hud-value active';
+        } else {
+            statWeb.textContent = 'OFF';
+            statWeb.className = 'hud-value inactive';
+        }
+
+        // News
+        if (data.news) {
+            statNews.textContent = data.news.feeds + ' feeds';
+            statNews.className = 'hud-value active';
+        } else {
+            statNews.textContent = 'OFF';
+            statNews.className = 'hud-value inactive';
+        }
+
+        // Reminders
+        if (data.reminders) {
+            statReminders.textContent = data.reminders.active + ' active';
+            statReminders.className = data.reminders.active > 0 ? 'hud-value active' : 'hud-value';
+        } else {
+            statReminders.textContent = 'OFF';
+            statReminders.className = 'hud-value inactive';
+        }
+
+        // Calendar
+        if (data.calendar) {
+            statCalendar.textContent = 'SYNCED';
+            statCalendar.className = 'hud-value active';
+        } else {
+            statCalendar.textContent = 'OFF';
+            statCalendar.className = 'hud-value inactive';
+        }
     }
 
     function addAnnouncement(content) {
@@ -559,6 +679,9 @@
 
     btnFile.addEventListener('click', function () {
         filePathInput.value = '';
+        fileBrowser.classList.add('hidden');
+        browserVisible = false;
+        btnBrowseToggle.textContent = 'Browse';
         fileModal.classList.remove('hidden');
         filePathInput.focus();
     });
@@ -617,6 +740,116 @@
             fileSubmit.click();
         }
     });
+
+    // --- File browser ---
+    let browserPath = '/home/user';
+    let browserVisible = false;
+
+    btnBrowseToggle.addEventListener('click', function () {
+        browserVisible = !browserVisible;
+        if (browserVisible) {
+            fileBrowser.classList.remove('hidden');
+            btnBrowseToggle.textContent = 'Hide';
+            // Use current input value as starting directory if possible
+            var currentVal = filePathInput.value.trim();
+            if (currentVal) {
+                var dir = currentVal.endsWith('/') ? currentVal :
+                    currentVal.substring(0, currentVal.lastIndexOf('/') + 1);
+                if (dir) browserPath = dir;
+            }
+            browseTo(browserPath);
+        } else {
+            fileBrowser.classList.add('hidden');
+            btnBrowseToggle.textContent = 'Browse';
+        }
+    });
+
+    function browseTo(path) {
+        browserCurrentPath.textContent = path;
+        browserList.innerHTML = '<div class="file-browser-loading">Loading...</div>';
+
+        fetch('/api/browse?path=' + encodeURIComponent(path))
+            .then(function (resp) { return resp.json(); })
+            .then(function (data) {
+                if (data.error) {
+                    browserList.innerHTML = '<div class="file-browser-loading">' +
+                        escapeHtml(data.error) + '</div>';
+                    return;
+                }
+
+                browserPath = data.path;
+                browserCurrentPath.textContent = data.path;
+                browserList.innerHTML = '';
+
+                // Parent directory entry
+                if (data.parent) {
+                    var parentEntry = createFileEntry('..', 'dir', null, false);
+                    parentEntry.addEventListener('click', function () {
+                        browseTo(data.parent);
+                    });
+                    browserList.appendChild(parentEntry);
+                }
+
+                // Directory and file entries
+                data.entries.forEach(function (entry) {
+                    var el = createFileEntry(
+                        entry.name,
+                        entry.type,
+                        entry.size,
+                        entry.binary || false
+                    );
+
+                    if (entry.type === 'dir') {
+                        el.addEventListener('click', function () {
+                            browseTo(data.path + '/' + entry.name);
+                        });
+                    } else if (!entry.binary) {
+                        el.addEventListener('click', function () {
+                            filePathInput.value = data.path + '/' + entry.name;
+                            fileBrowser.classList.add('hidden');
+                            browserVisible = false;
+                            btnBrowseToggle.textContent = 'Browse';
+                        });
+                    }
+
+                    browserList.appendChild(el);
+                });
+            })
+            .catch(function () {
+                browserList.innerHTML = '<div class="file-browser-loading">Error loading directory</div>';
+            });
+    }
+
+    function createFileEntry(name, type, size, binary) {
+        var el = document.createElement('div');
+        el.className = 'file-entry' + (type === 'dir' ? ' dir' : '') + (binary ? ' disabled' : '');
+
+        var icon = document.createElement('span');
+        icon.className = 'file-entry-icon ' + type;
+        icon.textContent = type === 'dir' ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
+
+        var nameEl = document.createElement('span');
+        nameEl.className = 'file-entry-name';
+        nameEl.textContent = name;
+
+        el.appendChild(icon);
+        el.appendChild(nameEl);
+
+        if (type === 'file' && size != null) {
+            var sizeEl = document.createElement('span');
+            sizeEl.className = 'file-entry-size';
+            sizeEl.textContent = formatFileSize(size);
+            el.appendChild(sizeEl);
+        }
+
+        return el;
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(1) + ' MB';
+    }
 
     // --- Drag/drop file handling ---
     var BINARY_EXTS = new Set([
@@ -706,13 +939,23 @@
         });
     });
 
-    // Close modals on Escape
+    // Close modals on Escape, Ctrl+L to clear display
     document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
             pasteModal.classList.add('hidden');
             helpModal.classList.add('hidden');
             appendModal.classList.add('hidden');
             fileModal.classList.add('hidden');
+            if (browserVisible) {
+                fileBrowser.classList.add('hidden');
+                browserVisible = false;
+                btnBrowseToggle.textContent = 'Browse';
+            }
+        } else if (e.key === 'l' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            messagesEl.innerHTML = '';
+            oldestTimestamp = null;
+            historyLoaded = false;
         }
     });
 
@@ -761,7 +1004,11 @@
 
             var bubble = document.createElement('div');
             bubble.className = 'message-bubble';
-            bubble.textContent = msg.content || '';
+            if (role === 'jarvis') {
+                bubble.innerHTML = renderMarkdown(msg.content || '');
+            } else {
+                bubble.textContent = msg.content || '';
+            }
             messageDiv.appendChild(bubble);
 
             // Timestamp
@@ -803,7 +1050,11 @@
 
             var bubble = document.createElement('div');
             bubble.className = 'message-bubble';
-            bubble.textContent = msg.content || '';
+            if (role === 'jarvis') {
+                bubble.innerHTML = renderMarkdown(msg.content || '');
+            } else {
+                bubble.textContent = msg.content || '';
+            }
             messageDiv.appendChild(bubble);
 
             if (msg.timestamp) {
@@ -878,6 +1129,56 @@
                 loadingHistory = false;
             });
     }
+
+    // --- Markdown rendering (no library) ---
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(text));
+        return div.innerHTML;
+    }
+
+    function renderMarkdown(text) {
+        // Escape HTML first to prevent XSS
+        var html = escapeHtml(text);
+
+        // Fenced code blocks: ```lang\n...\n```
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function (match, lang, code) {
+            var id = 'code-' + Math.random().toString(36).substring(2, 10);
+            return '<div class="code-block">' +
+                (lang ? '<span class="code-lang">' + lang + '</span>' : '') +
+                '<button class="code-copy" data-target="' + id + '" title="Copy code">Copy</button>' +
+                '<pre><code id="' + id + '">' + code.replace(/\n$/, '') + '</code></pre>' +
+                '</div>';
+        });
+
+        // Inline code: `code`
+        html = html.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
+
+        // Bold: **text**
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+        // Italic: *text* (but not inside ** which we already handled)
+        html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+
+        // URLs: https://... or http://...
+        html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+
+        return html;
+    }
+
+    // Copy button handler (delegated)
+    messagesEl.addEventListener('click', function (e) {
+        if (e.target.classList.contains('code-copy')) {
+            var targetId = e.target.getAttribute('data-target');
+            var codeEl = document.getElementById(targetId);
+            if (codeEl) {
+                navigator.clipboard.writeText(codeEl.textContent).then(function () {
+                    e.target.textContent = 'Copied!';
+                    setTimeout(function () { e.target.textContent = 'Copy'; }, 1500);
+                });
+            }
+        }
+    });
 
     // --- Scroll ---
     function scrollToBottom() {
