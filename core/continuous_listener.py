@@ -315,31 +315,31 @@ class ContinuousListener:
             
             # Otherwise, check for wake word using fuzzy matching
             from difflib import SequenceMatcher
-            
-            def similar(a, b):
-                """Calculate similarity ratio between two strings"""
-                return SequenceMatcher(None, a, b).ratio()
-            
+
             # Split text into words and check each
             words = text.split()
             wake_word_found = False
-            
+
             for word in words:
                 # Remove punctuation
                 word_clean = word.strip('.,!?;:')
-                
+
                 # Check similarity to "jarvis"
-                similarity = similar(self.wake_word, word_clean)
-                
-                if similarity >= 0.7:  # 70% similar — raised from 0.6 to reduce false positives in noisy environments
+                similarity = SequenceMatcher(None, self.wake_word, word_clean).ratio()
+
+                if similarity >= 0.80:  # Raised from 0.7 to eliminate "paris" (0.73) etc.
                     self.logger.info(f"✅ Wake word detected (similarity: {similarity:.2f}): {word_clean} in {text}")
                     wake_word_found = True
-                    matched_word = word_clean  # Store the matched word for correction
+                    matched_word = word_clean
                     break
-            
+
             if wake_word_found:
+                # Check if this is ambient conversation rather than a command
+                if self._is_ambient_wake_word(text, matched_word):
+                    print("🔇 Ambient mention (ignored)")
+                    return
+
                 # Correct the wake word before passing to command handler
-                # Replace the fuzzy-matched word with the actual wake word
                 corrected_text = text.replace(matched_word, self.wake_word)
                 self.logger.info(f"🔧 Corrected: '{text}' → '{corrected_text}'")
                 self.on_command(corrected_text)
@@ -607,6 +607,67 @@ class ContinuousListener:
         
         return text
     
+    # Words that follow "jarvis" in ambient speech (talking ABOUT jarvis)
+    _AMBIENT_FOLLOWERS = frozenset({
+        'is', 'was', 'has', 'had', 'will', 'would', 'can', 'could',
+        'does', 'did', 'should', 'might', 'may', 'of',
+    })
+    _WAKE_PREFIXES = frozenset({
+        'hey', 'hi', 'yo', 'morning', 'good', 'okay', 'ok',
+    })
+
+    def _is_ambient_wake_word(self, text: str, matched_word: str) -> bool:
+        """Determine if a wake word detection is ambient conversation, not a command.
+
+        Returns True if the wake word should be IGNORED (ambient).
+        """
+        words = text.split()
+
+        # Find word index of the matched wake word
+        word_idx = None
+        for i, w in enumerate(words):
+            if w.strip('.,!?;:\'"') == matched_word:
+                word_idx = i
+                break
+        if word_idx is None:
+            return False
+
+        # Signal 1: Position — wake word should be in first 2 words
+        effective_pos = word_idx
+        if word_idx <= 2:
+            prefix_words = [w.strip('.,!?;:') for w in words[:word_idx]]
+            if all(pw in self._WAKE_PREFIXES for pw in prefix_words):
+                effective_pos = 0
+        if effective_pos >= 3:
+            self.logger.info(f"🔇 Ambient rejected (position {word_idx}): {text[:80]}")
+            return True
+
+        # Signal 2: Post-wake-word copula/auxiliary without comma
+        if word_idx < len(words):
+            wake_token = words[word_idx]
+            if wake_token.endswith("'s") or wake_token.endswith("\u2019s"):
+                self.logger.info(f"🔇 Ambient rejected (possessive): {text[:80]}")
+                return True
+            has_comma = wake_token.endswith(',')
+            if not has_comma and word_idx + 1 < len(words):
+                next_word = words[word_idx + 1].strip('.,!?;:').lower()
+                if next_word in self._AMBIENT_FOLLOWERS:
+                    self.logger.info(
+                        f"🔇 Ambient rejected ('{matched_word} {next_word}' "
+                        f"without comma): {text[:80]}"
+                    )
+                    return True
+
+        # Signal 5: Long utterance with wake word not at position 0
+        if len(words) > 15 and word_idx > 0:
+            self.logger.info(
+                f"🔇 Ambient rejected (long utterance {len(words)} words, "
+                f"position {word_idx}): {text[:80]}"
+            )
+            return True
+
+        return False
+
     def _is_conversation_noise(self, text: str) -> bool:
         """Check if transcribed text during conversation window is likely noise."""
         # Very short non-word sounds

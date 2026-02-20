@@ -608,20 +608,25 @@ class Coordinator:
             ))
             return
 
-        # Wake word fuzzy match
+        # Wake word fuzzy match (threshold 0.80 — eliminates "paris" 0.73, etc.)
         words = text.split()
         wake_word_found = False
         matched_word = ""
         for word in words:
             word_clean = word.strip('.,!?;:')
             similarity = SequenceMatcher(None, self.wake_word, word_clean).ratio()
-            if similarity >= 0.7:
+            if similarity >= 0.80:
                 self.logger.info(f"Wake word detected (similarity: {similarity:.2f}): {word_clean} in {text}")
                 wake_word_found = True
                 matched_word = word_clean
                 break
 
         if wake_word_found:
+            # Check if this is ambient conversation rather than a command
+            if self._is_ambient_wake_word(text, matched_word):
+                print("🔇 Ambient mention (ignored)")
+                return
+
             corrected_text = text.replace(matched_word, self.wake_word)
             self.logger.info(f"Corrected: '{text}' → '{corrected_text}'")
             self.event_queue.put(Event(
@@ -1493,6 +1498,91 @@ class Coordinator:
         if text.lower().startswith("i'm "):
             return "analyze " + text[4:]
         return text
+
+    # ----- ambient wake word filter -----
+
+    # Words that follow "jarvis" in ambient speech (talking ABOUT jarvis)
+    # but never follow "jarvis," in a command.
+    _AMBIENT_FOLLOWERS = frozenset({
+        'is', 'was', 'has', 'had', 'will', 'would', 'can', 'could',
+        'does', 'did', 'should', 'might', 'may', 'of',
+    })
+
+    # Prefixes that legitimately precede the wake word (e.g. "hey jarvis")
+    _WAKE_PREFIXES = frozenset({
+        'hey', 'hi', 'yo', 'morning', 'good', 'okay', 'ok',
+    })
+
+    def _is_ambient_wake_word(self, text: str, matched_word: str) -> bool:
+        """Determine if a wake word detection is ambient conversation, not a command.
+
+        Uses position, post-wake-word analysis, and utterance length to
+        distinguish "Jarvis, what time is it?" from "he was talking about Jarvis".
+
+        Returns True if the wake word should be IGNORED (ambient).
+        """
+        words = text.split()
+
+        # Find word index of the matched wake word
+        word_idx = None
+        for i, w in enumerate(words):
+            if w.strip('.,!?;:\'"') == matched_word:
+                word_idx = i
+                break
+
+        if word_idx is None:
+            return False  # Can't determine — let it through
+
+        # --- Signal 1: Position ---
+        # Real commands have "jarvis" in the first 2 words (or 3 with a prefix
+        # like "hey" / "good morning").
+        effective_pos = word_idx
+        if word_idx <= 2:
+            # Check if earlier words are known prefixes
+            prefix_words = [w.strip('.,!?;:') for w in words[:word_idx]]
+            if all(pw in self._WAKE_PREFIXES for pw in prefix_words):
+                effective_pos = 0  # Treat as position 0
+
+        if effective_pos >= 3:
+            self.logger.info(
+                f"🔇 Ambient rejected (position {word_idx}): {text[:80]}"
+            )
+            return True
+
+        # --- Signal 2: Post-wake-word copula/auxiliary ---
+        # "jarvis is listening" = ambient.  "jarvis, is it raining?" = command.
+        # The comma after "jarvis" is the key differentiator.
+        if word_idx < len(words):
+            wake_token = words[word_idx]  # e.g. "jarvis," or "jarvis" or "jarvis's"
+
+            # Possessive = always ambient ("jarvis's brain")
+            if wake_token.endswith("'s") or wake_token.endswith("\u2019s"):
+                self.logger.info(
+                    f"🔇 Ambient rejected (possessive): {text[:80]}"
+                )
+                return True
+
+            has_comma = wake_token.endswith(',')
+            if not has_comma and word_idx + 1 < len(words):
+                next_word = words[word_idx + 1].strip('.,!?;:').lower()
+                if next_word in self._AMBIENT_FOLLOWERS:
+                    self.logger.info(
+                        f"🔇 Ambient rejected ('{matched_word} {next_word}' "
+                        f"without comma): {text[:80]}"
+                    )
+                    return True
+
+        # --- Signal 5: Length heuristic ---
+        # Very long utterances where wake word isn't the opener are
+        # almost certainly ambient conversation, not commands.
+        if len(words) > 15 and word_idx > 0:
+            self.logger.info(
+                f"🔇 Ambient rejected (long utterance {len(words)} words, "
+                f"wake word at position {word_idx}): {text[:80]}"
+            )
+            return True
+
+        return False
 
     # ----- speaker context -----
 
