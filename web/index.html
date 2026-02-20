@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <!-- Header -->
+    <header id="header">
+        <div class="header-left">
+            <h1>JARVIS</h1>
+            <span id="connection-status" class="status disconnected">Disconnected</span>
+        </div>
+        <div class="header-right">
+            <label class="voice-toggle" title="Toggle voice output">
+                <span class="voice-label">Voice</span>
+                <input type="checkbox" id="voice-toggle">
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+    </header>
+
+    <!-- Chat area -->
+    <main id="chat-area">
+        <div id="messages"></div>
+    </main>
+
+    <!-- Document buffer indicator -->
+    <div id="doc-indicator" class="hidden">
+        <span id="doc-info"></span>
+        <button id="doc-clear-btn" title="Clear document buffer">&times;</button>
+    </div>
+
+    <!-- Input area -->
+    <div id="input-area">
+        <div class="input-toolbar">
+            <button id="btn-paste" class="toolbar-btn" title="Paste text into document buffer">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                    <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+                </svg>
+            </button>
+            <button id="btn-clear" class="toolbar-btn" title="Clear document buffer">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+            <button id="btn-help" class="toolbar-btn" title="Show help">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+            </button>
+        </div>
+        <div class="input-row">
+            <textarea id="user-input" placeholder="Ask JARVIS anything..." rows="1" autofocus></textarea>
+            <button id="btn-send" class="send-btn" title="Send message">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Paste modal -->
+    <div id="paste-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Paste Text</h2>
+                <button class="modal-close" id="paste-modal-close">&times;</button>
+            </div>
+            <textarea id="paste-textarea" placeholder="Paste or type text here..." rows="12"></textarea>
+            <div class="modal-footer">
+                <button id="paste-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="paste-submit" class="btn btn-primary">Load into Buffer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help modal -->
+    <div id="help-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>JARVIS Web UI</h2>
+                <button class="modal-close" id="help-modal-close">&times;</button>
+            </div>
+            <div class="help-body">
+                <h3>Commands</h3>
+                <p>Type naturally — JARVIS routes to the right skill automatically.</p>
+                <table>
+                    <tr><td><strong>Time/Date</strong></td><td>"what time is it?"</td></tr>
+                    <tr><td><strong>Weather</strong></td><td>"what's the weather?"</td></tr>
+                    <tr><td><strong>System</strong></td><td>"what CPU do I have?"</td></tr>
+                    <tr><td><strong>Files</strong></td><td>"write a script that..."</td></tr>
+                    <tr><td><strong>Reminders</strong></td><td>"remind me to..."</td></tr>
+                    <tr><td><strong>News</strong></td><td>"read the headlines"</td></tr>
+                    <tr><td><strong>Web</strong></td><td>"search for..."</td></tr>
+                    <tr><td><strong>Desktop</strong></td><td>"open brave", "volume up"</td></tr>
+                    <tr><td><strong>General</strong></td><td>Any question — falls back to LLM</td></tr>
+                </table>
+                <h3>Toolbar</h3>
+                <table>
+                    <tr><td><strong>Paste</strong></td><td>Load text into document buffer for LLM context</td></tr>
+                    <tr><td><strong>Clear</strong></td><td>Clear the document buffer</td></tr>
+                    <tr><td><strong>Voice</strong></td><td>Toggle spoken responses on/off</td></tr>
+                </table>
+                <h3>Shortcuts</h3>
+                <table>
+                    <tr><td><kbd>Enter</kbd></td><td>Send message</td></tr>
+                    <tr><td><kbd>Shift+Enter</kbd></td><td>New line</td></tr>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button id="help-close" class="btn btn-primary">Got it</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

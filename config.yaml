@@ -253,6 +253,11 @@ web_navigation:
     height: 1440
   follow_up_duration: 10.0
 
+# Web UI settings
+web:
+  port: 8088
+  host: "127.0.0.1"
+
 # Fine-tuned Whisper model (custom accent training)
 stt_finetuned:
   enabled: true

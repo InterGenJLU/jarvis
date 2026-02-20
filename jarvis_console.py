@@ -55,6 +55,7 @@ from core.news_manager import get_news_manager
 from core.honorific import get_honorific
 from core.speech_chunker import SpeechChunker
 from core.context_window import get_context_window, estimate_tokens, TOKEN_RATIO
+from core.document_buffer import DocumentBuffer, BINARY_EXTENSIONS
 
 
 class TTSProxy:
@@ -135,67 +136,8 @@ class SlashCompleter(Completer):
                     yield Completion(cmd, start_position=-len(text))
 
 
-class DocumentBuffer:
-    """In-memory document context that persists until /clear."""
 
-    def __init__(self, max_tokens: int = 4000):
-        self.content: str = ""
-        self.source: str = ""       # "paste", "file:name.py", "clipboard"
-        self.token_estimate: int = 0
-        self.max_tokens = max_tokens
-
-    def load(self, text: str, source: str = "paste"):
-        self.content = text
-        self.source = source
-        self.token_estimate = estimate_tokens(text)
-        self.truncate_to_budget()
-
-    def append(self, text: str, source: str = "paste"):
-        self.content = self.content + "\n\n" + text if self.content else text
-        self.source = f"{self.source} + {source}" if self.source else source
-        self.token_estimate = estimate_tokens(self.content)
-        self.truncate_to_budget()
-
-    def clear(self):
-        old_source = self.source
-        old_tokens = self.token_estimate
-        self.content = ""
-        self.source = ""
-        self.token_estimate = 0
-        return old_source, old_tokens
-
-    @property
-    def active(self) -> bool:
-        return bool(self.content)
-
-    def build_augmented_message(self, user_query: str) -> str:
-        if not self.content:
-            return user_query
-        return f"<document>\n{self.content}\n</document>\n\n{user_query}"
-
-    def truncate_to_budget(self) -> bool:
-        if self.token_estimate <= self.max_tokens:
-            return False
-        words = self.content.split()
-        target_words = int(self.max_tokens / TOKEN_RATIO)
-        self.content = " ".join(words[:target_words])
-        self.token_estimate = estimate_tokens(self.content)
-        if "(truncated)" not in self.source:
-            self.source += " (truncated)"
-        return True
-
-
-# Binary file extensions rejected by /file command
-_BINARY_EXTENSIONS = frozenset({
-    '.exe', '.bin', '.so', '.dll', '.dylib', '.o', '.a',
-    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.tiff',
-    '.mp3', '.mp4', '.wav', '.flac', '.ogg', '.avi', '.mkv', '.mov', '.webm',
-    '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar', '.zst',
-    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-    '.gguf', '.npy', '.npz', '.pt', '.pth', '.onnx', '.safetensors',
-    '.db', '.sqlite', '.sqlite3',
-    '.pyc', '.class', '.wasm',
-})
+# DocumentBuffer + BINARY_EXTENSIONS imported from core.document_buffer
 
 
 def render_stats(console, match_info, llm, used_llm, t_start, t_match, t_end, session,
@@ -527,7 +469,7 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
             return True
 
         # Binary rejection
-        if filepath.suffix.lower() in _BINARY_EXTENSIONS:
+        if filepath.suffix.lower() in BINARY_EXTENSIONS:
             console.print(f"[red]Binary file rejected:[/red] {filepath.suffix} files are not supported")
             return True
 
