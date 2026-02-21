@@ -795,11 +795,11 @@ class Coordinator:
 
             elif mm.is_fact_request(command):
                 # Fact already extracted by on_message() hook — just confirm
-                import random
+                h = get_honorific()
                 response = random.choice([
-                    "Noted, sir.", "Very good, sir.", "Understood, sir.",
-                    "I'll remember that, sir.", "Committed to memory, sir.",
-                    "Duly noted, sir.", "Of course, sir.",
+                    f"Noted, {h}.", f"Very good, {h}.", f"Understood, {h}.",
+                    f"I'll remember that, {h}.", f"Committed to memory, {h}.",
+                    f"Duly noted, {h}.", f"Of course, {h}.",
                 ])
                 skill_handled = True
                 self.logger.info("Handled by memory fact request")
@@ -1362,8 +1362,9 @@ class Coordinator:
 
     # Regex to strip redundant LLM opening phrases when ack already played
     _ACK_OPENER_RE = re.compile(
-        r'^(Certainly|Of course|Very well|Right away|One moment|Absolutely|Sure thing)'
-        r',?\s*(?:sir|ma\'am|miss)\.?\s*',
+        r'^(Certainly|Of course|Very well|Right away|One moment|Just a moment|'
+        r'Give me (?:just )?a moment|Absolutely|Sure thing|One second)'
+        r'[,.]?\s*(?:sir|ma\'am|miss)?\.?\s*',
         re.IGNORECASE,
     )
 
@@ -1412,9 +1413,12 @@ class Coordinator:
 
     def _is_dismissal(self, command: str) -> bool:
         """Detect short dismissal phrases during a conversation window."""
+        import re as _re
         text = command.strip().lower().rstrip(".!,")
-        if len(text.split()) > 8:
+        if len(text.split()) > 10:
             return False
+        # Strip trailing courtesy phrases before matching
+        text = _re.sub(r',?\s*(?:thank you|thanks|thank you so much)$', '', text)
         if text in self._DISMISSAL_PHRASES:
             return True
         # "no, that's all" / "nah, I'm good" — check after the comma

@@ -695,7 +695,7 @@ The base Whisper model struggles with:
 
 ### Process
 
-1. **Record training data** — 200+ utterances covering problem words, domain vocabulary, and natural speech patterns
+1. **Record training data** — 150+ utterances covering problem words, domain vocabulary, and natural speech patterns
 2. **Train** — Fine-tune from the base Whisper model using HuggingFace Transformers
 3. **Convert** — Export to CTranslate2 format for GPU-accelerated inference
 4. **Deploy** — Update `config.yaml` to point to the new model
@@ -706,8 +706,8 @@ See [docs/VOICE_TRAINING_GUIDE.md](docs/VOICE_TRAINING_GUIDE.md) for the complet
 
 | Metric | Before | After |
 |--------|--------|-------|
-| General accuracy | ~80% | ~94%+ |
-| Domain vocabulary | ~60% | ~95%+ |
+| General accuracy | ~80% | ~88%+ |
+| Domain vocabulary | ~60% | ~90%+ |
 | Latency (GPU) | 0.1-0.2s | 0.1-0.2s (unchanged) |
 
 ---

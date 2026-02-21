@@ -16,7 +16,7 @@
 - ~~Qwen sampling params~~ — Done (Feb 19, `25b5f0a`). top_p=0.8, top_k=20 in all 6 llama.cpp payloads
 - ~~Install wl-clipboard~~ — Done (Feb 19)
 - ~~Enable GNOME extension~~ — Done (Feb 19, logout/login completed)
-- ~~Enroll Christopher's voice~~ — Done (Feb 16). Erica has profile entry but no voice embedding yet
+- ~~Enroll the user's voice~~ — Done (Feb 16). Secondary user has profile entry but no voice embedding yet
 
 ---
 
@@ -39,9 +39,9 @@
 | 7 | **Inject user facts into web research** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Risk: history poisoning needs careful scoping |
 | ~~8~~ | ~~**Minimize web search latency**~~ | ~~3-4 hours~~ | ~~Reduce 5-8s forced search overhead~~ | Done (Feb 19-20). Parallel page fetches (`c93670a`), embedding cache (`56f5037`), rate limit 2s→1s |
 | 9 | **Email skill (Gmail)** — voice-composed email via Gmail API + OAuth | 6-8 hours | Major productivity — compose, read, reply, search, archive by voice | Same OAuth pattern as Calendar. Full schema in MASTER_DESIGN.md |
-| 10 | **Google Keep integration** — shared grocery/todo lists with Erica | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ Erica's account |
+| 10 | **Google Keep integration** — shared grocery/todo lists with secondary user | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user's account |
 | 11 | **"Onscreen please" — retroactive visual display** — buffer last raw output, display on command | 2-3 hours | Bridge voice→visual gap. "Show me that" after JARVIS speaks an answer | TODO |
-| 12 | **Profile-aware commands (multi-user)** — "my calendar" loads Christopher's vs Erica's based on who spoke | 3-4 hours | Infrastructure already built (speaker ID + profiles). Just needs skill-level integration | MASTER_DESIGN.md |
+| 12 | **Profile-aware commands (multi-user)** — "my calendar" loads the user's vs secondary user's based on who spoke | 3-4 hours | Infrastructure already built (speaker ID + profiles). Just needs skill-level integration | MASTER_DESIGN.md |
 | ~~41~~ | ~~**Web UI session sidebar**~~ — DONE (Feb 20, `9803634`). Session-based navigation, collapsible sidebar, rename, pagination | ✅ | All 5 Web UI phases complete | Web UI Phase 5 |
 | 42 | **Document generation (file_editor extension)** — create .pptx presentations, .docx documents from LLM research. Explore imagery sourcing (web image search, Unsplash API, or local generation) for slide accompaniment | 6-10 hours | "Create me a presentation about X" — research + structured output + python-pptx/python-docx. Extends existing file_editor skill with `create_presentation`, `create_document` intents | Needs: `python-pptx`, `python-docx`. Image sourcing TBD |
 

@@ -173,13 +173,11 @@ class TextToSpeech:
 
     def _build_ack_cache(self):
         """Pre-synthesize short phrases as raw PCM for instant playback."""
-        from core.honorific import get_honorific
-        h = get_honorific()
         phrases = [
-            f"One moment, {h}.",
-            f"Just a moment, {h}.",
-            f"Give me just a moment, {h}.",
-            f"One second, {h}.",
+            "One moment.",
+            "Just a moment.",
+            "Give me just a moment.",
+            "One second.",
         ]
         t0 = time.time()
         for phrase in phrases:

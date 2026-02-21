@@ -329,7 +329,7 @@ class ConversationManager:
         lines = []
         
         if include_system_prompt:
-            lines.append("You are JARVIS, a sophisticated AI assistant inspired by Tony Stark's AI.")
+            lines.append("You are JARVIS, a personal AI assistant.")
             lines.append("You are helpful, professional, and concise.")
             lines.append("")
         

@@ -456,6 +456,7 @@ class MemoryManager:
         r"what (?:facts|memories|information) do you have",
         r"show me (?:my|what you) (?:know|remember|stored)",
         r"what have you learned about me",
+        r"tell me (?:everything |all (?:that )?)?you (?:know|remember) about me",
     ]
 
     def is_forget_request(self, text: str) -> bool:
@@ -533,7 +534,12 @@ class MemoryManager:
         """Return a natural summary of stored facts with examples."""
         from core.honorific import get_honorific
         h = get_honorific()
-        facts = self.get_facts(user_id, limit=50)
+        all_facts = self.get_facts(user_id, limit=50)
+
+        # Filter out action/plan extractions and low-quality third-person extractions
+        facts = [f for f in all_facts
+                 if f.get("category") != "plan"
+                 and not f.get("content", "").startswith("The user ")]
 
         if not facts:
             return f"I haven't stored any specific facts about you yet, {h}."

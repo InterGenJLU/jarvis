@@ -29,7 +29,7 @@ This guide documents the complete process for training a custom Whisper model on
 
 **1. Create Training Phrases File**
 
-Location: `/mnt/jarvis-models/voice_training/training_phrases.txt`
+Location: `/mnt/models/voice_training/training_phrases.txt`
 
 Include 150+ phrases covering:
 - Wake word variations (Jarvis, Hey Jarvis, etc.)
@@ -155,7 +155,7 @@ Seq2SeqTrainingArguments(
 
 **3. Run Training (End-to-End Pipeline)**
 ```bash
-cd /mnt/jarvis-models/voice_training
+cd /mnt/models/voice_training
 ./retrain.sh              # Full: stop services → train → convert → restart
 ./retrain.sh --skip-stop  # If services already stopped
 ```
@@ -217,7 +217,7 @@ vi config.yaml
 # Enable fine-tuned model
 stt_finetuned:
   enabled: true
-  model_path: /mnt/jarvis-models/voice_training/whisper_finetuned/final
+  model_path: /mnt/models/voice_training/whisper_finetuned/final
 
 # Restart JARVIS
 restartjarvis
@@ -306,25 +306,25 @@ import wave
 **Critical files to backup:**
 
 1. **Training data** (~1GB):
-   - `/mnt/jarvis-models/voice_training/audio/` (198 WAV files)
-   - `/mnt/jarvis-models/voice_training/transcripts/` (198 TXT files)
-   - `/mnt/jarvis-models/voice_training/training_phrases.txt`
+   - `/mnt/models/voice_training/audio/` (198 WAV files)
+   - `/mnt/models/voice_training/transcripts/` (198 TXT files)
+   - `/mnt/models/voice_training/training_phrases.txt`
 
 2. **Old mic recordings** (historical):
-   - `/mnt/jarvis-models/voice_training/audio_backup_old_mic/` (150 WAV files from webcam mic)
-   - `/mnt/jarvis-models/voice_training/transcripts_backup_old_mic/`
+   - `/mnt/models/voice_training/audio_backup_old_mic/` (150 WAV files from webcam mic)
+   - `/mnt/models/voice_training/transcripts_backup_old_mic/`
 
 3. **Trained model (HuggingFace source)** (~290MB):
-   - `/mnt/jarvis-models/voice_training/whisper_finetuned/final/`
+   - `/mnt/models/voice_training/whisper_finetuned/final/`
 
 4. **Production model (CTranslate2 GPU-optimized)** (~143MB):
-   - `/mnt/jarvis-models/voice_training/whisper_finetuned_ct2/`
+   - `/mnt/models/voice_training/whisper_finetuned_ct2/`
    - This is what JARVIS actually loads at runtime (float16 quantization)
 
 5. **Backup locations:**
    - Primary: Local system backup
-   - Secondary: `/mnt/jarvis-storage/whisper_finetuned_backup/`
-   - Tertiary: `/mnt/jarvis-models/whisper_finetuned_backup/`
+   - Secondary: `/mnt/storage/whisper_finetuned_backup/`
+   - Tertiary: `/mnt/models/whisper_finetuned_backup/`
 
 ---
 
