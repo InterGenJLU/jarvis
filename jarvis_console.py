@@ -52,6 +52,7 @@ from core.skill_manager import SkillManager
 from core.reminder_manager import get_reminder_manager
 from core.news_manager import get_news_manager
 from core import persona
+from core.conversation_state import ConversationState
 from core.speech_chunker import SpeechChunker
 from core.context_window import get_context_window, estimate_tokens, TOKEN_RATIO
 from core.document_buffer import DocumentBuffer, BINARY_EXTENSIONS
@@ -752,6 +753,7 @@ def run_console(config, mode):
     ))
 
     session_stats = SessionStats()
+    conv_state = ConversationState()
 
     try:
         while True:
@@ -1002,6 +1004,13 @@ def run_console(config, mode):
             # Speak in hybrid mode — skip if skill already spoke or LLM streaming handled it
             if mode == "hybrid" and real_tts and response and not skill_already_spoke and not llm_streamed:
                 real_tts.speak(response)
+
+            # Update centralized conversation state
+            conv_state.update(
+                command=command,
+                response_text=response or "",
+                response_type="llm" if not skill_handled else "skill",
+            )
 
             # Stats panel
             session_stats.update(skill_handled, used_llm)

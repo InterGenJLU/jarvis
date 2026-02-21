@@ -44,6 +44,7 @@ from core.skill_manager import SkillManager
 from core.reminder_manager import get_reminder_manager
 from core.news_manager import get_news_manager
 from core import persona
+from core.conversation_state import ConversationState
 from core.context_window import get_context_window
 from core.document_buffer import DocumentBuffer, BINARY_EXTENSIONS
 from core.speech_chunker import SpeechChunker
@@ -171,6 +172,9 @@ def init_components(config, tts_proxy):
     # Document buffer
     components['doc_buffer'] = DocumentBuffer()
 
+    # Centralized conversation state (Phase 2 of conversational flow refactor)
+    components['conv_state'] = ConversationState()
+
     return components
 
 
@@ -194,6 +198,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     context_window = components['context_window']
     doc_buffer = components['doc_buffer']
     web_researcher = components['web_researcher']
+    conv_state = components['conv_state']
 
     # Strip wake word prefixes
     command = re.sub(r'^(?:hey\s+)?jarvis[\s,.:!]*', '', command, flags=re.IGNORECASE).strip()
@@ -375,6 +380,13 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     t_end = time.perf_counter()
 
     conversation.add_message("assistant", response)
+
+    # Update centralized conversation state
+    conv_state.update(
+        command=command,
+        response_text=response or "",
+        response_type="llm" if not skill_handled else "skill",
+    )
 
     # Build stats
     stats = _build_stats(match_info, llm, used_llm, t_start, t_match, t_end)

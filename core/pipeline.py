@@ -26,6 +26,7 @@ from core.speech_chunker import SpeechChunker
 from core.logger import get_logger
 from core.honorific import set_honorific
 from core import persona
+from core.conversation_state import ConversationState
 from core.llm_router import ToolCallRequest
 from core.web_research import WebResearcher, format_search_results
 
@@ -418,8 +419,9 @@ class Coordinator:
 
         # Web research (tool calling)
         self.web_researcher = WebResearcher(config) if config.get("llm.local.tool_calling", False) else None
-        self._last_research_results = None
-        self._last_research_exchange = None  # {"query": ..., "answer": ...}
+
+        # Centralized conversation state (Phase 2 of conversational flow refactor)
+        self.conv_state = ConversationState()
 
         self.running = True
         self.state = PipelineState.IDLE
@@ -459,9 +461,6 @@ class Coordinator:
             "ok", "okay", "sure", "right", "mm hmm", "mmhmm", "hmm",
             "no", "nah", "nope",
         }
-
-        # Tracks whether the last JARVIS response ended with a question
-        self._jarvis_asked_question = False
 
     # ----- main loop -----
 
@@ -748,10 +747,10 @@ class Coordinator:
         if not skill_handled and in_conversation:
             cmd_bare = command.strip().lower().rstrip(".,!?")
             if cmd_bare in self._bare_acknowledgments:
-                if not self._jarvis_asked_question:
+                if not self.conv_state.jarvis_asked_question:
                     self.logger.info(
                         f"Dropping bare acknowledgment as noise: '{command}' "
-                        f"(jarvis_asked_question={self._jarvis_asked_question})"
+                        f"(jarvis_asked_question={self.conv_state.jarvis_asked_question})"
                     )
                     self.listener.resume_listening()
                     self.state = PipelineState.IDLE
@@ -814,7 +813,7 @@ class Coordinator:
         # Priority 3.5: Research follow-up ("tell me more about result 2")
         # Must run BEFORE skill routing because "tell me more" semantically
         # matches NewsSkill_continue_reading (score 0.58) and gets stolen.
-        if not skill_handled and self._last_research_results and in_conversation:
+        if not skill_handled and self.conv_state.research_results and in_conversation:
             follow_up = self._detect_research_followup(command)
             if follow_up is not None:
                 skill_handled = True
@@ -892,8 +891,8 @@ class Coordinator:
             # Augment follow-ups with prior research context so the LLM
             # knows what "the score" / "tell me more" / "try again" refers to.
             # stream_with_tools strips all history, so we bake context into the query.
-            if in_conversation and self._last_research_exchange:
-                prev = self._last_research_exchange
+            if in_conversation and self.conv_state.research_exchange:
+                prev = self.conv_state.research_exchange
                 llm_command = (
                     f"Context: The user just asked '{prev['query']}' and I answered: "
                     f"'{prev['answer']}'\n\n"
@@ -916,10 +915,12 @@ class Coordinator:
         if not self.tts._spoke:
             self._speak_and_wait(response)
 
-        # Track whether JARVIS asked a question — affects how bare
-        # acknowledgments ("yeah", "ok") are handled in the next turn.
-        self._jarvis_asked_question = bool(
-            response and response.rstrip().endswith("?")
+        # Update centralized conversation state — tracks last intent,
+        # response type, and auto-detects jarvis_asked_question from "?"
+        self.conv_state.update(
+            command=command,
+            response_text=response or "",
+            response_type="llm" if not skill_handled else "skill",
         )
 
         # Follow-up window — use full spoken response so question detection works
@@ -1063,7 +1064,7 @@ class Coordinator:
                 if tool_call_request.name == "web_search":
                     query = tool_call_request.arguments.get("query", command)
                     results = self.web_researcher.search(query)
-                    self._last_research_results = results
+                    self.conv_state.research_results = results
 
                     # Fetch page content from top 3 results concurrently.
                     # Multiple sources let the LLM cross-reference and pick the best info.
@@ -1161,10 +1162,10 @@ class Coordinator:
             # Store the exchange so follow-ups have context.
             # Use raw_command (not the augmented command) to prevent nested
             # context wrapping on successive follow-ups.
-            self._last_research_exchange = {
-                "query": raw_command,
-                "answer": full_response,
-            }
+            self.conv_state.set_research_context(
+                results=self.conv_state.research_results or [],
+                exchange={"query": raw_command, "answer": full_response},
+            )
 
         return full_response
 
@@ -1236,7 +1237,7 @@ class Coordinator:
             LLM-synthesized response based on full page content, or None.
         """
         cmd = command.strip().lower()
-        results = self._last_research_results
+        results = self.conv_state.research_results
         if not results:
             return None
 
@@ -1396,10 +1397,9 @@ class Coordinator:
             self.memory_manager.reset_surfacing_window()
         if self.context_window:
             self.context_window.reset()
-        # Clear research results cache — no longer relevant
-        self._last_research_results = None
-        self._last_research_exchange = None
-        self._jarvis_asked_question = False
+        # Reset centralized conversation state (clears research cache,
+        # jarvis_asked_question, last intent/response tracking)
+        self.conv_state.close_window()
         if self.web_researcher:
             self.web_researcher.clear_cache()
 
