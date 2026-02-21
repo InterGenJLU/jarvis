@@ -1210,8 +1210,10 @@ class Coordinator:
             return False  # Can't determine — let it through
 
         # --- Signal 1: Position ---
-        # Real commands have "jarvis" in the first 2 words (or 3 with a prefix
-        # like "hey" / "good morning").
+        # Real commands have "jarvis" at the start (first 2-3 words with
+        # prefixes like "hey"/"good morning") OR at the end (trailing
+        # address like "what time is it, jarvis?").
+        # Ambient mentions are in the MIDDLE of longer sentences.
         effective_pos = word_idx
         if word_idx <= 2:
             # Check if earlier words are known prefixes
@@ -1219,7 +1221,10 @@ class Coordinator:
             if all(pw in self._WAKE_PREFIXES for pw in prefix_words):
                 effective_pos = 0  # Treat as position 0
 
-        if effective_pos >= 3:
+        # Trailing wake word = command ("how are you, jarvis?")
+        is_trailing = word_idx >= len(words) - 2  # last or second-to-last word
+
+        if effective_pos >= 3 and not is_trailing:
             self.logger.info(
                 f"🔇 Ambient rejected (position {word_idx}): {text[:80]}"
             )

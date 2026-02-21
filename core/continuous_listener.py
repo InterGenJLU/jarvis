@@ -632,13 +632,15 @@ class ContinuousListener:
         if word_idx is None:
             return False
 
-        # Signal 1: Position — wake word should be in first 2 words
+        # Signal 1: Position — wake word should be in first 2 words OR trailing
         effective_pos = word_idx
         if word_idx <= 2:
             prefix_words = [w.strip('.,!?;:') for w in words[:word_idx]]
             if all(pw in self._WAKE_PREFIXES for pw in prefix_words):
                 effective_pos = 0
-        if effective_pos >= 3:
+        # Trailing wake word = command ("how are you, jarvis?")
+        is_trailing = word_idx >= len(words) - 2
+        if effective_pos >= 3 and not is_trailing:
             self.logger.info(f"🔇 Ambient rejected (position {word_idx}): {text[:80]}")
             return True
 
