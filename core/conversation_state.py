@@ -33,6 +33,9 @@ class ConversationState:
     research_results: Optional[list] = None    # Cached web search results
     research_exchange: Optional[dict] = None   # {"query": ..., "answer": ...}
 
+    # --- Conversation depth ---
+    turn_count: int = 0                    # Number of user turns in current window
+
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
     window_opened_at: float = 0.0        # When the conversation window opened
@@ -57,6 +60,7 @@ class ConversationState:
         if command:
             self.last_command = command
             self.last_interaction_time = time.time()
+            self.turn_count += 1
 
     def open_window(self):
         """Mark conversation window as active."""
@@ -73,6 +77,7 @@ class ConversationState:
         self.last_response_type = ""
         self.last_response_text = ""
         self.last_command = ""
+        self.turn_count = 0
 
     def set_research_context(self, results: list, exchange: dict):
         """Store research results for follow-up queries."""

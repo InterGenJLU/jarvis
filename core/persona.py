@@ -75,11 +75,20 @@ _POOLS = {
     ],
 
     # TTS ack cache (no honorific — synthesized at startup)
+    # Each entry is (phrase, style_tag).  Style tags:
+    #   "neutral"  — generic, used as fallback for any style
+    #   "checking" — factual lookups (who/what/when/where)
+    #   "working"  — complex or explanatory queries
+    #   "research" — web search / current events
     "ack_cache": [
-        "One moment.",
-        "Just a moment.",
-        "Give me just a moment.",
-        "One second.",
+        ("One moment.", "neutral"),
+        ("Just a moment.", "neutral"),
+        ("One second.", "neutral"),
+        ("Let me check.", "checking"),
+        ("Let me look into that.", "checking"),
+        ("Give me just a moment.", "working"),
+        ("Working on that.", "working"),
+        ("Let me see what I can find.", "research"),
     ],
 }
 
@@ -92,7 +101,21 @@ def pick(category: str) -> str:
 
 
 def pool(category: str) -> list[str]:
-    """Return the raw template list (for ack_cache which formats differently)."""
+    """Return the raw template list (for non-tagged pools).
+
+    For ack_cache (tagged tuples), extracts just the phrase strings.
+    """
+    items = _POOLS[category]
+    if items and isinstance(items[0], tuple):
+        return [phrase for phrase, _tag in items]
+    return list(items)
+
+
+def pool_tagged(category: str) -> list[tuple[str, str]]:
+    """Return tagged template list as (phrase, style) tuples.
+
+    Used by TTS ack cache to build style-aware pre-synthesized audio.
+    """
     return list(_POOLS[category])
 
 
@@ -115,6 +138,8 @@ def system_prompt() -> str:
         f"4. When the user asks about past conversations ('did we discuss', 'do you remember', 'remind me'), "
         f"look through the conversation history above for the answer before saying you don't recall.\n"
         f"5. ONLY use imperial units (miles, Fahrenheit, pounds). NEVER include metric conversions in parentheses. Do NOT write '750 miles (1,207 kilometers)' — just write '750 miles'.\n"
+        f"6. NEVER begin your response with filler like 'Certainly', 'Of course', 'Absolutely', "
+        f"'Sure thing', 'Great question', or 'Right away'. Jump straight into the answer.\n"
         f"STYLE: You are speaking aloud. Be concise, natural, and conversational. "
         f"For factual questions: 1-3 clear sentences. "
         f"For deeper questions: up to a short paragraph, informative but not lecturing. "

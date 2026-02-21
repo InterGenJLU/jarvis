@@ -468,6 +468,9 @@ class Coordinator:
             web_researcher=self.web_researcher,
         )
 
+        # Wire timeout cleanup so silence-expired windows get same cleanup as dismissals
+        self.listener.on_window_close = self._on_conversation_timeout
+
     # ----- main loop -----
 
     def run(self):
@@ -813,7 +816,10 @@ class Coordinator:
         first_chunk_checked = False
 
         # Fire ack timer in case streaming is slow to start
-        ack_timer = threading.Timer(0.3, self._play_ack_if_still_thinking)
+        ack_style = self._classify_ack_style(raw_command)
+        ack_timer = threading.Timer(
+            0.3, self._play_ack_if_still_thinking, args=(ack_style,)
+        )
         self._llm_responded = False
         ack_timer.daemon = True
         ack_timer.start()
@@ -1069,10 +1075,29 @@ class Coordinator:
         re.IGNORECASE,
     )
 
-    def _play_ack_if_still_thinking(self):
+    @staticmethod
+    def _classify_ack_style(command: str) -> str:
+        """Classify query into an ack style for contextual acknowledgments."""
+        cl = command.lower().strip()
+        # Research / current events
+        if any(w in cl for w in ("search", "look up", "find out", "latest", "current", "news about")):
+            return "research"
+        # Factual lookup
+        if any(cl.startswith(w) for w in (
+            "what ", "who ", "when ", "where ", "how many ", "how much ", "is ", "are ", "was ", "does ",
+        )):
+            return "checking"
+        # Complex / explanatory
+        if any(cl.startswith(w) for w in (
+            "explain ", "tell me about ", "describe ", "compare ", "why ", "how do ", "how does ",
+        )):
+            return "working"
+        return "neutral"
+
+    def _play_ack_if_still_thinking(self, style_hint: str = None):
         """Timer callback — plays ack if LLM hasn't responded yet."""
         if not self._llm_responded:
-            self.tts.speak_ack()
+            self.tts.speak_ack(style_hint=style_hint)
 
     def _strip_ack_opener(self, text: str) -> str:
         """Strip leading ack phrase from LLM text if ack was already spoken."""
@@ -1116,18 +1141,44 @@ class Coordinator:
         if self.web_researcher:
             self.web_researcher.clear_cache()
 
+    def _on_conversation_timeout(self):
+        """Cleanup when conversation window expires due to silence.
+
+        Called by ContinuousListener.on_window_close callback.
+        Same cleanup as _handle_close_conversation, but the listener already
+        closed itself (flipped flag + played tone), so we skip that call.
+        """
+        self.logger.info("Timeout cleanup: resetting state, context, caches")
+        if self.memory_manager:
+            self.memory_manager.reset_surfacing_window()
+        if self.context_window:
+            self.context_window.reset()
+        self.conv_state.close_window()
+        if self.web_researcher:
+            self.web_researcher.clear_cache()
+
     def _manage_conversation_window(self, response: str, was_in_conversation: bool):
-        """Decide whether to open/extend the conversation window."""
-        if was_in_conversation:
-            if self.conversation.should_open_follow_up_window(response):
-                duration = self.listener._extended_duration
-            else:
-                duration = self.listener._default_duration
-            self.listener.open_conversation_window(duration)
-        elif self.conversation.should_open_follow_up_window(response):
-            self.listener.open_conversation_window(self.listener._extended_duration)
+        """Decide whether to open/extend the conversation window.
+
+        Window duration adapts to conversation context:
+        - Base: extended (7s) if follow-up invited, default (4s) otherwise
+        - Active conversation bonus: 3+ turns → 50% extension
+        - JARVIS asked a question → at least 10s for user to think
+        """
+        if self.conversation.should_open_follow_up_window(response):
+            base = self.listener._extended_duration
         else:
-            self.listener.open_conversation_window(self.listener._default_duration)
+            base = self.listener._default_duration
+
+        # Active conversation bonus: 3+ turns → 50% extension
+        if self.conv_state.turn_count >= 3:
+            base *= 1.5
+
+        # JARVIS asked a question → give user time to think
+        if response and response.rstrip().endswith("?"):
+            base = max(base, 10.0)
+
+        self.listener.open_conversation_window(base)
 
     def _extract_command(self, full_text: str) -> str:
         """Extract command text from transcription (remove wake word)."""

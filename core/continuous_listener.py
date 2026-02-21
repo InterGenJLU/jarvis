@@ -90,6 +90,10 @@ class ContinuousListener:
         self._default_duration = config.get("conversation.follow_up_window.default_duration", 5.0)
         self._extended_duration = config.get("conversation.follow_up_window.extended_duration", 8.0)
 
+        # Optional callback when conversation window closes due to silence timeout.
+        # Set by pipeline/coordinator to clean up state (conv_state, context_window, etc.)
+        self.on_window_close = None
+
         # Known valid short replies (don't filter these as noise)
         self._valid_short_replies = {
             "yes", "no", "yeah", "yep", "nah", "nope",
@@ -736,13 +740,21 @@ class ContinuousListener:
 
     def _conversation_timeout(self):
         """Called by timer when conversation window expires due to silence."""
+        timed_out = False
         with self._conversation_lock:
             if self.conversation_window_active:
                 self.conversation_window_active = False
                 self._conversation_timer = None
+                timed_out = True
                 self.logger.info("🔒 Conversation window timed out (silence)")
                 print("🔒 Conversation ended (silence)")
                 self._play_conversation_close_tone()
+        # Invoke cleanup callback AFTER releasing the lock
+        if timed_out and self.on_window_close:
+            try:
+                self.on_window_close()
+            except Exception as e:
+                self.logger.error(f"on_window_close callback error: {e}")
 
     def _play_conversation_tone(self):
         """Play the conversation window tone if configured."""

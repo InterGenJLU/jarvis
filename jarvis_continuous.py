@@ -167,6 +167,10 @@ class JarvisContinuous:
         # Register interruption handler
         self.listener.on_interrupt = self.on_interrupt_detected
 
+        # Cleanup on conversation timeout (silence-expired windows)
+        if not self.event_mode:
+            self.listener.on_window_close = self._on_conversation_timeout
+
         # TTS subprocess tracking for interruption
         self.current_tts_process = None
         self.tts_interrupted = False  # Track if TTS was interrupted
@@ -527,10 +531,26 @@ class JarvisContinuous:
         re.IGNORECASE,
     )
 
-    def _play_ack_if_still_thinking(self):
+    @staticmethod
+    def _classify_ack_style(command: str) -> str:
+        """Classify query into an ack style for contextual acknowledgments."""
+        cl = command.lower().strip()
+        if any(w in cl for w in ("search", "look up", "find out", "latest", "current", "news about")):
+            return "research"
+        if any(cl.startswith(w) for w in (
+            "what ", "who ", "when ", "where ", "how many ", "how much ", "is ", "are ", "was ", "does ",
+        )):
+            return "checking"
+        if any(cl.startswith(w) for w in (
+            "explain ", "tell me about ", "describe ", "compare ", "why ", "how do ", "how does ",
+        )):
+            return "working"
+        return "neutral"
+
+    def _play_ack_if_still_thinking(self, style_hint: str = None):
         """Called by timer — plays a quick ack phrase if LLM hasn't responded yet."""
         if not self._llm_responded:
-            self.tts.speak_ack()
+            self.tts.speak_ack(style_hint=style_hint)
 
     def _strip_ack_opener(self, text: str) -> str:
         """Strip leading ack phrase from LLM text if ack was already spoken."""
@@ -560,7 +580,10 @@ class JarvisContinuous:
         first_chunk_checked = False
 
         # Fire ack timer in case streaming itself is slow to start
-        ack_timer = threading.Timer(0.3, self._play_ack_if_still_thinking)
+        ack_style = self._classify_ack_style(command)
+        ack_timer = threading.Timer(
+            0.3, self._play_ack_if_still_thinking, args=(ack_style,)
+        )
         self._llm_responded = False
         ack_timer.daemon = True
         ack_timer.start()
@@ -645,6 +668,14 @@ class JarvisContinuous:
             self.tts._spoke = True
 
         return full_response
+
+    def _on_conversation_timeout(self):
+        """Cleanup when conversation window expires due to silence (legacy mode)."""
+        self.logger.info("Timeout cleanup: resetting memory surfacing + context window")
+        if self.memory_manager:
+            self.memory_manager.reset_surfacing_window()
+        if self.context_window:
+            self.context_window.reset()
 
     def _manage_conversation_window(self, response: str, was_in_conversation: bool):
         """Decide whether to open/extend the conversation window after a response.

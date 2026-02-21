@@ -99,7 +99,8 @@ class TextToSpeech:
         )
 
         # Pre-synthesize short acknowledgment phrases for instant playback
-        self._ack_cache: Dict[str, bytes] = {}
+        # Maps phrase → (pcm_bytes, style_tag)
+        self._ack_cache: Dict[str, tuple[bytes, str]] = {}
         self._ack_played = False
         self._build_ack_cache()
 
@@ -174,9 +175,9 @@ class TextToSpeech:
     def _build_ack_cache(self):
         """Pre-synthesize short phrases as raw PCM for instant playback."""
         from core import persona
-        phrases = persona.pool("ack_cache")
+        tagged_phrases = persona.pool_tagged("ack_cache")
         t0 = time.time()
-        for phrase in phrases:
+        for phrase, style in tagged_phrases:
             try:
                 chunks = []
                 for gs, ps, audio in self._kokoro_pipeline(
@@ -185,7 +186,8 @@ class TextToSpeech:
                     chunks.append(audio)
                 if chunks:
                     full = self._np.concatenate(chunks)
-                    self._ack_cache[phrase] = (full * 32767).astype(self._np.int16).tobytes()
+                    pcm = (full * 32767).astype(self._np.int16).tobytes()
+                    self._ack_cache[phrase] = (pcm, style)
             except Exception as e:
                 self.logger.warning(f"Failed to cache ack phrase '{phrase}': {e}")
 
@@ -194,8 +196,12 @@ class TextToSpeech:
             f"Ack cache: {len(self._ack_cache)} phrases pre-synthesized in {elapsed:.1f}s"
         )
 
-    def speak_ack(self) -> bool:
+    def speak_ack(self, style_hint: str = None) -> bool:
         """Play a random pre-cached acknowledgment phrase instantly.
+
+        Args:
+            style_hint: Preferred style tag ("checking", "working", "research").
+                        Falls back to "neutral" if no match, then any phrase.
 
         Returns True if played, False if cache empty or playback failed.
         Call this when the LLM is slow to respond to fill the silence.
@@ -204,9 +210,21 @@ class TextToSpeech:
             return False
 
         with self._tts_lock:
-            phrase = random.choice(list(self._ack_cache.keys()))
-            pcm = self._ack_cache[phrase]
-            self.logger.info(f"Ack: '{phrase}'")
+            # Filter candidates by style hint (with neutral fallback)
+            if style_hint:
+                candidates = [p for p, (_, s) in self._ack_cache.items()
+                              if s == style_hint]
+                if not candidates:
+                    candidates = [p for p, (_, s) in self._ack_cache.items()
+                                  if s == "neutral"]
+            else:
+                candidates = list(self._ack_cache.keys())
+            if not candidates:
+                candidates = list(self._ack_cache.keys())
+
+            phrase = random.choice(candidates)
+            pcm, style = self._ack_cache[phrase]
+            self.logger.info(f"Ack: '{phrase}' (style={style})")
 
             try:
                 aplay = self._open_aplay()
