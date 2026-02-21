@@ -41,6 +41,8 @@ class ConversationSkill(BaseSkill):
             examples=[
                 "how are you",
                 "how are you doing",
+                "how are you feeling",
+                "how are you feeling today",
                 "how's it going",
                 "how are things",
                 "what's up"
