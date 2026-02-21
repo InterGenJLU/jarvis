@@ -24,6 +24,8 @@ _POOLS = {
         "Noted, {h}.",
         "Of course, {h}.",
         "Absolutely, {h}.",
+        "Consider it done, {h}.",
+        "I'll see to it, {h}.",
     ],
 
     # Priority 2.7: Dismissal (conversation window close)
@@ -33,6 +35,8 @@ _POOLS = {
         "As you wish, {h}.",
         "Understood, {h}.",
         "Very well, {h}.",
+        "I'll be here, {h}.",
+        "Should you need anything, {h}.",
     ],
 
     # Priority 3: Fact stored in memory
@@ -51,6 +55,8 @@ _POOLS = {
         "Right away, {h}.",
         "Pulling that up now, {h}.",
         "Opening that article for you, {h}.",
+        "Let me pull that up, {h}.",
+        "Bringing that up now, {h}.",
     ],
 
     # Minimal greeting (wake word only, no command)
@@ -61,6 +67,8 @@ _POOLS = {
         "I'm listening, {h}.",
         "Ready when you are, {h}.",
         "Standing by, {h}.",
+        "What can I do for you, {h}?",
+        "At the ready, {h}.",
     ],
 
     # Research follow-up interim ack
@@ -86,9 +94,11 @@ _POOLS = {
         ("One second.", "neutral"),
         ("Let me check.", "checking"),
         ("Let me look into that.", "checking"),
+        ("Checking on that.", "checking"),
         ("Give me just a moment.", "working"),
         ("Working on that.", "working"),
         ("Let me see what I can find.", "research"),
+        ("Let me pull that up.", "research"),
     ],
 }
 
