@@ -1,6 +1,6 @@
 # JARVIS — GPU-Accelerated Voice Assistant
 
-A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speech recognition, and a local LLM — inspired by the AI from Iron Man. No cloud required for core operation.
+A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speech recognition, and a local LLM. No cloud required for core operation.
 
 **Built on:** Ubuntu 24.04 | Python 3.12 | ROCm 7.2 | AMD RX 7900 XT
 
@@ -8,12 +8,14 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 
 ## Highlights
 
-- **0.1-0.2s speech recognition** — Fine-tuned Whisper on AMD GPU via CTranslate2 + ROCm (10-20x faster than CPU)
+- **0.1-0.2s speech recognition** — Fine-tuned Whisper v2 (198 phrases, 94%+ accuracy) on AMD GPU via CTranslate2 + ROCm
 - **Local LLM intelligence** — Qwen 3-8B (Q5_K_M) via llama.cpp with web research tool calling
 - **Natural blended voice** — Kokoro TTS with custom voice blend (fable + george), gapless streaming playback
+- **Conversational flow engine** — Persona module (10 response pools), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
 - **Semantic understanding** — ML-based intent matching using sentence-transformers, not brittle regex patterns
-- **Always-on listening** — Porcupine wake word + WebRTC VAD + multi-turn conversation windows
-- **10 production skills** — time, weather, system info, filesystem, developer tools, desktop control, conversation, reminders, web research, news
+- **Always-on listening** — Porcupine wake word + WebRTC VAD + ambient wake word filter + multi-turn conversation windows
+- **11 production skills** — time, weather, system info, filesystem, file editor, developer tools, desktop control, conversation, reminders, web research, news
+- **Three frontends** — voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
 - **Privacy by design** — everything runs locally; Claude API is a last-resort quality fallback only
 
 ---
@@ -57,24 +59,33 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
                           └──────────┬──────────┘
                                      │ "Jarvis"
                           ┌──────────▼──────────┐
+                          │   Ambient Filter     │
+                          │   (position, copula, │
+                          │    threshold, length) │
+                          └──────────┬──────────┘
+                                     │ verified wake word
+                          ┌──────────▼──────────┐
                           │   WebRTC VAD +       │
                           │   Continuous Listener │
                           │   (speech detection) │
                           └──────────┬──────────┘
                                      │ audio frames
                           ┌──────────▼──────────┐
-                          │   Whisper STT        │
+                          │   Whisper STT v2     │
                           │   (CTranslate2/GPU)  │
-                          │   Fine-tuned model   │
+                          │   198 phrases, 94%+  │
                           └──────────┬──────────┘
                                      │ text
                   ┌──────────────────▼───────────────────┐
-                  │         Skill Router                  │
-                  │  Priority layers:                     │
-                  │  1. Exact match (time, date)          │
-                  │  2. Keyword match + semantic verify   │
-                  │  3. Semantic intent matching          │
-                  │  4. LLM fallback (Qwen 3-8B)         │
+                  │      ConversationRouter               │
+                  │  Shared priority chain:               │
+                  │  1. Confirmation interception         │
+                  │  2. Dismissal / conversation close    │
+                  │  3. Memory / context / news pull-up   │
+                  │  4. Exact match (time, date)          │
+                  │  5. Keyword + semantic verify         │
+                  │  6. Pure semantic matching            │
+                  │  7. LLM fallback (Qwen 3-8B)         │
                   └──────┬──────────────┬────────────────┘
                          │              │
               ┌──────────▼───┐   ┌──────▼──────────┐
@@ -84,6 +95,11 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
               └──────────┬───┘   └──────┬──────────┘
                          │              │
                   ┌──────▼──────────────▼────────┐
+                  │   Persona + Contextual Acks   │
+                  │   (10 pools, style-tagged)     │
+                  └──────────────┬────────────────┘
+                                │
+                  ┌──────────────▼────────────────┐
                   │        Kokoro TTS             │
                   │   StreamingAudioPipeline      │
                   │   (gapless multi-sentence)    │
@@ -101,8 +117,11 @@ The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS
 
 | Subsystem | What It Does |
 |-----------|-------------|
-| **Skill Router** | 4-layer routing: exact match → keyword + semantic verify → pure semantic → LLM fallback |
-| **Conversation Windows** | After a response, keeps listening for follow-ups (timer-based auto-close, noise filtering) |
+| **Conversation Router** | Shared 7-layer priority chain for voice/console/web — one router, three frontends |
+| **Persona Engine** | 10 response pools (~50 templates), system prompts, honorific injection, style-tagged ack selection |
+| **Conversation State** | Turn counting, intent history, question detection, research context tracking |
+| **Ambient Filter** | Multi-signal wake word validation: position, copula, threshold (0.80), length — blocks ambient mentions |
+| **Conversation Windows** | Adaptive follow-up windows (4-7s), extends with conversation depth, timeout cleanup |
 | **Web Research** | Qwen 3-8B calls DuckDuckGo + trafilatura to search and synthesize answers from live web sources |
 | **Conversational Memory** | SQLite fact store + FAISS semantic search — remembers facts across sessions, surfaces them proactively |
 | **Context Window** | Topic-segmented working memory with relevance-scored assembly across sessions |
@@ -121,6 +140,7 @@ The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS
 | **Weather** | "What's the weather?" / "Will it rain?" | OpenWeatherMap API with natural language formatting |
 | **System Info** | "What CPU do I have?" / "How much RAM?" | System queries with human-readable output |
 | **Filesystem** | "Find my config file" / "Count lines in main.py" | File search, line counting, script analysis |
+| **File Editor** | "Write a script that..." / "Edit my config file" / "Delete temp.txt" | 5 intents: write, edit, read, delete files + list share contents. LLM-generated content, confirmation flow |
 | **Developer Tools** | "Search the codebase for TODO" / "Git status" / "Show me the network" | 13 intents: codebase search, git multi-repo, system admin, general shell, visual output, 3-tier safety |
 | **Desktop Control** | "Open Chrome" / "Volume up" / "Switch to workspace 2" | 16 intents: app launch/close, window management, volume, workspaces, focus, clipboard via GNOME Shell extension D-Bus bridge |
 | **Conversation** | "Good morning" / "Thank you" / "How are you?" | Natural greetings, small talk, dismissal detection |
@@ -443,7 +463,7 @@ Say the wake word ("Jarvis") followed by your command:
 - *"Jarvis, open Chrome"*
 - *"Jarvis, volume up"*
 
-After JARVIS responds, you have a **conversation window** (default 4 seconds) to ask follow-up questions without repeating the wake word.
+After JARVIS responds, you have a **conversation window** (4-7 seconds, adaptive) to ask follow-up questions without repeating the wake word. The window extends with conversation depth and when JARVIS asks a question.
 
 ### Console Mode
 
@@ -469,7 +489,7 @@ python3 jarvis_web.py
 # Then open http://127.0.0.1:8088 in your browser
 ```
 
-The web UI provides the same full skill pipeline with streaming LLM responses, drag/drop file handling, web research, conversation history with scroll-back, and an optional voice toggle for spoken output.
+The web UI provides the same full skill pipeline with streaming LLM responses, markdown rendering, drag/drop file handling, web research, conversation history with session sidebar, health check HUD, and an optional voice toggle for spoken output.
 
 ---
 
@@ -489,9 +509,13 @@ jarvis/
 │   ├── tts.py                    # Text-to-speech (Kokoro + Piper)
 │   ├── llm_router.py             # LLM routing (Qwen → quality gate → Claude fallback)
 │   ├── web_research.py           # Web search tool calling (DuckDuckGo + trafilatura)
+│   ├── pipeline.py               # Event-driven Coordinator + STT/TTS workers
+│   ├── persona.py                # Response pools, system prompts, honorific injection
+│   ├── conversation_state.py     # Turn tracking, intent history, question detection
+│   ├── conversation_router.py    # Shared priority chain (voice/console/web)
 │   ├── skill_manager.py          # Skill loading + 4-layer routing
 │   ├── semantic_matcher.py       # Sentence transformer intent matching
-│   ├── continuous_listener.py    # VAD + wake word + conversation windows
+│   ├── continuous_listener.py    # VAD + wake word + ambient filter + conversation windows
 │   ├── tts_normalizer.py         # Text normalization for natural speech
 │   ├── conversation.py           # History, cross-session memory, follow-up logic
 │   ├── memory_manager.py         # Conversational memory (SQLite + FAISS)
@@ -514,6 +538,7 @@ jarvis/
 │   │   ├── weather/              # Weather forecasts
 │   │   ├── system_info/          # CPU, RAM, disk info
 │   │   ├── filesystem/           # File search, line counting
+│   │   ├── file_editor/          # File write, edit, read, delete + share listing
 │   │   ├── developer_tools/      # Codebase search, git, shell
 │   │   ├── app_launcher/         # Desktop control (16 intents: apps, windows, volume, workspaces, clipboard)
 │   │   └── web_navigation/       # Web search + browsing
@@ -532,6 +557,7 @@ jarvis/
 ├── assets/                       # Audio cues (generate your own .wav files)
 ├── scripts/                      # Utility scripts
 │   ├── install_desktop_extension.sh  # Install GNOME Shell extension
+│   ├── test_router.py                # Router test suite (38 tests)
 │   ├── test_desktop_manager.py       # Test desktop manager module
 │   ├── enroll_speaker.py             # Speaker voice enrollment
 │   ├── init_profiles.py              # User profile initialization
@@ -695,19 +721,21 @@ The base Whisper model struggles with:
 
 ### Process
 
-1. **Record training data** — 150+ utterances covering problem words, domain vocabulary, and natural speech patterns
+1. **Record training data** — 198 utterances covering problem words, domain vocabulary, and natural speech patterns
 2. **Train** — Fine-tune from the base Whisper model using HuggingFace Transformers
 3. **Convert** — Export to CTranslate2 format for GPU-accelerated inference
 4. **Deploy** — Update `config.yaml` to point to the new model
 
 See [docs/VOICE_TRAINING_GUIDE.md](docs/VOICE_TRAINING_GUIDE.md) for the complete process.
 
-### Results
+### Results (v2 — FIFINE K669B, 198 phrases)
 
 | Metric | Before | After |
 |--------|--------|-------|
-| General accuracy | ~80% | ~88%+ |
-| Domain vocabulary | ~60% | ~90%+ |
+| General accuracy | ~80% | 94%+ |
+| Domain vocabulary | ~60% | ~95%+ |
+| Wake word detection | ~90% | 100% |
+| Contraction handling | ~70% | 100% |
 | Latency (GPU) | 0.1-0.2s | 0.1-0.2s (unchanged) |
 
 ---
@@ -772,6 +800,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 2.3.0
+**Version:** 2.5.0
 **Status:** Production — actively developed
-**Last Updated:** February 2026
+**Last Updated:** February 21, 2026

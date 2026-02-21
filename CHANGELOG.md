@@ -1,5 +1,75 @@
 # JARVIS Changelog
 
+## [2026-02-21] - Conversational Flow Refactor + Whisper v2
+
+### Major Features
+- **Conversational Flow Refactor (4 phases)** — `core/persona.py`, `core/conversation_state.py`, `core/conversation_router.py`, `core/pipeline.py`
+  - Phase 1: Persona module — 10 response pools (~50 templates), system prompts, honorific injection
+  - Phase 2: ConversationState — turn tracking, intent history, question detection, research context
+  - Phase 3: ConversationRouter — shared priority chain for voice/console/web (one router, three frontends)
+  - Phase 4: Response flow polish — contextual ack selection (10 tagged phrases), smarter follow-up windows (adaptive 4-7s), conversation timeout cleanup, suppress LLM opener collision
+- **Router Test Suite** — `scripts/test_router.py`, 38 tests validating routing decisions without live LLM/mic
+- **Whisper v2 Fine-Tuning** — 198 training phrases (up from 149), FIFINE K669B mic, GPU fp16, 94.4% live accuracy
+- **Response Pool Expansion** — reminder_ack 4→6, dismissal 5→7, greeting 6→8, news_pullup 3→5, ack_cache 8→10
+- **6 Conversational Bug Fixes** — transparency pattern, MCU roleplay removal, double honorific, UnboundLocalError, raw extraction text, dismissal courtesy suffix
+
+---
+
+## [2026-02-20] - Web UI + File Editor + Ambient Filter + Edge Case Testing
+
+### Major Features
+- **Web Chat UI (5 phases)** — `jarvis_web.py`, `web/index.html`, `web/style.css`, `web/app.js`
+  - Phase 1: MVP — aiohttp WebSocket server, dark theme, stats header, send/receive
+  - Phase 2: Streaming + file handling — token-by-token LLM delivery, drag/drop files, slash commands, quality gate
+  - Phase 3: History + notifications — paginated `/api/history`, scroll-to-load-more, floating announcement banners
+  - Phase 4: Polish — markdown rendering with XSS protection, code blocks + copy, timestamps, Ctrl+L, responsive breakpoints
+  - Phase 5: Session sidebar — 30-min gap detection, hamburger toggle, session rename, pagination, LIVE badge
+- **File Editor Skill** — `/mnt/storage/jarvis/skills/system/file_editor/`
+  - 5 intents: write_file, edit_file, read_file, delete_file, list_share_contents
+  - Confirmation flow for destructive operations, LLM-generated content
+- **Ambient Wake Word Filter** — `core/continuous_listener.py`, `core/pipeline.py`
+  - Multi-signal: position check, copula detection, threshold 0.70→0.80, length filter
+  - Eliminates false triggers from ambient conversation about JARVIS
+- **Edge Case Testing Phase 1** — `docs/EDGE_CASE_TESTING.md`
+  - ~200 test cases across 9 phases, 37/40 pass (92.5%)
+  - 14 routing failures fixed across 4 rounds: bare word guard, tie-breaking, priority chain, noise filter, intent_id collision
+
+### Bug Fixes
+- Rundown substring bug (`"no" in "diagnostic"` → word-boundary matching)
+- 3 file editor routing bugs (keyword ownership, global semantic fallback, confirmation interception)
+- Semantic embedding cache for faster routing (`56f5037`)
+- STT warm-up to eliminate cold start latency (`56f5037`)
+
+---
+
+## [2026-02-18/19] - Web Research + Desktop Integration + Document Ingestion + GitHub Publishing
+
+### Major Features
+- **Web Research (5 phases)** — `core/web_research.py`, `core/llm_router.py`
+  - Qwen 3-8B native tool calling with `tool_choice=auto`
+  - DuckDuckGo search + trafilatura page extraction + multi-source synthesis
+  - Prescriptive prompt v2: "verifiable answer" + numbered rules + anti-deflection
+  - Console web research with deflection safety net
+- **GNOME Desktop Integration (5 phases)** — `extensions/jarvis-desktop@jarvis/`, `core/desktop_manager.py`
+  - Custom GNOME Shell extension with D-Bus bridge (14 methods)
+  - Desktop manager: lazy D-Bus, wmctrl fallback, pactl, notify-send, wl-clipboard
+  - App Launcher v2.0: 16 intents (launch/close, fullscreen/minimize/maximize, volume, workspace, focus, clipboard)
+- **Document Ingestion (3 phases)** — `jarvis_console.py`
+  - prompt_toolkit console with /paste, /file, /clipboard, /append, /context, /clear
+  - DocumentBuffer with token budget, binary rejection, tab completion
+  - `<document>` XML injection into LLM context
+- **GitHub Publishing System** — `scripts/publish/publish.sh`
+  - Automated PII redaction (47 patterns), verification, non-interactive `--auto` mode
+  - rsync-based sync from dev → public repo
+
+### Bug Fixes
+- 27+ fixes: ack collision, keyword greediness, dismissal detection, decimal TTS, aplay lazy open
+- Streaming delivery: sentence-only chunking, per-chunk metric stripping, context flush on shutdown
+- Scoped TTS subprocess control (replaced global `pkill -9` with tracked subprocess kill)
+- News urgency filtering, Google Calendar reminder offsets, parallel web search page fetches
+
+---
+
 ## [2026-02-17] - Conversational Memory + Health Check
 
 ### Major Features

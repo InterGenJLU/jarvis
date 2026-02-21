@@ -1,7 +1,7 @@
 # JARVIS - Personal AI Assistant
 
-**Version:** 2.3.0 (Production Ready)
-**Last Updated:** February 19, 2026
+**Version:** 2.5.0 (Production Ready)
+**Last Updated:** February 21, 2026
 **Status:** ✅ Stable, Feature-Rich, Voice-Controlled
 
 ---
@@ -20,7 +20,7 @@
 
 ## 🤖 What is JARVIS?
 
-JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-controlled AI assistant inspired by Tony Stark's AI from Iron Man. Unlike commercial assistants, JARVIS runs entirely on your local hardware with:
+JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-controlled AI assistant. Unlike commercial assistants, JARVIS runs entirely on your local hardware with:
 
 - ✅ **Complete Privacy** - No cloud, no data collection
 - ✅ **Custom Voice Training** - Learns YOUR accent
@@ -30,7 +30,7 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 
 **Hardware:** Runs on consumer-grade PC (Ryzen 9 5900X, AMD RX 7900 XT)  
 **OS:** Ubuntu 24.04 LTS  
-**Latency:** 600-800ms for skill queries, 3-5s for LLM fallback
+**Latency:** 300-600ms for skill queries, 2-4s for LLM fallback (streaming)
 
 ---
 
@@ -38,17 +38,20 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 
 ### Core Features
 - **Wake Word Detection** - Porcupine "Jarvis" with 100% accuracy
-- **Speech Recognition** - Fine-tuned Whisper (CTranslate2, GPU-accelerated, 88%+ accuracy, Southern accent)
+- **Speech Recognition** - Fine-tuned Whisper v2 (CTranslate2, GPU-accelerated, 94%+ accuracy, 198 phrases, Southern accent)
 - **Natural Language Understanding** - Semantic intent matching (sentence-transformers)
+- **Conversational Flow Engine** - Persona module (10 response pools, ~50 templates), ConversationState (turn tracking), ConversationRouter (shared priority chain)
 - **Text-to-Speech** - Kokoro 82M (primary, CPU, fable+george blend) + Piper ONNX fallback
 - **LLM Intelligence** - Qwen 3-8B (Q5_K_M) via llama.cpp + Claude API fallback with quality gating
 - **Web Research** - Qwen 3-8B native tool calling + DuckDuckGo + trafilatura, multi-source synthesis
-- **Event-Driven Pipeline** - Coordinator with STT/TTS workers, streaming LLM, ack cache
+- **Event-Driven Pipeline** - Coordinator with STT/TTS workers, streaming LLM, contextual ack cache (10 tagged phrases)
 - **Gapless TTS Streaming** - StreamingAudioPipeline with single persistent aplay, background Kokoro generation
-- **Conversation Windows** - Timer-based auto-close, multi-turn, noise filtering, dismissal detection
-- **Console Mode** - Text/hybrid/speech modes with rich stats panel
+- **Adaptive Conversation Windows** - 4-7s duration, extends with conversation depth, timeout cleanup, noise filtering, dismissal detection
+- **Ambient Wake Word Filter** - Multi-signal: position, copula, threshold 0.80, length — blocks ambient mentions
+- **Three Frontends** - Voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
+- **Web UI** - aiohttp WebSocket server, streaming LLM, markdown rendering, session sidebar, health HUD, file handling
 
-### Skills (10 Active)
+### Skills (11 Active)
 
 #### 🌤️ Weather
 - Current conditions, forecasts, rain probability
@@ -65,6 +68,12 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 #### 🗂️ Filesystem
 - File search, code line counting, script analysis
 - *"Jarvis, how many lines of code in your codebase?"*
+
+#### 📝 File Editor
+- Write, edit, read, delete files + list share contents
+- LLM-generated content, confirmation flow for destructive operations
+- *"Jarvis, write a backup script"*
+- *"Jarvis, delete temp.txt"*
 
 #### 🛠️ Developer Tools
 - 13 intents: codebase search, git multi-repo, system admin, general shell
@@ -128,25 +137,28 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│  STT (Speech-to-Text) - Custom Whisper Model            │
+│  STT (Speech-to-Text) - Custom Whisper Model v2          │
 │  • Fine-tuned on user's Southern accent                 │
-│  • 149 training phrases, 88%+ accuracy                  │
+│  • 198 training phrases, 94%+ accuracy                  │
 │  • GPU-accelerated: 0.1-0.2s transcription              │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│  WAKE WORD DETECTION - Semantic Similarity              │
+│  WAKE WORD DETECTION + AMBIENT FILTER                   │
 │  • Checks for "Jarvis" in transcript                    │
-│  • Fuzzy matching (handles variations)                  │
-│  • Confidence threshold: 0.65                           │
+│  • Fuzzy matching (threshold: 0.80)                     │
+│  • Ambient filter: position, copula, length             │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│  INTENT MATCHING - 3-Layer Hybrid System                │
-│  Layer 1: Exact pattern match (regex)                   │
-│  Layer 2: Fuzzy pattern match (substring)               │
-│  Layer 3: Semantic match (AI embeddings, 0.70+ score)   │
-│  Layer 4: Keyword fallback                              │
+│  CONVERSATION ROUTER - 7-Layer Priority Chain           │
+│  Layer 1: Confirmation interception                     │
+│  Layer 2: Dismissal / conversation close                │
+│  Layer 3: Memory / context / news pull-up               │
+│  Layer 4: Exact match (time, date)                      │
+│  Layer 5: Keyword + semantic verify                     │
+│  Layer 6: Pure semantic matching                        │
+│  Layer 7: LLM fallback                                  │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -312,6 +324,31 @@ User: Hears response
 - ✅ **Desktop notifications** — Wired into reminder system via notify-send
 - ✅ **Publish script non-interactive mode** — `--auto` flag for CI-friendly publish (auto-generate commit msg + push)
 
+### Phase 11: Web Chat UI (Feb 20) 🚀
+- ✅ **5-phase implementation** — aiohttp WebSocket server, vanilla HTML/CSS/JS, zero new dependencies
+- ✅ **Streaming LLM** — Token-by-token delivery with quality gate (buffers first sentence, retries if gibberish)
+- ✅ **File handling** — Drag/drop, /file, /clipboard, /append, /context slash commands
+- ✅ **History + notifications** — Paginated `/api/history`, scroll-to-load-more, floating announcement banners
+- ✅ **Polish** — Markdown rendering with XSS protection, code blocks + copy, responsive breakpoints
+- ✅ **Session sidebar** — 30-min gap detection, hamburger toggle, session rename, pagination, LIVE badge
+
+### Phase 12: File Editor + Edge Case Testing (Feb 20) 🚀
+- ✅ **File Editor Skill** — 5 intents (write, edit, read, delete, list share), confirmation flow, LLM-generated content
+- ✅ **Ambient Wake Word Filter** — Multi-signal: position, copula, threshold 0.80, length — blocks ambient mentions
+- ✅ **Edge Case Testing Phase 1** — ~200 test cases across 9 phases, 37/40 pass (92.5%), 14 routing failures fixed
+
+### Phase 13: Conversational Flow Refactor (Feb 21) 🚀
+- ✅ **Phase 1: Persona** — 10 response pools (~50 templates), system prompts, honorific injection
+- ✅ **Phase 2: ConversationState** — Turn counting, intent history, question detection, research context
+- ✅ **Phase 3: ConversationRouter** — Shared priority chain for voice/console/web (one router, three frontends)
+- ✅ **Phase 4: Response Flow Polish** — Contextual ack selection (10 tagged phrases), smarter follow-up windows, timeout cleanup, suppress LLM opener collision
+- ✅ **38 router tests** — `scripts/test_router.py` validates routing decisions without live LLM/mic
+
+### Phase 14: Whisper v2 Fine-Tuning (Feb 21) 🚀
+- ✅ **198 training phrases** (up from 149), FIFINE K669B USB condenser mic
+- ✅ **GPU fp16 training** — 89 seconds on RX 7900 XT
+- ✅ **94.4% live accuracy** — wake word 100%, contraction handling 100%
+
 ---
 
 ## 🎨 Design Philosophy
@@ -344,23 +381,27 @@ Optimized for consumer hardware. No expensive GPUs required (though AMD GPU supp
 
 ## 🗺️ Roadmap
 
-### Immediate
-- [x] ~~Enroll user voice (speaker ID)~~ — Done (Feb 16)
-- [x] ~~Developer tools console testing (13 intents)~~ — Done (Feb 15)
-- [ ] Whisper retraining from log analysis (scheduled Feb 21)
-- [x] ~~GitHub open source publication~~ — Done (Feb 18)
+### Recently Completed
+- [x] ~~Whisper v2 retraining~~ — Done (Feb 21). 198 phrases, 94%+ accuracy
+- [x] ~~Conversational Flow Refactor (4 phases)~~ — Done (Feb 21). Persona, State, Router, Polish
+- [x] ~~Web Chat UI (5 phases)~~ — Done (Feb 20). Streaming, sessions, markdown
+- [x] ~~File Editor Skill~~ — Done (Feb 20). 5 intents, confirmation flow
+- [x] ~~Edge Case Testing Phase 1~~ — Done (Feb 20). 92.5% pass rate
+- [x] ~~Ambient Wake Word Filter~~ — Done (Feb 20). Multi-signal blocking
+- [x] ~~App launcher + desktop control~~ — Done (Feb 19). 16 intents, GNOME Shell extension
+- [x] ~~Web research (Qwen tool calling)~~ — Done (Feb 18). DuckDuckGo + trafilatura
+- [x] ~~GitHub open source publication~~ — Done (Feb 18). Automated PII redaction
 
-### Short Term
-- [x] ~~Web Navigation Phase 3 (web research + LLM tool use)~~ — Done (Feb 18)
-- [x] ~~App launcher + desktop control (16 intents, GNOME Shell extension)~~ — Done (Feb 19)
-- [ ] Audio recording skill
+### Up Next
+- [ ] Edge Case Testing Phase 2 (priority chain & state machines)
+- [ ] Document generation skill
 - [ ] Email skill (Gmail)
 - [ ] Google Keep integration
 
 ### Medium Term
-- [ ] Skill editing system (voice-controlled code modification)
+- [ ] Audio recording skill
+- [ ] LLM-centric architecture migration (wait for Qwen 3.5)
 - [ ] Music control (Apple Music)
-- [ ] Voice cloning (Paul Bettany JARVIS voice)
 
 ### Long Term
 - [ ] Threat hunting / malware analysis framework
@@ -432,7 +473,7 @@ journalctl --user -u jarvis -f
 1. Say "Jarvis" to wake
 2. Ask your question naturally
 3. JARVIS responds
-4. 20-second window for follow-up
+4. 4-7s adaptive window for follow-up (extends with conversation depth)
 
 ### Console Mode
 ```bash
@@ -470,7 +511,7 @@ JARVIS is a personal project, but ideas and improvements are welcome!
 
 ### Adding Skills
 1. Read [SKILL_DEVELOPMENT.md](docs/SKILL_DEVELOPMENT.md)
-2. Create skill in `/mnt/storage/jarvis/skills/`
+2. Create skill in `skills/` directory
 3. Test thoroughly
 4. Document in skill README
 
@@ -487,15 +528,17 @@ Include:
 
 ### Accuracy
 - Wake word detection: 100% (Porcupine)
-- Speech recognition: 88%+ (fine-tuned Whisper, Southern accent)
+- Speech recognition: 94%+ (fine-tuned Whisper v2, 198 phrases, Southern accent)
 - Intent matching: 95%+ (semantic embeddings)
+- Routing tests: 38/38 pass (`scripts/test_router.py`)
+- Edge case testing: 92.5% (37/40 Phase 1)
 
 ### Latency
 - Wake word detection: <100ms
 - Speech transcription: 0.1-0.2s (GPU-accelerated CTranslate2)
-- Intent matching: <100ms
-- Skill-handled queries: 600-800ms total
-- LLM fallback: 3-5s total
+- Intent matching: <100ms (pre-computed semantic embedding cache)
+- Skill-handled queries: 300-600ms total
+- LLM fallback: 2-4s total (streaming)
 - TTS generation: <1s (Kokoro streaming)
 
 ### Resource Usage
@@ -509,11 +552,14 @@ Include:
 ## 🎓 What I've Learned
 
 ### Technical Insights
-1. **Custom training beats generic models** - 88%+ vs 50% accuracy
+1. **Custom training beats generic models** - 94%+ vs 50% accuracy (198 phrases, 2 training rounds)
 2. **REST APIs > subprocess calls** - More reliable for LLM
 3. **Semantic matching is powerful** - Reduces pattern count 90%
 4. **Preload heavy models** - Prevents audio thread blocking
 5. **Log everything** - Makes debugging 10x easier
+6. **One router, three frontends** - ConversationRouter eliminates routing duplication across voice/console/web
+7. **Prescriptive > permissive for small LLMs** - Explicit numbered rules followed more reliably than prose instructions
+8. **Substring `in` for keyword matching is a trap** - `"no" in "diagnostic"` is True. Always use word-boundary matching
 
 ### Development Practices
 1. **Iterate quickly** - Small changes, frequent testing
@@ -534,14 +580,19 @@ Include:
 ## 🏆 Achievements
 
 - ✅ Fully functional voice assistant with gapless streaming TTS
-- ✅ Custom accent training (fine-tuned Whisper, Southern accent, 88%+)
+- ✅ Custom accent training (fine-tuned Whisper v2, Southern accent, 94%+, 198 phrases)
 - ✅ Production-ready event-driven architecture
 - ✅ Web research via local LLM tool calling (no cloud required)
 - ✅ Conversational memory with semantic recall across sessions
 - ✅ Speaker identification and dynamic user profiles
-- ✅ 10 modular skills with semantic intent matching (including 16-intent desktop control)
+- ✅ 11 modular skills with semantic intent matching (including 16-intent desktop control)
+- ✅ Conversational flow engine with persona, state tracking, and shared router
+- ✅ Three frontends: voice, console, web UI (all sharing one router)
+- ✅ Web Chat UI with streaming, markdown, session sidebar, and health HUD
+- ✅ Ambient wake word filter (multi-signal, blocks false triggers)
+- ✅ 38 router tests + 92.5% edge case pass rate
 - ✅ Hardware failure graceful degradation
-- ✅ Sub-1-second skill responses (600-800ms)
+- ✅ Sub-600ms skill responses (300-600ms)
 - ✅ Open source on GitHub with automated PII redaction
 
 **JARVIS is a legitimate, production-ready AI assistant!**
@@ -566,4 +617,4 @@ For issues or questions:
 
 **Built with ❤️ and lots of coffee ☕**
 
-*"Sometimes you gotta run before you can walk." - Tony Stark*
+*Built with care, tested obsessively, improved daily.*

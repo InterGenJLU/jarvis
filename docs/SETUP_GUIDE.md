@@ -77,7 +77,7 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json
 
 # Qwen LLM (optional - uses Claude API by default)
-# Instructions at: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF
+# Instructions at: https://huggingface.co/Qwen/Qwen3-8B-GGUF
 ```
 
 ### 6. Configure Paths
@@ -281,6 +281,6 @@ JARVIS automatically backs up to:
 
 ---
 
-**Version:** 1.0 (GPU Accelerated)  
-**Last Updated:** February 13, 2026  
+**Version:** 2.5.0
+**Last Updated:** February 21, 2026
 **Status:** Production Ready

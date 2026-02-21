@@ -1,52 +1,39 @@
 # TODO — Next Session
 
-**Updated:** February 19, 2026
+**Updated:** February 21, 2026
 
 ---
 
-## Tier 1: High ROI, Low Effort — Do Now/Soon
+## Tier 1: High ROI — Do Now/Soon
 
-### 1. Whisper Retraining — Scheduled Feb 21
+### 1. Edge Case Testing Phase 2 (Priority Chain & State Machines)
 **Priority:** HIGH
-**Plan:**
-1. Analyze logs Feb 14-21 for misheard phrases
-2. Generate training data from corrections
-3. Retrain with expanded dataset (149 original + new)
-4. Convert to CTranslate2 and deploy
-**Files:** `core/stt.py`, `/mnt/models/voice_training/`
-**Note:** Remove `_debug_save_audio()` from `stt.py` after retraining
+**Plan:** `docs/EDGE_CASE_TESTING.md` — Phase 2 tests pending
+**Notes:** Needs hybrid mode (`jarvis_console.py --hybrid`) for voice output testing
 
-### 2. Quick Wins — All Complete!
-- ~~News urgency filtering~~ — Done (Feb 19, `1d447c2` + `e1c4611`). "read critical headlines" works
-- ~~Qwen sampling params~~ — Done (Feb 19, `25b5f0a`). top_p=0.8, top_k=20
-- ~~Rotate OpenWeather API key~~ — Done (Feb 19, `25b5f0a`)
-
----
-
-## Tier 2: High ROI, Medium Effort — Next Wave
-
-### 4. Inject User Facts into Web Research
+### 2. Inject User Facts into Web Research
 **Priority:** HIGH
 **Concept:** JARVIS reasons about what it knows about the user (location, preferences) during `stream_with_tools()`.
 **Risk:** History poisoning — needs careful scoping.
 
-### 5. ~~Minimize Web Search Latency~~ — Done (Feb 19-20)
-Parallel page fetches (`c93670a`), semantic embedding cache (`56f5037`), rate limit 2s→1s.
+### 3. Document Generation Skill (#42)
+**Priority:** MEDIUM-HIGH
+**Concept:** "Write a report on..." → structured document output (Markdown/PDF).
 
-### 6. Email Skill (Gmail Integration)
+---
+
+## Tier 2: Medium ROI — Next Wave
+
+### 4. Email Skill (Gmail Integration)
 **Priority:** MEDIUM
 **Concept:** Voice-composed email via Gmail API + OAuth (same pattern as Calendar).
 **Design:** `.archive/docs/MASTER_DESIGN.md` has contact DB schema and feature list.
 
-### 7. Google Keep Integration
+### 5. Google Keep Integration
 **Priority:** MEDIUM
 **Concept:** "Add milk to the grocery list." Shared access with secondary user.
 
----
-
-## Tier 3: Medium ROI, Higher Effort — When Ready
-
-### 8. Audio Recording Skill
+### 6. Audio Recording Skill
 **Priority:** MEDIUM
 **Location:** `skills/personal/audio_recording/`
 **Concept:** Voice-triggered recording with natural playback queries.
@@ -54,32 +41,32 @@ Parallel page fetches (`c93670a`), semantic embedding cache (`56f5037`), rate li
 - "Play the recording from yesterday" → date-based lookup + playback
 - 6 semantic intents (start, stop, play, query, list, export)
 
-### 9. "Onscreen Please" — Retroactive Visual Display
+---
+
+## Tier 3: Lower Effort — When Ready
+
+### 7. "Onscreen Please" — Retroactive Visual Display
 **Priority:** MEDIUM
 **Concept:** Buffer last raw output. "Onscreen please" displays it retroactively.
 
-### 10. Music Control (Apple Music)
+### 8. Music Control (Apple Music)
 **Priority:** MEDIUM
 **Concept:** Playlist learning, volume via PulseAudio. Apple Music web interface is finicky.
 **Design:** `.archive/docs/MASTER_DESIGN.md` has playlist DB schema.
 
-### 11. LLM-Centric Architecture Migration
+### 9. LLM-Centric Architecture Migration
 **Priority:** MEDIUM (wait for Qwen 3.5 release)
 **Design:** `docs/DEVELOPMENT_VISION.md`
 **Concept:** Skills become tools, not destinations. Incremental migration.
 
 ---
 
-## Tier 4: Lower Priority — Backlog
+## Tier 4: Backlog
 
 ### Skill Editing System
 **Design:** `docs/SKILL_EDITING_SYSTEM.md`
 **Concept:** "Edit the weather skill" → LLM code gen → review → apply with backup.
 **Note:** VS Code + Claude Code is faster for editing skills in practice.
-
-### Web Dashboard
-**Priority:** LOW (demo/showoff feature)
-**Concept:** Local Flask/FastAPI web UI for JARVIS management.
 
 ### STT Worker Process
 **Design:** `docs/STT_WORKER_PROCESS.md`
@@ -116,41 +103,36 @@ None!
 
 - **Voice testing: bare ack as answer** — JARVIS asks question → "yeah" → treated as answer (needs reliable trigger)
 - **Batch extraction (Phase 4) untested** — conversational memory batch fact extraction needs 25+ messages in one session to trigger
-- ~~Console logging~~ — Fixed (Feb 19). Was writing to jarvis.log instead of dedicated console.log
-- ~~Topic shift threshold tuning~~ — Already set to 0.35 in config.yaml, confirmed live
 
 ---
 
-## Completed (Feb 10-19)
+## Completed (Feb 10-21)
 
-*Brief summary. Full details in `memory/` files and git history.*
+*Brief summary. Full details in git history.*
 
 | Feature | Date | Notes |
 |---------|------|-------|
-| Console Web Research + Prompt v2 | Feb 19 | `stream_with_tools()` in console, deflection safety net, prescriptive prompt v2 ("verifiable answer" + numbered rules + anti-deflection) |
-| Qwen Sampling Params + API Key Rotation | Feb 19 | top_p=0.8, top_k=20 in all 6 llama.cpp payloads. Rotated OpenWeather API key, updated redact.conf |
-| Document Ingestion Phase 3 | Feb 19 | Tab completion (slash commands + /file paths), doc-aware LLM hint, dynamic max_tokens=600 |
-| Document Ingestion Phase 2 | Feb 19 | /file (binary reject, --tail, 500KB warn), /clipboard (wl-paste), /append, drag-and-drop auto-detect |
-| Document Ingestion Phase 1 | Feb 19 | prompt_toolkit, DocumentBuffer, /paste + /context + /clear + /help, LLM injection |
-| Google Calendar Sync Token Fix | Feb 19 | `orderBy` in initial sync prevented `nextSyncToken` — full sync every 5min instead of incremental. Removed `orderBy` from `google_calendar.py` |
-| Embedding Cache + STT Warm-up | Feb 20 | Pre-compute semantic embeddings at load time (`_semantic_embedding_cache`), STT dummy transcription warm-up. Grok review items #8+#9 (`56f5037`) |
-| Publish Script Non-Interactive | Feb 20 | `--auto` flag for CI-friendly publish (auto-generate commit msg + push) |
-| GNOME Desktop Integration (5 phases) | Feb 19 | Extension (D-Bus bridge), desktop_manager, app launcher migration, volume, workspace, clipboard, notifications — 16 intents |
-| Developer Tools Polish | Feb 19 | HAL 9000 Easter eggs for blocked commands, smart port summary, conversational process summary |
-| Scoped TTS subprocess control | Feb 18 | Replaced global `pkill -9 aplay/piper` with tracked subprocess kill — `tts.kill_active()` |
-| Prescriptive Prompt + tool_choice=auto | Feb 18 | Rewrote vague prompt to explicit rules, removed tool_choice=required pattern matching. 150/150 test decisions correct (`8ae35ce`) |
-| Ack Cache Trim | Feb 18 | 7→4 neutral time-based phrases per the user's preference (`0b9c017`) |
-| Ack Cache Generic Fix | Feb 18 | Web-themed phrases replaced with generic for all-query ack cache (`046a275`) |
-| tool_choice=required Default | Feb 18 | Force web search for factual queries — later replaced by prescriptive prompt (`1b50b0e`) |
-| Web Research Follow-up Bug Fixes | Feb 18 | `_spoke` reset, aplay retry, nested context, regex scope, bare ack filter (`fd30984`) |
-| Decimal TTS + Chunker Fix + Lazy aplay | Feb 18 | `normalize_decimals()`, `[.!?]\s` chunker, deferred `_open_aplay()` (`b2c63ec`, `54fdcac`) |
-| Person Queries + Future-Date Detection | Feb 18 | Political neutrality in synthesis, date comparison in prompt (`18ce66e`) |
-| Web Nav Phase 3: Qwen 3-8B + Tool Calling | Feb 18 | `web_research.py`, `stream_with_tools()`, DuckDuckGo + trafilatura (`8c153de`) |
-| Bug Squashing Blitz (8 fixes) | Feb 18 | Audio cues, ack collision, browse/filesystem keywords, dismissal, TTS filenames, news spew |
-| Gapless TTS Streaming | Feb 17 | `StreamingAudioPipeline` — single persistent aplay, zero-gap playback (`df7d498`) |
-| Hardware Failure Graceful Degradation | Feb 17 | Startup retry, device monitor, degraded mode, health check |
+| Conversational Flow Refactor (4 phases) | Feb 21 | Persona → State → Router → Polish. 10 response pools, 38 router tests, contextual acks, adaptive windows |
+| Response Pool Expansion | Feb 21 | reminder_ack 4→6, dismissal 5→7, greeting 6→8, news_pullup 3→5, ack_cache 8→10 |
+| Whisper v2 Fine-Tuning | Feb 21 | 198 phrases, FIFINE K669B, GPU fp16, 94.4% live accuracy |
+| 6 Conversational Bug Fixes | Feb 21 | Transparency, MCU removal, double honorific, UnboundLocalError, extraction text, dismissal suffix |
+| Web Chat UI (5 phases) | Feb 20 | aiohttp WS, streaming, file handling, history, markdown, sessions sidebar |
+| File Editor Skill | Feb 20 | 5 intents, confirmation flow, LLM-generated content |
+| Ambient Wake Word Filter | Feb 20 | Position, copula, threshold 0.80, length. 8/8 commands pass, 8/8 ambient blocked |
+| Edge Case Testing Phase 1 | Feb 20 | 37/40 pass (92.5%). 14 failures fixed across 4 rounds |
+| Embedding Cache + STT Warm-up | Feb 20 | Pre-computed semantic embeddings, STT dummy transcription warm-up |
+| Publish Script Non-Interactive | Feb 20 | `--auto` flag for CI-friendly publish |
+| Console Web Research + Prompt v2 | Feb 19 | `stream_with_tools()` in console, deflection safety net, prescriptive prompt v2 |
+| Qwen Sampling Params + API Key Rotation | Feb 19 | top_p=0.8, top_k=20 in all 6 llama.cpp payloads |
+| Document Ingestion (3 phases) | Feb 19 | prompt_toolkit, /paste /file /clipboard /append /context /clear |
+| GNOME Desktop Integration (5 phases) | Feb 19 | Extension (D-Bus bridge), desktop_manager, app launcher v2.0 — 16 intents |
+| Google Calendar Sync Token Fix | Feb 19 | Removed `orderBy` from initial sync, incremental sync works |
+| Web Research (5 phases) | Feb 18 | Qwen 3-8B tool calling + DuckDuckGo + trafilatura |
+| GitHub Publishing System | Feb 18 | Automated PII redaction, `--auto` publish |
+| Bug Squashing Blitz (27+ fixes) | Feb 18 | Ack collision, keyword greediness, dismissal, decimal TTS, aplay lazy open |
+| Gapless TTS Streaming | Feb 17 | StreamingAudioPipeline, single persistent aplay, zero-gap playback |
+| Hardware Failure Graceful Degradation | Feb 17 | Startup retry, device monitor, degraded mode |
 | Conversational Memory (6 phases) | Feb 17 | SQLite facts + FAISS + recall + batch + proactive + forget |
-| Streaming Delivery Fixes (5 bugs) | Feb 17 | Chunker simplification, metric stripping, context flush |
 | Context Window (4 phases) | Feb 17 | Topic segmentation, relevance scoring, persistence |
 | User Profile System (5 phases) | Feb 16 | Speaker ID, d-vectors, dynamic honorific |
 | Kokoro TTS Integration | Feb 16 | 82M model, 50/50 fable+george, Piper fallback |
