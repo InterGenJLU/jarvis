@@ -113,14 +113,21 @@ class BaseSkill(ABC):
             priority: Priority (1-10, higher = checked first)
         """
         intent_id = f"{self.name}_{handler.__name__}"
-        
+
+        if intent_id in self.semantic_intents:
+            self.logger.warning(
+                f"Duplicate semantic intent_id '{intent_id}' — "
+                f"previous registration ({len(self.semantic_intents[intent_id]['examples'])} examples) "
+                f"will be OVERWRITTEN. Merge examples into one call or use distinct handlers."
+            )
+
         self.semantic_intents[intent_id] = {
             "examples": examples,
             "handler": handler,
             "threshold": threshold,
             "priority": priority
         }
-        
+
         self.logger.debug(f"Registered semantic intent: {intent_id} with {len(examples)} examples")
 
     def register_tool(self, name: str, func: Callable, description: str = ""):

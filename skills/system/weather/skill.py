@@ -34,9 +34,12 @@ class WeatherSkill(BaseSkill):
         self.register_intent("weather today", self.get_current_weather, priority=10)
         
         # ===== SEMANTIC INTENT MATCHING =====
-        # Replaces 39 exact patterns with 5 semantic intents
-        
-        # Current weather (no location)
+        # Replaces 39 exact patterns with semantic intents
+        # NOTE: Each handler can only be registered ONCE (intent_id = class_handler).
+        # Multiple registrations with the same handler silently overwrite earlier ones.
+
+        # Current weather — all general, location, and temperature queries
+        # (get_current_weather uses default location regardless of input)
         self.register_semantic_intent(
             examples=[
                 "what's the weather like today",
@@ -48,34 +51,18 @@ class WeatherSkill(BaseSkill):
                 "how are the weather conditions today",
                 "what's the weather in the news",
                 "look into the current meteorological conditions",
-            ],
-            handler=self.get_current_weather,
-            threshold=0.60
-        )
-        
-        # Weather for specific location
-        self.register_semantic_intent(
-            examples=[
                 "what's the weather in paris",
                 "how's the weather like in london",
                 "weather for new york",
                 "temperature in chicago",
-                "tell me the weather in tokyo"
-            ],
-            handler=self.get_current_weather,
-            threshold=0.70
-        )
-        
-        # Temperature specific
-        self.register_semantic_intent(
-            examples=[
+                "tell me the weather in tokyo",
                 "what's the temperature",
                 "how hot is it",
                 "how cold is it",
-                "what's the temp"
+                "what's the temp",
             ],
             handler=self.get_current_weather,
-            threshold=0.70
+            threshold=0.60
         )
         
         # Weather forecast
