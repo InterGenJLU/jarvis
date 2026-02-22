@@ -95,7 +95,6 @@
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
 | B2 | Batch extraction (Phase 4) untested | Low | Needs 25+ messages in one session to trigger |
-| B5 | `_in_development/web_navigation/skill.py` has TODO: load prefs from YAML | None (archived prototype) | Not in production code |
 
 ---
 
@@ -146,4 +145,4 @@
 
 ---
 
-**Total: 48 development ideas + 5 bugs, sourced from 12+ documents across the entire project.**
+**Total: 48 development ideas + 4 bugs, sourced from 12+ documents across the entire project.**
