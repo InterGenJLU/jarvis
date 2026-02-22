@@ -66,10 +66,6 @@ class DisplayRouter:
         if content_type in VSCODE_CONTENT_TYPES:
             return 'vscode'
         if content_type in TERMINAL_CONTENT_TYPES:
-            # But if output is very long, upgrade to VS Code
-            line_count = output.count('\n') + 1
-            if line_count > VSCODE_LINE_THRESHOLD:
-                return 'vscode'
             return 'terminal'
 
         # Unknown type — decide by length
