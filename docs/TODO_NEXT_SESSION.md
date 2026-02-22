@@ -15,9 +15,9 @@
 **Concept:** JARVIS reasons about what it knows about the user (location, preferences) during `stream_with_tools()`.
 **Risk:** History poisoning — needs careful scoping.
 
-### 3. Document Generation Skill (#42)
-**Priority:** MEDIUM-HIGH
-**Concept:** "Write a report on..." → structured document output (Markdown/PDF).
+### ~~3. Document Generation Skill (#42)~~ — COMPLETE
+**Status:** DONE (Feb 22). All 3 phases: PPTX + DOCX + PDF with web research + Pexels images.
+**Needs:** Live console test with full multi-step command.
 
 ---
 
@@ -100,6 +100,7 @@ None!
 
 ## Minor Loose Ends
 
+- **CONSOLE TEST: Document generation** — Implemented (Feb 22). Restart JARVIS, test: "Look up the current top 5 LLMs in home use today, compare the pros and cons of each, and prepare a 7 slide PowerPoint that outlines what you've found. Name it llm_review.pptx and leave it in the share for me"
 - **VOICE TEST: Smart ack suppression** — Implemented (Feb 22). Needs live voice restart + verification: conversational queries → no ack, research/complex → ack fires. See `memory/handoff_session40_feb22.md`.
 - **Voice testing: bare ack as answer** — JARVIS asks question → "yeah" → treated as answer (needs reliable trigger)
 - **Batch extraction (Phase 4) untested** — conversational memory batch fact extraction needs 25+ messages in one session to trigger
@@ -112,6 +113,7 @@ None!
 
 | Feature | Date | Notes |
 |---------|------|-------|
+| Document Generation (3 phases) | Feb 22 | PPTX/DOCX/PDF with web research + Pexels images. Two-stage LLM pipeline, 10 new keywords, 132/132 tests pass. Needs live console test. |
 | Smart Ack Suppression | Feb 22 | Skip acks for fast queries (<=5 words, in-conversation <=12 words, answering JARVIS question). Research/working never suppressed. Needs live voice testing. |
 | Edge Case Phase 2 Complete (132 tests) | Feb 22 | +10 tests: reminder ack, forget edge cases, compound dismissal, file editor. 28/30 Phase 2 automated, 4 deferred (mid-rundown = future feature) |
 | Automated Test Suite (122 tests) | Feb 21 | Tier 1: 39 unit + Tier 2: 83 routing. Post-test cleanup (process guard + file removal + state reset). Phase 2 automated: 18/30 |
