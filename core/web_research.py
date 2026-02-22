@@ -118,7 +118,10 @@ class WebResearcher:
         try:
             import trafilatura
 
-            downloaded = trafilatura.fetch_url(url)
+            # Use 5s timeout (trafilatura default is 30s which blocks threads)
+            traf_config = trafilatura.settings.use_config()
+            traf_config.set('DEFAULT', 'download_timeout', '5')
+            downloaded = trafilatura.fetch_url(url, config=traf_config)
             if not downloaded:
                 self.logger.warning(f"Page fetch returned nothing: {url}")
                 return None
