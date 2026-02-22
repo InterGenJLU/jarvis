@@ -23,8 +23,11 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 ## Screenshots
 
 ### Web UI
-![JARVIS Web UI](images/JARVIS_WEBUI.png)
-*Browser-based chat with streaming responses, health check HUD, web research, and file handling*
+![JARVIS Web UI](images/JARVIS_WEBUI_2.png)
+*Browser-based chat with streaming responses, health check HUD, and system diagnostics*
+
+![JARVIS Web UI — Session Sidebar](images/JARVIS_WEBUI_3.png)
+*Session sidebar with conversation history, auto-detected sessions, and rename support*
 
 ### Console Mode
 ![JARVIS Console](images/JARVIS_CONSOLE.png)
