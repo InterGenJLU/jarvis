@@ -708,12 +708,13 @@ class Coordinator:
         # --- Route through shared priority chain ---
         # For skill-handled commands, play an ack if warranted (the skill
         # handler may take tens of seconds, e.g. document generation).
-        # The ack fires on a short timer so fast skills finish before it plays.
+        # Timer at 1.5s: routing + fast skills complete in <1s, so the ack
+        # only fires for genuinely slow operations (doc gen, web research).
         self._llm_responded = False
         ack_timer = None
         if not suppress_ack:
             ack_timer = threading.Timer(
-                0.3, self._play_ack_if_still_thinking, args=(ack_style,)
+                1.5, self._play_ack_if_still_thinking, args=(ack_style,)
             )
             ack_timer.daemon = True
             ack_timer.start()

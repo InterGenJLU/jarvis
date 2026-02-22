@@ -112,18 +112,19 @@ class SystemInfoSkill(BaseSkill):
         self.register_intent("what is mounted at {path}", self.get_drive_at_mount)
         self.register_intent("what drive is at {path}", self.get_drive_at_mount)
 
-        # Hardware information - GPU
-        # SEMANTIC MATCHING - catches varied GPU queries
+        # Hardware information - GPU (local hardware detection)
+        # SEMANTIC MATCHING - queries about THIS machine's GPU
+        # High threshold to avoid matching general GPU/AI news queries
         self.register_semantic_intent(
             examples=[
                 "what's my gpu",
                 "what graphics card do i have",
-                "gpu info",
                 "show me my graphics card",
-                "what gpu is installed"
+                "what gpu is installed in this computer",
+                "tell me about my graphics hardware",
             ],
             handler=self.get_gpu_info,
-            threshold=0.55
+            threshold=0.65
         )
         
         return True
@@ -414,43 +415,36 @@ class SystemInfoSkill(BaseSkill):
             return self.respond(f"I encountered an error checking what's mounted at {path}, {self.honorific}.")
     
     def get_gpu_info(self) -> str:
-        """Get GPU information"""
+        """Get GPU information."""
         try:
             # Try nvidia-smi first for NVIDIA GPUs
+            try:
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    gpu_name = result.stdout.strip()
+                    return self.respond(f"You have an NVIDIA {gpu_name}, {self.honorific}.")
+            except FileNotFoundError:
+                pass  # nvidia-smi not installed — fall through to lspci
+
+            # Try lspci for any GPU (AMD, Intel, NVIDIA)
             result = subprocess.run(
-                ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
-                capture_output=True,
-                text=True
+                ['lspci'], capture_output=True, text=True
             )
-            
-            if result.returncode == 0 and result.stdout.strip():
-                gpu_name = result.stdout.strip()
-                return self.respond(f"You have an NVIDIA {gpu_name}, {self.honorific}.")
-            
-            # Try lspci for other GPUs
-            result = subprocess.run(
-                ['lspci'],
-                capture_output=True,
-                text=True
-            )
-            
             if result.returncode == 0:
                 for line in result.stdout.split('\n'):
                     if 'VGA' in line or 'Display' in line or '3D' in line:
-                        # Extract GPU name (after the colon and device ID)
                         if ':' in line:
                             parts = line.split(':', 2)
                             if len(parts) >= 3:
                                 gpu_info = parts[2].strip()
-                                # Clean up common manufacturer codes
                                 gpu_info = gpu_info.replace('[AMD/ATI]', 'AMD').replace('[NVIDIA]', 'NVIDIA')
                                 return self.respond(f"You have a {gpu_info}, {self.honorific}.")
-            
+
             return self.respond(f"I'm having trouble detecting your GPU, {self.honorific}.")
-            
-        except FileNotFoundError:
-            # nvidia-smi not found, not an NVIDIA system
-            return self.respond(f"I don't detect an NVIDIA GPU, {self.honorific}. Let me check for others.")
+
         except Exception as e:
             self.logger.error(f"Error getting GPU info: {e}")
             return self.respond(f"I encountered an error checking your GPU, {self.honorific}.")
