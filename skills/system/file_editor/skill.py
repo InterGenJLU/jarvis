@@ -186,6 +186,20 @@ class FileEditorSkill(BaseSkill):
 
         self.register_semantic_intent(
             examples=[
+                "print it",
+                "print the document",
+                "print the presentation",
+                "send it to the printer",
+                "print that for me",
+                "make a hard copy",
+                "print the file you just created",
+            ],
+            handler=self.print_document,
+            threshold=0.50,
+        )
+
+        self.register_semantic_intent(
+            examples=[
                 "yes", "go ahead", "proceed", "do it", "confirmed",
                 "no", "cancel", "abort", "never mind",
             ],
@@ -193,7 +207,7 @@ class FileEditorSkill(BaseSkill):
             threshold=0.80,
         )
 
-        self.logger.info("File editor skill initialized (8 intents + confirmation)")
+        self.logger.info("File editor skill initialized (9 intents + confirmation)")
         return True
 
     def handle_intent(self, intent: str, entities: dict) -> str:
@@ -936,6 +950,79 @@ class FileEditorSkill(BaseSkill):
             self.logger.error(f"[file_editor] failed to open {file_path}: {e}")
             return (f"I couldn't open {file_path.name}, {self.honorific}. "
                     "You can find it in the share folder.")
+
+    # ------------------------------------------------------------------
+    # Intent: print_document
+    # ------------------------------------------------------------------
+
+    def print_document(self, entities: dict) -> str:
+        """Print a document from the share folder."""
+        import subprocess
+
+        user_text = entities.get('original_text', '')
+        self.logger.info(f"[file_editor] print_document request: {user_text[:80]}")
+
+        # Find the target file
+        target = None
+
+        # Check for explicit filename in request
+        filename = self._extract_filename(user_text)
+        if filename:
+            path = self._safe_path(filename)
+            if path and path.exists():
+                target = path
+
+        # Fall back to last generated file
+        if not target and self._last_generated_file and self._last_generated_file.exists():
+            target = self._last_generated_file
+
+        if not target:
+            return (f"I don't have a document to print, {self.honorific}. "
+                    "Could you specify which file?")
+
+        # Detect available printer
+        try:
+            result = subprocess.run(
+                ["lpstat", "-p", "-d"],
+                capture_output=True, text=True, timeout=5,
+            )
+            printer = None
+            for line in result.stdout.splitlines():
+                if line.startswith("printer ") and "idle" in line:
+                    printer = line.split()[1]
+                    break
+            if not printer:
+                # Take the first printer found
+                for line in result.stdout.splitlines():
+                    if line.startswith("printer "):
+                        printer = line.split()[1]
+                        break
+        except Exception as e:
+            self.logger.error(f"[file_editor] printer detection failed: {e}")
+            return (f"I couldn't detect a printer, {self.honorific}. "
+                    "Please check that your printer is connected.")
+
+        if not printer:
+            return (f"No printers found on the system, {self.honorific}. "
+                    "Please check your printer connection.")
+
+        # Send to printer
+        try:
+            result = subprocess.run(
+                ["lp", "-d", printer, str(target)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                self.logger.info(f"[file_editor] sent {target.name} to {printer}")
+                return (f"Sent {target.name} to the printer, {self.honorific}.")
+            else:
+                self.logger.error(f"[file_editor] lp failed: {result.stderr}")
+                return (f"The print command failed, {self.honorific}. "
+                        f"{result.stderr.strip()}")
+        except Exception as e:
+            self.logger.error(f"[file_editor] print failed: {e}")
+            return (f"I couldn't send the file to the printer, {self.honorific}. "
+                    f"Error: {e}")
 
     # ------------------------------------------------------------------
     # Confirmation handler

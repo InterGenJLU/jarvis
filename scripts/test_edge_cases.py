@@ -1164,6 +1164,42 @@ TESTS += [
              notes="Semantic Layer 4 → open_document (matches 'put it on screen' example)"),
 ]
 
+# ---------------------------------------------------------------------------
+# TIER 2: Phase 1G — Print Document
+# ---------------------------------------------------------------------------
+# Tests that print commands route to file_editor's print_document intent.
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    # "print" keyword routes to file_editor
+    TestCase("1G-01",
+             "print it",
+             2, "1G", "Print Document",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Keyword 'print' → file_editor, semantic → print_document"),
+
+    # Explicit document reference
+    TestCase("1G-02",
+             "print the document",
+             2, "1G", "Print Document",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Keywords 'print' + 'document' → file_editor → print_document"),
+
+    # Natural phrasing
+    TestCase("1G-03",
+             "send it to the printer",
+             2, "1G", "Print Document",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Keyword 'printer' → file_editor, semantic → print_document"),
+
+    # Follow-up after creation
+    TestCase("1G-04",
+             "print that for me",
+             2, "1G", "Print Document",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Keyword 'print' → file_editor, semantic → print_document"),
+]
+
 
 # ===========================================================================
 # Process guard (block visual subprocess launches during tests)
