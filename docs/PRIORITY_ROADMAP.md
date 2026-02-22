@@ -28,7 +28,7 @@
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user |
 | 11 | **"Onscreen please" — retroactive visual display** — buffer last raw output, display on command | 2-3 hours | Bridge voice-to-visual gap. "Show me that" after JARVIS speaks an answer | TODO |
 | 12 | **Profile-aware commands (multi-user)** — "my calendar" loads correct user's data based on who spoke | 3-4 hours | Infrastructure already built (speaker ID + profiles). Just needs skill-level integration | MASTER_DESIGN.md |
-| 46 | **Dual-model voice recognition** — speaker-ID routes to user-specific fine-tuned vs stock Whisper | 4-6 hours | Multi-user STT without degrading primary user's accuracy | Waiting for secondary user enrollment. See `memory/plan_erica_voice_windows_port.md` |
+| 46 | **Dual-model voice recognition** — speaker-ID routes to user-specific fine-tuned vs stock Whisper | 4-6 hours | Multi-user STT without degrading primary user's accuracy | Waiting for secondary user enrollment. See `memory/plan_secondary_user_voice_windows_port.md` |
 
 ---
 
@@ -45,7 +45,7 @@
 | 19 | **Web query memory** — SQLite DB of last 100 web queries + results, "what did we look up?" | 3-4 hours | Some functionality in conversational memory already. Dedicated lookup is cleaner | MASTER_DESIGN.md |
 | 43 | **Mid-rundown interruption** — item-by-item delivery with "continue"/"skip"/"stop"/"defer" commands | 4-6 hours | Currently `deliver_rundown()` blocks on single TTS call. Needs item-at-a-time loop + active listener during delivery | Identified during Phase 2 testing (2A-05..08) |
 | 44 | **Reminder ack intent parsing** — distinguish "got it" (ack) vs "snooze 10 min" (snooze) vs "what reminder" (query) at P2 | 2-3 hours | Currently P2 `_handle_reminder_ack()` is a blanket ack — loses snooze/query intent | Identified during Phase 2 testing (2B-02..03) |
-| 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption. Proves concept for external users | See `memory/plan_erica_voice_windows_port.md` |
+| 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption. Proves concept for external users | See `memory/plan_secondary_user_voice_windows_port.md` |
 
 ---
 
@@ -70,7 +70,7 @@
 | 27 | **Mobile access** — remote command via phone | 20+ hours | Entirely different tech stack | TODO |
 | 28 | **GitHub publishing cleanup** — CONTRIBUTING.md, INSTALLATION.md, API_KEYS.md, setup.sh | 3-4 hours | Community-facing polish. Only matters if users adopt | GITHUB_PUBLISHING_PLAN.md |
 | 30 | **Multi-speaker conversation tracking** — who said what when both speak | 4-6 hours | Speaker ID Phase 3+. Requires reliable speaker identification first | MASTER_DESIGN.md |
-| 48 | **Windows native port** — full JARVIS on Windows, abstraction layers for audio/desktop/notifications | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_erica_voice_windows_port.md` |
+| 48 | **Windows native port** — full JARVIS on Windows, abstraction layers for audio/desktop/notifications | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_secondary_user_voice_windows_port.md` |
 
 ---
 
@@ -139,9 +139,9 @@
 - `docs/DEVELOPMENT_VISION.md` — LLM-centric architecture plan
 - `docs/SKILL_EDITING_SYSTEM.md` — full 5-phase skill editor design
 - `docs/STT_WORKER_PROCESS.md` — GPU isolation architecture
-- `docs/GITHUB_PUBLISHING_PLAN.md` — post-publish tasks
+- `.archive/docs/GITHUB_PUBLISHING_PLAN.md` — pre-publication plan (completed Feb 18)
 - `.archive/docs/MASTER_DESIGN.md` — original comprehensive design (email, music, malware, IoT, profiles, voice auth, backup, etc.)
-- `memory/plan_erica_voice_windows_port.md` — dual-model voice + Windows portability plans
+- `memory/plan_secondary_user_voice_windows_port.md` — dual-model voice + Windows portability plans
 
 ---
 
