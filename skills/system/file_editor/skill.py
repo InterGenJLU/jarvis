@@ -60,6 +60,7 @@ class FileEditorSkill(BaseSkill):
         self._doc_generator = DocumentGenerator(self.config)
         self._image_search = ImageSearch(config=self.config)
         self._pending_confirmation = None  # (action, detail, expiry_time)
+        self._last_generated_file = None   # Path to last doc gen output (for "open it")
 
         # Ensure share directory exists
         SHARE_DIR.mkdir(parents=True, exist_ok=True)
@@ -171,6 +172,20 @@ class FileEditorSkill(BaseSkill):
 
         self.register_semantic_intent(
             examples=[
+                "open it",
+                "show it onscreen",
+                "put it on screen",
+                "display the presentation",
+                "open the document",
+                "show me that onscreen",
+                "open the file you just created",
+            ],
+            handler=self.open_document,
+            threshold=0.50,
+        )
+
+        self.register_semantic_intent(
+            examples=[
                 "yes", "go ahead", "proceed", "do it", "confirmed",
                 "no", "cancel", "abort", "never mind",
             ],
@@ -178,7 +193,7 @@ class FileEditorSkill(BaseSkill):
             threshold=0.80,
         )
 
-        self.logger.info("File editor skill initialized (7 intents + confirmation)")
+        self.logger.info("File editor skill initialized (8 intents + confirmation)")
         return True
 
     def handle_intent(self, intent: str, entities: dict) -> str:
@@ -693,6 +708,9 @@ class FileEditorSkill(BaseSkill):
             return (f"I encountered an error creating the document, {self.honorific}. "
                     "Please try again.")
 
+        # Remember for follow-up "open it" commands
+        self._last_generated_file = output_path
+
         slide_count_actual = len(structure.get('slides', []))
         img_count = len(images)
         img_note = f" with {img_count} images" if img_count > 0 else ""
@@ -874,6 +892,50 @@ class FileEditorSkill(BaseSkill):
                 self.logger.debug(f"[file_editor] image for slide {i}: {image_path.name}")
 
         return images
+
+    # ------------------------------------------------------------------
+    # Intent: open_document (follow-up after doc gen)
+    # ------------------------------------------------------------------
+
+    def open_document(self, entities: dict) -> str:
+        """Open the last generated document in its default application."""
+        user_text = entities.get('original_text', '')
+        self.logger.info(f"[file_editor] open_document request: {user_text[:80]}")
+
+        # Check for explicit filename in the request
+        filename = self._extract_filename(user_text)
+        if filename:
+            target = self._safe_path(filename)
+            if target and target.exists():
+                return self._open_file_with_app(target)
+
+        # Fall back to last generated file
+        if self._last_generated_file and self._last_generated_file.exists():
+            return self._open_file_with_app(self._last_generated_file)
+
+        return (f"I don't have a recent document to open, {self.honorific}. "
+                "Could you specify which file?")
+
+    def _open_file_with_app(self, file_path: Path) -> str:
+        """Open a file using xdg-open via the desktop manager."""
+        from core.desktop_manager import get_desktop_manager
+        desktop = get_desktop_manager()
+        if desktop and desktop.open_file(str(file_path)):
+            self.logger.info(f"[file_editor] opened {file_path.name}")
+            return f"Opening {file_path.name}, {self.honorific}."
+        # Fallback: try subprocess directly
+        try:
+            import subprocess
+            subprocess.Popen(
+                ["xdg-open", str(file_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return f"Opening {file_path.name}, {self.honorific}."
+        except Exception as e:
+            self.logger.error(f"[file_editor] failed to open {file_path}: {e}")
+            return (f"I couldn't open {file_path.name}, {self.honorific}. "
+                    "You can find it in the share folder.")
 
     # ------------------------------------------------------------------
     # Confirmation handler

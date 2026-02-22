@@ -1128,6 +1128,43 @@ TESTS += [
 ]
 
 
+# ---------------------------------------------------------------------------
+# TIER 2: Phase 1F — Open/Display Document Follow-ups
+# ---------------------------------------------------------------------------
+# Tests that follow-up commands to open or display a generated document
+# route to file_editor's open_document intent.
+
+TESTS += [
+    # "onscreen" keyword routes to file_editor
+    TestCase("1F-01",
+             "show it onscreen",
+             2, "1F", "Open Document Follow-up",
+             expect_skill="file_editor", expect_handled=True,
+             notes="'onscreen' keyword → file_editor, semantic → open_document"),
+
+    # "display" keyword + presentation topic
+    TestCase("1F-02",
+             "display the presentation",
+             2, "1F", "Open Document Follow-up",
+             expect_skill="file_editor", expect_handled=True,
+             notes="'display' + 'presentation' keywords → file_editor"),
+
+    # Explicit filename reference
+    TestCase("1F-03",
+             "open the file you just created",
+             2, "1F", "Open Document Follow-up",
+             expect_skill="file_editor", expect_handled=True,
+             notes="'file' keyword → file_editor, semantic → open_document"),
+
+    # "put it on screen" — natural voice phrasing
+    TestCase("1F-04",
+             "put it on screen",
+             2, "1F", "Open Document Follow-up",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Semantic Layer 4 → open_document (matches 'put it on screen' example)"),
+]
+
+
 # ===========================================================================
 # Process guard (block visual subprocess launches during tests)
 # ===========================================================================

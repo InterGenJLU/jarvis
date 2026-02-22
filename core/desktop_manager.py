@@ -373,6 +373,22 @@ class DesktopManager:
             self.logger.warning(f"set_clipboard failed: {e}")
             return False
 
+    # ── File operations ─────────────────────────────────────────────
+
+    def open_file(self, file_path: str) -> bool:
+        """Open a file with its default application via xdg-open."""
+        try:
+            subprocess.Popen(
+                ["xdg-open", str(file_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self.logger.info(f"Opened file: {file_path}")
+            return True
+        except Exception as e:
+            self.logger.warning(f"open_file failed: {e}")
+            return False
+
     # ── Health ───────────────────────────────────────────────────────
 
     def get_health(self) -> dict:
