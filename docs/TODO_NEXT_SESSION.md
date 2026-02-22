@@ -19,44 +19,59 @@
 **Status:** DONE (Feb 22). All 3 phases: PPTX + DOCX + PDF with web research + Pexels images.
 **Needs:** Live console test with full multi-step command.
 
+### ~~4. Qwen3-VL-8B Model Upgrade~~ — COMPLETE
+**Status:** DONE (Feb 22). Rebuilt llama.cpp with ROCm backend, downloaded + self-quantized Q5_K_M from F16. 80.2 tok/s (-1.5% vs baseline). Tool calling verified. Vision-capable model now in production.
+
 ---
 
 ## Tier 2: Medium ROI — Next Wave
 
-### 4. Email Skill (Gmail Integration)
+### 5. Email Skill (Gmail Integration)
 **Priority:** MEDIUM
 **Concept:** Voice-composed email via Gmail API + OAuth (same pattern as Calendar).
 **Design:** `.archive/docs/MASTER_DESIGN.md` has contact DB schema and feature list.
 
-### 5. Google Keep Integration
+### 6. Google Keep Integration
 **Priority:** MEDIUM
 **Concept:** "Add milk to the grocery list." Shared access with secondary user.
 
-### 6. Audio Recording Skill
+### 7. Secondary User Voice Recognition — Dual-Model Speaker Routing
+**Priority:** MEDIUM (waiting for secondary user's recovery)
+**Concept:** Speaker-ID d-vector comparison (~5ms) routes to the user's fine-tuned Whisper vs stock whisper-base for secondary user. Two CTranslate2 models loaded simultaneously (~300MB total).
+**Design:** `memory/plan_erica_voice_windows_port.md`
+**Timing:** After secondary user can do 10-min enrollment session. Half-day implementation.
+
+### 8. Audio Recording Skill
 **Priority:** MEDIUM
 **Location:** `skills/personal/audio_recording/`
 **Concept:** Voice-triggered recording with natural playback queries.
-- "Record audio" → tone → capture → "Stop recording" → saved as WAV
-- "Play the recording from yesterday" → date-based lookup + playback
+- "Record audio" -> tone -> capture -> "Stop recording" -> saved as WAV
+- "Play the recording from yesterday" -> date-based lookup + playback
 - 6 semantic intents (start, stop, play, query, list, export)
 
 ---
 
 ## Tier 3: Lower Effort — When Ready
 
-### 7. "Onscreen Please" — Retroactive Visual Display
+### 9. "Onscreen Please" — Retroactive Visual Display
 **Priority:** MEDIUM
 **Concept:** Buffer last raw output. "Onscreen please" displays it retroactively.
 
-### 8. Music Control (Apple Music)
+### 10. Music Control (Apple Music)
 **Priority:** MEDIUM
 **Concept:** Playlist learning, volume via PulseAudio. Apple Music web interface is finicky.
 **Design:** `.archive/docs/MASTER_DESIGN.md` has playlist DB schema.
 
-### 9. LLM-Centric Architecture Migration
+### 11. LLM-Centric Architecture Migration
 **Priority:** MEDIUM (wait for Qwen 3.5 release)
 **Design:** `docs/DEVELOPMENT_VISION.md`
 **Concept:** Skills become tools, not destinations. Incremental migration.
+
+### 12. Docker Container (Web UI Mode)
+**Priority:** MEDIUM
+**Concept:** Lowest-barrier community deployment. Web UI only (no mic). Proves the concept for community adoption.
+**Effort:** 3-5 days
+**Design:** `memory/plan_erica_voice_windows_port.md`
 
 ---
 
@@ -64,7 +79,7 @@
 
 ### Skill Editing System
 **Design:** `docs/SKILL_EDITING_SYSTEM.md`
-**Concept:** "Edit the weather skill" → LLM code gen → review → apply with backup.
+**Concept:** "Edit the weather skill" -> LLM code gen -> review -> apply with backup.
 **Note:** VS Code + Claude Code is faster for editing skills in practice.
 
 ### STT Worker Process
@@ -72,7 +87,11 @@
 **Concept:** GPU isolation via separate process. Only needed if GPU conflicts resurface.
 
 ### Automated Skill Generation
-**Concept:** Q&A → build → test → review → deploy. Depends on Skill Editing.
+**Concept:** Q&A -> build -> test -> review -> deploy. Depends on Skill Editing.
+
+### Windows Native Port
+**Concept:** Full JARVIS on Windows. ~2-3 weeks effort. Biggest audience for community adoption.
+**Design:** `memory/plan_erica_voice_windows_port.md`
 
 ### Mobile Access
 **Concept:** Remote command via phone. Different tech stack entirely.
@@ -82,7 +101,7 @@
 ## Tier 5: Aspirational — Someday/Maybe
 
 - **Malware Analysis Framework** — QEMU sandbox, VirusTotal/Any.run API, CISA-format reports. Build when a specific engagement needs it.
-- **Video / Face Recognition** — webcam → people/pets/objects. Hardware-dependent.
+- **Video / Face Recognition** — webcam -> people/pets/objects. Hardware-dependent. Qwen3-VL vision encoder ready for text-only; image processing is future.
 - **Tor / Dark Web Research** — Brave Tor mode, safety protocols. Specialized professional use.
 - **Emotional context awareness** — laugh/frustration/distress detection. Research-level ML.
 - **Voice cloning (Paul Bettany)** — tested Coqui, rejected. Revisit when open-source matures.
@@ -100,10 +119,17 @@ None!
 
 ## Minor Loose Ends
 
-- **CONSOLE TEST: Document generation** — Implemented (Feb 22). Restart JARVIS, test: "Look up the current top 5 LLMs in home use today, compare the pros and cons of each, and prepare a 7 slide PowerPoint that outlines what you've found. Name it llm_review.pptx and leave it in the share for me"
-- **VOICE TEST: Smart ack suppression** — Implemented (Feb 22). Needs live voice restart + verification: conversational queries → no ack, research/complex → ack fires. See `memory/handoff_session40_feb22.md`.
-- **Voice testing: bare ack as answer** — JARVIS asks question → "yeah" → treated as answer (needs reliable trigger)
+- **CONSOLE TEST: Document generation** — Implemented (Feb 22). Restart JARVIS, then test in console mode with progressively complex commands:
+  1. Simple (no research): "Create a presentation about the benefits of remote work"
+  2. With research: "Look up the top 5 LLMs for home use and create a 7 slide PowerPoint called llm_review.pptx"
+  3. Full multi-step: "Look up the current top 5 LLMs in home use today, compare the pros and cons of each, and prepare a 7 slide PowerPoint that outlines what you've found. Name it llm_review.pptx and leave it in the share for me"
+  4. DOCX: "Write a report about cybersecurity trends in 2026"
+  5. PDF: "Create a PDF comparing Python and Rust"
+  6. Verify: open generated files in LibreOffice, check layout/images/content quality
+- **VOICE TEST: Smart ack suppression** — Implemented (Feb 22). Needs live voice restart + verification: conversational queries -> no ack, research/complex -> ack fires. See `memory/handoff_session40_feb22.md`.
+- **Voice testing: bare ack as answer** — JARVIS asks question -> "yeah" -> treated as answer (needs reliable trigger)
 - **Batch extraction (Phase 4) untested** — conversational memory batch fact extraction needs 25+ messages in one session to trigger
+- **Qwen3-VL vision features** — mmproj encoder downloaded (`mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf`), not yet integrated. Future: image understanding via `--mmproj` flag.
 
 ---
 
@@ -113,12 +139,13 @@ None!
 
 | Feature | Date | Notes |
 |---------|------|-------|
+| Qwen3-VL-8B Model Upgrade | Feb 22 | ROCm rebuild, F16 download + Q5_K_M self-quantization, 80.2 tok/s, tool calling verified, vision-capable. |
 | Document Generation (3 phases) | Feb 22 | PPTX/DOCX/PDF with web research + Pexels images. Two-stage LLM pipeline, 10 new keywords, 132/132 tests pass. Needs live console test. |
 | Smart Ack Suppression | Feb 22 | Skip acks for fast queries (<=5 words, in-conversation <=12 words, answering JARVIS question). Research/working never suppressed. Needs live voice testing. |
 | Edge Case Phase 2 Complete (132 tests) | Feb 22 | +10 tests: reminder ack, forget edge cases, compound dismissal, file editor. 28/30 Phase 2 automated, 4 deferred (mid-rundown = future feature) |
 | Automated Test Suite (122 tests) | Feb 21 | Tier 1: 39 unit + Tier 2: 83 routing. Post-test cleanup (process guard + file removal + state reset). Phase 2 automated: 18/30 |
-| Conversational Flow Refactor (4 phases) | Feb 21 | Persona → State → Router → Polish. 10 response pools, 38 router tests, contextual acks, adaptive windows |
-| Response Pool Expansion | Feb 21 | reminder_ack 4→6, dismissal 5→7, greeting 6→8, news_pullup 3→5, ack_cache 8→10 |
+| Conversational Flow Refactor (4 phases) | Feb 21 | Persona -> State -> Router -> Polish. 10 response pools, 38 router tests, contextual acks, adaptive windows |
+| Response Pool Expansion | Feb 21 | reminder_ack 4->6, dismissal 5->7, greeting 6->8, news_pullup 3->5, ack_cache 8->10 |
 | Whisper v2 Fine-Tuning | Feb 21 | 198 phrases, FIFINE K669B, GPU fp16, 94.4% live accuracy |
 | 6 Conversational Bug Fixes | Feb 21 | Transparency, MCU removal, double honorific, UnboundLocalError, extraction text, dismissal suffix |
 | Web Chat UI (5 phases) | Feb 20 | aiohttp WS, streaming, file handling, history, markdown, sessions sidebar |
@@ -130,7 +157,7 @@ None!
 | Console Web Research + Prompt v2 | Feb 19 | `stream_with_tools()` in console, deflection safety net, prescriptive prompt v2 |
 | Qwen Sampling Params + API Key Rotation | Feb 19 | top_p=0.8, top_k=20 in all 6 llama.cpp payloads |
 | Document Ingestion (3 phases) | Feb 19 | prompt_toolkit, /paste /file /clipboard /append /context /clear |
-| GNOME Desktop Integration (5 phases) | Feb 19 | Extension (D-Bus bridge), desktop_manager, app launcher v2.0 — 16 intents |
+| GNOME Desktop Integration (5 phases) | Feb 19 | Extension (D-Bus bridge), desktop_manager, app launcher v2.0 -- 16 intents |
 | Google Calendar Sync Token Fix | Feb 19 | Removed `orderBy` from initial sync, incremental sync works |
 | Web Research (5 phases) | Feb 18 | Qwen 3-8B tool calling + DuckDuckGo + trafilatura |
 | GitHub Publishing System | Feb 18 | Automated PII redaction, `--auto` publish |

@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** February 21, 2026 (session 34 — Whisper retraining complete, 94%+ accuracy)
+**Updated:** February 22, 2026 (session 43 — Qwen3-VL-8B upgrade, ROCm rebuild, doc gen complete)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -44,6 +44,8 @@
 | 12 | **Profile-aware commands (multi-user)** — "my calendar" loads the user's vs secondary user's based on who spoke | 3-4 hours | Infrastructure already built (speaker ID + profiles). Just needs skill-level integration | MASTER_DESIGN.md |
 | ~~41~~ | ~~**Web UI session sidebar**~~ — DONE (Feb 20, `9803634`). Session-based navigation, collapsible sidebar, rename, pagination | ✅ | All 5 Web UI phases complete | Web UI Phase 5 |
 | ~~42~~ | ~~**Document generation (file_editor extension)**~~ | ~~6-10 hours~~ | ~~PPTX/DOCX/PDF with web research + Pexels images~~ | Done (Feb 22). `59e73db` skills, `5b83fed` public. All 3 phases in one session. |
+| ~~45~~ | ~~**Qwen3-VL-8B model upgrade + ROCm rebuild**~~ | ~~4-6 hours~~ | ~~Vision-capable LLM, ROCm GPU backend~~ | Done (Feb 22). Self-quantized Q5_K_M from F16, 80.2 tok/s (-1.5% vs baseline), tool calling verified. |
+| 46 | **Secondary user dual-model voice recognition** — speaker-ID routes to the user's fine-tuned vs stock Whisper | 4-6 hours | Multi-user STT without degrading the user's accuracy | Waiting for secondary user's recovery + enrollment. See `memory/plan_erica_voice_windows_port.md` |
 
 ---
 
@@ -61,6 +63,7 @@
 | 19 | **Web query memory** — SQLite DB of last 100 web queries + results, "what did we look up?" | 3-4 hours | Some functionality in conversational memory already. Dedicated lookup is cleaner | MASTER_DESIGN.md |
 | 43 | **Mid-rundown interruption** — item-by-item delivery with "continue"/"skip"/"stop"/"defer" commands | 4-6 hours | Currently `deliver_rundown()` blocks on single TTS call. Needs item-at-a-time loop + active listener during delivery | Identified during Phase 2 testing (2A-05..08). See `docs/EDGE_CASE_TESTING.md` |
 | 44 | **Reminder ack intent parsing** — distinguish "got it" (ack) vs "snooze 10 min" (snooze) vs "what reminder" (query) at P2 | 2-3 hours | Currently P2 `_handle_reminder_ack()` is a blanket ack — loses snooze/query intent | Identified during Phase 2 testing (2B-02..03) |
+| 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption. Proves concept for external users | See `memory/plan_erica_voice_windows_port.md` |
 
 ---
 
@@ -86,6 +89,7 @@
 | 28 | **GitHub publishing cleanup** — CONTRIBUTING.md, INSTALLATION.md, API_KEYS.md, setup.sh | 3-4 hours | Community-facing polish. Only matters if users adopt | GITHUB_PUBLISHING_PLAN.md |
 | ~~29~~ | ~~**Console logging fix**~~ | ~~1-2 hours~~ | ~~Developer convenience~~ | Done (Feb 19). logger.py override now always uses console.log |
 | 30 | **Multi-speaker conversation tracking** — who said what when both speak | 4-6 hours | Speaker ID Phase 3+. Requires reliable speaker identification first | MASTER_DESIGN.md |
+| 48 | **Windows native port** — full JARVIS on Windows, abstraction layers for audio/desktop/notifications | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_erica_voice_windows_port.md` |
 
 ---
 
@@ -137,4 +141,4 @@
 
 ---
 
-**Total: 44 development ideas + 5 bugs, sourced from 12+ documents across the entire project.**
+**Total: 48 development ideas + 5 bugs, sourced from 12+ documents across the entire project.**

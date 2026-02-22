@@ -18,7 +18,7 @@ vad:
   buffer_duration: 3.0
 llm:
   local:
-    model_path: /mnt/models/llm/Qwen3-8B-Q5_K_M.gguf
+    model_path: /mnt/models/llm/Qwen3VL-8B-Instruct-Q5_K_M.gguf
     context_size: 8192
     gpu_layers: 999
     batch_size: 512
