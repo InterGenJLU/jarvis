@@ -1032,6 +1032,101 @@ TESTS += [
              notes="Dismissal should beat skill routing"),
 ]
 
+# ---------------------------------------------------------------------------
+# TIER 2: Phase 1E — Multi-Step Compound Commands
+# ---------------------------------------------------------------------------
+# Tests that compound instructions (research + create, multi-verb, long
+# preamble) route to the correct skill.  The handler's internal LLM parse
+# deals with the multi-step logic — routing just needs to land correctly.
+
+TESTS += [
+    # Research + presentation → file_editor
+    TestCase("1E-01",
+             "look up the top 5 LLMs for home use and create a 7 slide PowerPoint called llm_review.pptx",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Research + presentation — 'look up' should NOT steal to web_navigation"),
+
+    # Research + document → file_editor
+    TestCase("1E-02",
+             "research the latest cybersecurity trends and write a report about what you find",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Research + document — 'report' keyword anchors to file_editor"),
+
+    # Research + named file → file_editor
+    TestCase("1E-03",
+             "look up renewable energy statistics and prepare a presentation called energy.pptx and leave it in the share",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Explicit filename + share directory + research"),
+
+    # Research-only (no doc keyword) → NOT file_editor
+    TestCase("1E-04",
+             "look up the top 5 LLMs for home use and tell me what you find",
+             2, "1E", "Multi-Step Compound",
+             expect_not_skill="file_editor", expect_handled=False,
+             notes="Research without doc creation → LLM fallback / web research, NOT file_editor"),
+
+    # Multi-verb same skill (filesystem)
+    TestCase("1E-05",
+             "find all the python files in the project and count the total lines of code",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="filesystem", expect_handled=True,
+             notes="Two verbs, both map to filesystem"),
+
+    # Competing keywords — doc creation wins over web
+    TestCase("1E-06",
+             "search the web for cloud provider comparisons and make a slide deck about them",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="'search' (web_nav) vs 'slide deck' (file_editor) — doc keyword wins"),
+
+    # Buried intent — research + slide deck
+    TestCase("1E-07",
+             "look up AI market growth trends and create a slide deck about it",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Research preamble + multiple file_editor keywords (create, slide, deck). "
+                   "Single-keyword compound commands can fail semantic verification"),
+
+    # DOCX creation + topic
+    TestCase("1E-08",
+             "create a docx report about network security best practices",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="DOCX creation — 'create' + 'docx' + 'report' keywords"),
+
+    # PDF request
+    TestCase("1E-09",
+             "create a PDF report comparing Python and Rust for systems programming",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="PDF keyword routes to file_editor"),
+
+    # Reminder with 'weather' keyword — keyword-first routing limitation
+    TestCase("1E-10",
+             "remind me to check the weather forecast before I leave for work tomorrow morning",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="weather", expect_handled=True,
+             notes="KNOWN LIMITATION: 'weather' keyword wins over 'remind me' — "
+                   "keyword-first routing means the first keyword match wins"),
+
+    # Desktop + app compound
+    TestCase("1E-11",
+             "open chrome and then switch to workspace 2",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="app_launcher", expect_handled=True,
+             notes="Two desktop actions — first verb anchors to app_launcher"),
+
+    # Multi-step with explicit share directory
+    TestCase("1E-12",
+             "compare the pros and cons of Docker and Kubernetes and make a PowerPoint about it and save it in the share folder",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Comparison + PPTX + explicit share — full multi-step"),
+]
+
 
 # ===========================================================================
 # Process guard (block visual subprocess launches during tests)
