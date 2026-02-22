@@ -294,9 +294,15 @@ class ContinuousListener:
                 self.logger.info(f"⚠️  Ignoring garbage transcription: {text[:30]}...")
                 return
 
+            # Apply brand-name corrections before any routing decisions
+            corrected = self._apply_transcription_corrections(text)
+            if corrected != text:
+                self.logger.info(f"🔧 Transcription correction: '{text}' → '{corrected}'")
+                text = corrected
+
             self.logger.info(f"📝 Transcribed: {text}")
             print(f"📝 Heard: \"{text}\"")
-            
+
             # Check if conversation window is active
             if self.conversation_window_active:
                 # Filter out likely noise during conversation window
@@ -596,19 +602,37 @@ class ContinuousListener:
         self._speaking_event.clear()  # Allow audio callback to resume processing
         self.logger.info("🔊 Listening resumed")
     
+    # Post-transcription word corrections for known Whisper mishearings.
+    # Applied early (before routing) so all downstream logic sees clean text.
+    # Keyed by lowercased phrase → replacement.
+    _TRANSCRIPTION_CORRECTIONS = {
+        "and videos": "amd's",
+        "and video": "amd",
+        "in video": "nvidia",
+        "in vidya": "nvidia",
+        "and vidya": "nvidia",
+    }
+
+    def _apply_transcription_corrections(self, text: str) -> str:
+        """Fix known Whisper brand-name mishearings (AMD, NVIDIA, etc.)."""
+        for wrong, right in self._TRANSCRIPTION_CORRECTIONS.items():
+            if wrong in text:
+                text = text.replace(wrong, right)
+        return text
+
     def _apply_command_corrections(self, text: str) -> str:
         """Apply corrections for common command mishearings"""
         import re
-        
+
         # "i was/analyzed [command]" -> "analyze [command]"
         if re.match(r'^i (was|analyzed)\s+', text, re.IGNORECASE):
             corrected = re.sub(r'^i (was|analyzed)\s+', 'analyze ', text, flags=re.IGNORECASE)
             return corrected
-        
-        # "i'm" at start -> "analyze" 
+
+        # "i'm" at start -> "analyze"
         if text.lower().startswith("i'm "):
             return "analyze " + text[4:]
-        
+
         return text
     
     # Words that follow "jarvis" in ambient speech (talking ABOUT jarvis)

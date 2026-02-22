@@ -1178,6 +1178,10 @@ class Coordinator:
     def _play_ack_if_still_thinking(self, style_hint: str = None):
         """Timer callback — plays ack if LLM hasn't responded yet."""
         if not self._llm_responded:
+            # Pause mic BEFORE playback to prevent speaker-to-mic bleed
+            # (ack phrase picked up as a new user command).  The main response
+            # flow calls listener.resume_listening() when fully done.
+            self.listener.pause_listening()
             self.tts.speak_ack(style_hint=style_hint)
 
     def _strip_ack_opener(self, text: str) -> str:
