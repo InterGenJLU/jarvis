@@ -20,6 +20,14 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 
 ---
 
+## Demo
+
+<video src="https://github.com/user-attachments/assets/857b4737-eef8-4bc5-8d71-d493a35c3934" width="100%" controls></video>
+
+*3-minute demo: wake word activation, voice commands, web research, document generation, and desktop control — all running locally on AMD GPU.*
+
+---
+
 ## Screenshots
 
 ### Web UI
@@ -37,6 +45,7 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 
 ## Table of Contents
 
+- [Demo](#demo)
 - [Architecture](#architecture)
 - [Skills & Capabilities](#skills--capabilities)
 - [Hardware Requirements](#hardware-requirements)
