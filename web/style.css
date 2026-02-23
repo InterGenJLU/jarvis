@@ -152,16 +152,18 @@ header h1 {
     border: 1px solid rgba(251, 191, 36, 0.3);
 }
 
-/* Voice toggle */
+/* Voice toggle — vertical layout, label below slider */
 .voice-toggle {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     cursor: pointer;
     user-select: none;
+    align-self: center;
 }
 
-/* Restart button — now in input-col-right */
+/* Action buttons (Metrics + Restart) — stacked in input-col-right */
 .restart-btn {
     background: none;
     border: 1px solid var(--border);
@@ -188,8 +190,10 @@ header h1 {
 }
 
 .voice-label {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .voice-toggle input {
@@ -527,12 +531,19 @@ header h1 {
     width: 100%;
 }
 
-/* Right column — voice + restart */
+/* Right column — voice toggle + stacked buttons */
 .input-col-right {
     display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 14px;
+}
+
+.right-btn-stack {
+    display: flex;
     flex-direction: column;
-    align-items: flex-end;
-    gap: 10px;
+    gap: 4px;
 }
 
 #user-input {
@@ -1324,9 +1335,7 @@ header h1 {
     }
 
     .input-col-right {
-        flex-direction: row;
         justify-content: center;
-        gap: 16px;
     }
 
     .header-stats {

@@ -158,29 +158,31 @@
                 </div>
             </div>
 
-            <!-- Right: Metrics + Voice + Restart -->
+            <!-- Right: Voice toggle + stacked buttons -->
             <div class="input-col-right">
-                <a href="/dashboard" class="restart-btn" title="Metrics Dashboard">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="7" height="7"/>
-                        <rect x="14" y="3" width="7" height="7"/>
-                        <rect x="3" y="14" width="7" height="7"/>
-                        <rect x="14" y="14" width="7" height="7"/>
-                    </svg>
-                    <span class="restart-label">Metrics</span>
-                </a>
                 <label class="voice-toggle" title="Toggle voice output">
-                    <span class="voice-label">Voice</span>
                     <input type="checkbox" id="voice-toggle">
                     <span class="toggle-slider"></span>
+                    <span class="voice-label">Voice</span>
                 </label>
-                <button id="btn-restart" class="restart-btn" title="Restart server">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-                    </svg>
-                    <span class="restart-label">Restart</span>
-                </button>
+                <div class="right-btn-stack">
+                    <a href="/dashboard" class="restart-btn" title="Metrics Dashboard">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7"/>
+                            <rect x="14" y="3" width="7" height="7"/>
+                            <rect x="3" y="14" width="7" height="7"/>
+                            <rect x="14" y="14" width="7" height="7"/>
+                        </svg>
+                        <span class="restart-label">Metrics</span>
+                    </a>
+                    <button id="btn-restart" class="restart-btn" title="Restart server">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"/>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                        </svg>
+                        <span class="restart-label">Restart</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
