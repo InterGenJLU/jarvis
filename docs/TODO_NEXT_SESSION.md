@@ -1,6 +1,6 @@
 # TODO — Next Session
 
-**Updated:** February 22, 2026
+**Updated:** February 23, 2026
 
 ---
 
@@ -30,7 +30,29 @@
 **Design:** `memory/plan_erica_voice_windows_port.md`
 **Timing:** After secondary user can do 10-min enrollment session. Half-day implementation.
 
-### 5. Audio Recording Skill
+### 5. Document Refinement Follow-ups (#49)
+**Priority:** MEDIUM
+**Concept:** Cache last doc structure/research, add `refine_document` intent for iterative revision.
+- "Make slide 3 more detailed" / "add more statistics" after doc gen
+- Cache structure JSON + research context on skill instance, 10-min expiry
+
+### 6. AI Image Generation — FLUX.1-schnell (#50)
+**Priority:** MEDIUM
+**Concept:** Hybrid Pexels + FLUX for document generation. LLM decides per-slide.
+- Pexels fails for tech/abstract topics. FLUX FP8 fits 20GB VRAM, ~12-20s/image
+- Research complete: `memory/research_image_gen_ocr_selfprompt.md`
+
+### 7. Vision/OCR Skill — Phase 1 Tesseract (#51)
+**Priority:** MEDIUM
+**Concept:** "Read this" / "what does this say" via screenshot + Tesseract OCR.
+- CPU-only, 95-98% accuracy, 0.5-2s/page. Input via clipboard/screenshot/file
+- 4 intents: read_screen, describe_image, read_document, read_chart
+
+### 8. "Onscreen Please" — Retroactive Visual Display (#11)
+**Priority:** MEDIUM
+**Concept:** Buffer last raw output. "Onscreen please" displays it retroactively.
+
+### 9. Audio Recording Skill
 **Priority:** MEDIUM
 **Location:** `skills/personal/audio_recording/`
 **Concept:** Voice-triggered recording with natural playback queries.
@@ -42,21 +64,17 @@
 
 ## Tier 3: Lower Effort — When Ready
 
-### 6. "Onscreen Please" — Retroactive Visual Display
-**Priority:** MEDIUM
-**Concept:** Buffer last raw output. "Onscreen please" displays it retroactively.
-
-### 7. Music Control (Apple Music)
+### 10. Music Control (Apple Music)
 **Priority:** MEDIUM
 **Concept:** Playlist learning, volume via PulseAudio. Apple Music web interface is finicky.
 **Design:** `.archive/docs/MASTER_DESIGN.md` has playlist DB schema.
 
-### 8. LLM-Centric Architecture Migration
+### 11. LLM-Centric Architecture Migration
 **Priority:** MEDIUM (wait for Qwen 3.5 release)
 **Design:** `docs/DEVELOPMENT_VISION.md`
 **Concept:** Skills become tools, not destinations. Incremental migration.
 
-### 9. Docker Container (Web UI Mode)
+### 12. Docker Container (Web UI Mode)
 **Priority:** MEDIUM
 **Concept:** Lowest-barrier community deployment. Web UI only (no mic). Proves the concept for community adoption.
 **Effort:** 3-5 days
@@ -108,29 +126,29 @@ None!
 
 ## Pending Live Tests
 
-- **CONSOLE TEST: Document generation** — Implemented (Feb 22). Test in console mode:
-  1. Simple (no research): "Create a presentation about the benefits of remote work"
-  2. With research: "Look up the top 5 LLMs for home use and create a 7 slide PowerPoint called llm_review.pptx"
-  3. Full multi-step: "Look up the current top 5 LLMs in home use today, compare the pros and cons of each, and prepare a 7 slide PowerPoint that outlines what you've found. Name it llm_review.pptx and leave it in the share for me"
-  4. DOCX: "Write a report about cybersecurity trends in 2026"
-  5. PDF: "Create a PDF comparing Python and Rust"
-  6. Verify: open generated files in LibreOffice, check layout/images/content quality
-- **VOICE TEST: Smart ack suppression** — Implemented (Feb 22). Conversational queries should skip ack, research/complex queries should still get ack.
 - **Batch extraction (Phase 4)** — needs 25+ messages in one session to trigger
-- **Qwen3-VL vision features** — mmproj encoder downloaded, not yet integrated. Future: image understanding via `--mmproj` flag.
+- **Qwen3-VL vision features** — mmproj encoder downloaded, not yet integrated. Future: image understanding via `--mmproj` flag (#52)
 
 ---
 
-## Completed (Feb 10-22)
+## Completed (Feb 10-23)
 
 *Brief summary. Full details in git history and `docs/PRIORITY_ROADMAP.md`.*
 
 | Feature | Date |
 |---------|------|
+| WebUI health check spoken/on-screen mismatch fix | Feb 23 |
+| jarvis-web.service — systemd service for web UI auto-start | Feb 23 |
+| Preferred-mic hot-swap recovery — device monitor recovers from wrong-mic fallback | Feb 23 |
+| Whisper brand-name corrections — "and videos"→"amd's", "in video"→"nvidia" | Feb 23 |
+| Ack speaker-to-mic bleed fix — pause listening during ack playback | Feb 23 |
+| Edge Case Tests expanded to 152 (Phase 1E + routing) | Feb 22-23 |
+| Doc gen prompt overhaul (prescriptive depth) | Feb 22 |
 | Qwen3-VL-8B Model Upgrade (ROCm rebuild, self-quantized Q5_K_M) | Feb 22 |
 | Document Generation (PPTX/DOCX/PDF with web research + Pexels) | Feb 22 |
 | Smart Ack Suppression | Feb 22 |
-| Edge Case Phase 2 (132 tests total) | Feb 22 |
+| Document generation live tested (7 bugs fixed during session 45) | Feb 22 |
+| Smart ack suppression live tested | Feb 22 |
 | Automated Test Suite (122 tests) | Feb 21 |
 | Conversational Flow Refactor (4 phases) | Feb 21 |
 | Whisper v2 Fine-Tuning (198 phrases, 94.4%) | Feb 21 |

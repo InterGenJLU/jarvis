@@ -602,6 +602,8 @@ Track session-by-session execution here:
 | 36 | Feb 21 | Automated suite | 122 | 0 | Tier 1: 39 unit + Tier 2: 83 routing (Phase 1 + Phase 2 + Phase 5). Production bug found & fixed (`c053805`). |
 | 37 | Feb 21 | Cleanup + docs | — | — | Post-test artifact cleanup added. Phase 2 doc updated with automated coverage (18/30). |
 | 39 | Feb 22 | Phase 2 expansion | 132 | 0 | +10 tests: 2A-04, 2B-01..04, 2C-03, 2C-04b, 2D-05, 2F-03, 2F-05. Phase 2: 28/30, 4 deferred (mid-rundown = future feature). |
+| 44 | Feb 22 | Phase 1E expansion | 144 | 0 | +12 tests across Phase 1E. All tiers passing. |
+| 46 | Feb 23 | Additional routing tests | 152 | 0 | +8 tests. Tier 1: 39 unit + Tier 2: 113 routing. |
 
 ---
 
@@ -637,6 +639,6 @@ Look for these log patterns:
 ---
 
 **Total: ~200 test cases across 9 phases, 30+ subsections**
-**Automated: 132 tests (Tier 1: 39 unit + Tier 2: 93 routing) via `scripts/test_edge_cases.py` — includes post-test artifact cleanup**
+**Automated: 152 tests (Tier 1: 39 unit + Tier 2: 113 routing) via `scripts/test_edge_cases.py` — includes post-test artifact cleanup**
 **Phase 2: 28/30 automated, 4 deferred (mid-rundown interruption — future feature)**
 **Remaining: Phases 3-9 require live voice/hybrid/web testing**

@@ -809,13 +809,27 @@ class DeveloperToolsSkill(BaseSkill):
         from core.health_check import get_full_health, format_voice_brief, format_visual_report
 
         health = get_full_health(self.config)
-        brief = format_voice_brief(health)
 
-        # Store structured data for web UI pickup
+        # Store raw data for web UI pickup (web handler renders structured report)
         self._last_health_data = health
 
-        # In web mode, the browser renders the report — skip terminal popup
-        if not self._is_web_mode():
+        if self._is_web_mode():
+            # Filter out checks not applicable in web mode (no mic, no Coordinator)
+            # so spoken brief matches the on-screen report
+            skip_names = {'Audio Input'}
+            skip_phrases = {'Coordinator not available'}
+            filtered = {}
+            for layer, checks in health.items():
+                kept = [
+                    c for c in checks
+                    if c['name'] not in skip_names
+                    and not any(p in c.get('summary', '') for p in skip_phrases)
+                ]
+                if kept:
+                    filtered[layer] = kept
+            brief = format_voice_brief(filtered)
+        else:
+            brief = format_voice_brief(health)
             visual_report = format_visual_report(health)
             self._display.show(visual_report, content_type='health_check',
                                title='System Health Report')

@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** February 22, 2026 (session 43 — Qwen3-VL-8B upgrade, ROCm rebuild, doc gen complete)
+**Updated:** February 23, 2026 (session 47 — doc sync, WebUI health check fix)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -30,6 +30,9 @@
 | 12 | **Profile-aware commands (multi-user)** — "my calendar" loads correct user's data based on who spoke | 3-4 hours | Infrastructure already built (speaker ID + profiles). Just needs skill-level integration | MASTER_DESIGN.md |
 | 46 | **Dual-model voice recognition** — speaker-ID routes to user-specific fine-tuned vs stock Whisper | 4-6 hours | Multi-user STT without degrading primary user's accuracy | Waiting for secondary user enrollment. See `memory/plan_erica_voice_windows_port.md` |
 | 49 | **Document refinement follow-ups** — cache last structure/research, add `refine_document` intent for iterative revision | 3-4 hours | "Make slide 3 more detailed" / "add more statistics" after doc gen. Currently stumps JARVIS — no pipeline state persistence | Cache structure JSON + research context on skill instance, 10-min expiry, LLM modifies cached structure on follow-up |
+| 50 | **AI image generation (FLUX.1-schnell)** — local image gen for doc gen, hybrid with Pexels | 4-6 hours | Pexels fails for tech/abstract topics. LLM decides per-slide: Pexels (photographic) vs FLUX (conceptual). Pre-load during research phase to hide cold start | Research complete: `memory/research_image_gen_ocr_selfprompt.md`. FLUX FP8 fits 20GB VRAM, ~12-20s/image. SDXL Lightning as faster fallback |
+| 51 | **Vision/OCR skill — Phase 1 Tesseract** — "read this" / "what does this say" via screenshot + OCR | 1-2 days | Immediate daily utility. CPU-only, 95-98% accuracy, 0.5-2s/page. Input via clipboard/screenshot/file | Proposed: `skills/system/vision/`. 4 intents: read_screen, describe_image, read_document, read_chart |
+| 52 | **Vision/OCR skill — Phase 2-3 Qwen3-VL** — full image understanding via mmproj vision encoder | 3-5 days | Chart reading, diagram understanding, visual Q&A, slide verification, web UI file upload. mmproj already downloaded (718MB) | Dynamic mmproj loading (0.6GB) only for image tasks. Supersedes earlier Qwen2.5-VL plans |
 
 ---
 
@@ -47,6 +50,8 @@
 | 43 | **Mid-rundown interruption** — item-by-item delivery with "continue"/"skip"/"stop"/"defer" commands | 4-6 hours | Currently `deliver_rundown()` blocks on single TTS call. Needs item-at-a-time loop + active listener during delivery | Identified during Phase 2 testing (2A-05..08) |
 | 44 | **Reminder ack intent parsing** — distinguish "got it" (ack) vs "snooze 10 min" (snooze) vs "what reminder" (query) at P2 | 2-3 hours | Currently P2 `_handle_reminder_ack()` is a blanket ack — loses snooze/query intent | Identified during Phase 2 testing (2B-02..03) |
 | 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption. Proves concept for external users | See `memory/plan_erica_voice_windows_port.md` |
+| 53 | **Merge ack + response into single audio stream** — feed ack PCM as first bytes into StreamingAudioPipeline | 3-4 hours | Saves ~150ms + eliminates audible gap. One aplay lifecycle instead of two. User flagged: "I don't want to forget about this" | Challenges: timing (ack at 0.3s, pipeline at ~0.5-1s), lock contention, quality gate |
+| 54 | **Reduce `_open_aplay` 150ms sleep** — PipeWire device-ready wait at tts.py:319 may be reducible to 50ms | 1-2 hours | Saves 150ms per aplay open (300ms when ack + response both play). Test: change to 0.05, run 50 commands, count retry warnings | Risk: too short causes broken audio mid-sentence |
 
 ---
 
@@ -120,6 +125,16 @@
 - #42: Document generation — PPTX/DOCX/PDF with web research + Pexels images (Feb 22)
 - #45: Qwen3-VL-8B model upgrade — ROCm rebuild, self-quantized Q5_K_M, 80.2 tok/s (Feb 22)
 
+### Other Completed (non-roadmap enhancements)
+- Smart ack suppression — skip acknowledgements for fast/conversational queries (Feb 22)
+- Doc gen prompt overhaul — prescriptive depth, publish.sh README protection (Feb 22)
+- Edge case tests expanded — Phase 1E: 144 tests (Feb 22), then 152 tests (Feb 23)
+- Ack speaker-to-mic bleed fix — pause listening during ack playback (Feb 23)
+- Whisper brand-name corrections — "and videos"→"amd's", "in video"→"nvidia" (Feb 23)
+- Preferred-mic hot-swap recovery — device monitor recovers from wrong-mic fallback (Feb 23)
+- jarvis-web.service — systemd service for web UI, enabled for auto-start (Feb 23)
+- WebUI health check brief mismatch — spoken vs on-screen now consistent (Feb 23)
+
 ### Tier 3
 - #40: News headline trimming — 25 per category (Feb 20)
 
@@ -146,4 +161,4 @@
 
 ---
 
-**Total: 48 development ideas, sourced from 12+ documents across the entire project.**
+**Total: 54 development ideas + 8 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
