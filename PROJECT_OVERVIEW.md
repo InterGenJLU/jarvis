@@ -1,7 +1,7 @@
 # JARVIS - Personal AI Assistant
 
 **Version:** 2.5.0 (Production Ready)
-**Last Updated:** February 21, 2026
+**Last Updated:** February 23, 2026
 **Status:** ✅ Stable, Feature-Rich, Voice-Controlled
 
 ---
@@ -349,6 +349,29 @@ User: Hears response
 - ✅ **GPU fp16 training** — 89 seconds on RX 7900 XT
 - ✅ **94.4% live accuracy** — wake word 100%, contraction handling 100%
 
+### Phase 15: Document Generation, Testing & Hardening (Feb 21-22) 🚀
+- ✅ **Document generation** — PPTX/DOCX/PDF via two-stage LLM pipeline (structure → content), Pexels stock image embedding, widescreen 16:9
+- ✅ **Doc gen prompt overhaul** — prescriptive MUST rules with GOOD/BAD inline examples, format-aware bullet depth (10-20 words with specific facts, numbers, named examples)
+- ✅ **Print document intent** — `print_document` semantic intent, CUPS auto-detection, `lp` command integration
+- ✅ **Edge case test suite expanded** — 122 → 132 → 144 → 148 → **152/152 passing** across 15 test phases
+- ✅ **ProcessGuard** — blocks subprocess launches (browsers, terminals, editors) during tests via `start_new_session=True` discriminator
+- ✅ **7 live demo bugs fixed** — parallel page fetch timeout, pre-route ack for long-running skills, fullscreen window Wayland fallback, GPU detection routing, trafilatura 5s cap, date ordinal TTS normalization, health check display routing
+- ✅ **Ack speaker-to-mic bleed fix** — mic paused during ack playback, prevents phantom commands
+- ✅ **Whisper brand-name corrections** — AMD/NVIDIA transcription fixes applied pre-routing
+- ✅ **Preferred-mic hot-swap recovery** — device monitor detects configured mic appearance, seamless fallback teardown
+- ✅ **Smart ack suppression** — skip acknowledgments for fast/conversational queries
+- ✅ **Publish script hardening** — README protection (backup/restore around rsync), document file exclusions
+
+### Phase 16: Metrics Dashboard & Community (Feb 22-23) 🚀
+- ✅ **LLM Metrics Dashboard (5 phases)** — +1,946 lines across 10 files, live at `/dashboard`
+- ✅ **Metrics data layer** — `MetricsTracker` singleton, SQLite with 16-column schema, 5 indexes, 180-day retention
+- ✅ **Metrics instrumentation** — all 3 frontends (voice, console, web) + LLM router record every interaction
+- ✅ **Dashboard backend** — 7 REST endpoints + WebSocket push for live updates
+- ✅ **Dashboard frontend** — Chart.js (interactions line, token stacked bar, provider doughnut, skills horizontal bar), paginated data explorer, CSV export, auto-refresh
+- ✅ **Web UI systemd service** — `jarvis-web.service`, auto-start after `jarvis.service`, port 8088
+- ✅ **Web UI layout improvements** — metrics link in input area, vertical voice toggle, stacked button layout
+- ✅ **GitHub community standards** — Code of Conduct, Contributing guide, Security Policy, issue templates, PR template — 100% community profile
+
 ---
 
 ## 🎨 Design Philosophy
@@ -382,26 +405,29 @@ Optimized for consumer hardware. No expensive GPUs required (though AMD GPU supp
 ## 🗺️ Roadmap
 
 ### Recently Completed
+- [x] ~~LLM Metrics Dashboard (5 phases)~~ — Done (Feb 23). Chart.js, live WebSocket, CSV export
+- [x] ~~GitHub community standards~~ — Done (Feb 23). CoC, Contributing, Security, templates
+- [x] ~~Document generation~~ — Done (Feb 22). PPTX/DOCX/PDF, Pexels images, print support
+- [x] ~~Edge case test suite~~ — Done (Feb 22). 152/152 passing across 15 phases
+- [x] ~~7 live demo bug fixes~~ — Done (Feb 22). Timeouts, ack routing, Wayland fallback, TTS normalization
 - [x] ~~Whisper v2 retraining~~ — Done (Feb 21). 198 phrases, 94%+ accuracy
 - [x] ~~Conversational Flow Refactor (4 phases)~~ — Done (Feb 21). Persona, State, Router, Polish
 - [x] ~~Web Chat UI (5 phases)~~ — Done (Feb 20). Streaming, sessions, markdown
-- [x] ~~File Editor Skill~~ — Done (Feb 20). 5 intents, confirmation flow
-- [x] ~~Edge Case Testing Phase 1~~ — Done (Feb 20). 92.5% pass rate
-- [x] ~~Ambient Wake Word Filter~~ — Done (Feb 20). Multi-signal blocking
 - [x] ~~App launcher + desktop control~~ — Done (Feb 19). 16 intents, GNOME Shell extension
 - [x] ~~Web research (Qwen tool calling)~~ — Done (Feb 18). DuckDuckGo + trafilatura
 - [x] ~~GitHub open source publication~~ — Done (Feb 18). Automated PII redaction
 
 ### Up Next
-- [ ] Edge Case Testing Phase 2 (priority chain & state machines)
-- [ ] Document generation skill
-- [ ] Email skill (Gmail)
-- [ ] Google Keep integration
+- [ ] Inject user facts into web research (force multiplier for all research)
+- [ ] Document refinement follow-ups (cache + `refine_document` intent)
+- [ ] "Onscreen please" — retroactive visual display of last spoken answer
+- [ ] AI image generation (FLUX.1-schnell) for document slides
 
 ### Medium Term
-- [ ] Audio recording skill
+- [ ] Vision/OCR Phase 1 (Tesseract) — "read this" / "what does this say"
+- [ ] Vision/OCR Phase 2-3 (Qwen3-VL mmproj) — full image understanding
 - [ ] LLM-centric architecture migration (wait for Qwen 3.5)
-- [ ] Music control (Apple Music)
+- [ ] Email skill (Gmail)
 
 ### Long Term
 - [ ] Threat hunting / malware analysis framework
