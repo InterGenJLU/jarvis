@@ -57,6 +57,7 @@ from core.conversation_router import ConversationRouter
 from core.speech_chunker import SpeechChunker
 from core.context_window import get_context_window, estimate_tokens, TOKEN_RATIO
 from core.document_buffer import DocumentBuffer, BINARY_EXTENSIONS
+from core.metrics_tracker import get_metrics_tracker
 
 
 class TTSProxy:
@@ -740,6 +741,9 @@ def run_console(config, mode):
         web_researcher=web_researcher,
     )
 
+    # LLM metrics tracking
+    metrics = get_metrics_tracker(config)
+
     # Command history (persists across sessions) + document buffer
     history_file = Path(__file__).parent / ".console_history"
     pt_history = FileHistory(str(history_file))
@@ -909,6 +913,29 @@ def run_console(config, mode):
                 response_text=response or "",
                 response_type="llm" if not skill_handled else "skill",
             )
+
+            # Record LLM metrics
+            if metrics and used_llm:
+                try:
+                    info = llm.last_call_info or {}
+                    metrics.record(
+                        provider=info.get('provider', 'unknown'),
+                        method=info.get('method', 'unknown'),
+                        prompt_tokens=info.get('input_tokens'),
+                        completion_tokens=info.get('output_tokens'),
+                        estimated_tokens=info.get('estimated_tokens'),
+                        model=info.get('model'),
+                        latency_ms=info.get('latency_ms'),
+                        ttft_ms=info.get('ttft_ms'),
+                        skill=match_info.get('skill_name') if match_info else None,
+                        intent=match_info.get('handler') if match_info else None,
+                        input_method='console',
+                        quality_gate=info.get('quality_gate', False),
+                        is_fallback=info.get('is_fallback', False),
+                        error=info.get('error'),
+                    )
+                except Exception as e:
+                    console.print(f"[dim]Metrics recording failed: {e}[/dim]")
 
             # Stats panel
             session_stats.update(skill_handled, used_llm)

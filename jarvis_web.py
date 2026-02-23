@@ -49,6 +49,7 @@ from core.conversation_router import ConversationRouter
 from core.context_window import get_context_window
 from core.document_buffer import DocumentBuffer, BINARY_EXTENSIONS
 from core.speech_chunker import SpeechChunker
+from core.metrics_tracker import get_metrics_tracker
 
 logger = logging.getLogger("jarvis.web")
 
@@ -173,6 +174,9 @@ def init_components(config, tts_proxy):
     # Document buffer
     components['doc_buffer'] = DocumentBuffer()
 
+    # LLM metrics tracking
+    components['metrics'] = get_metrics_tracker(config)
+
     # Centralized conversation state (Phase 2 of conversational flow refactor)
     components['conv_state'] = ConversationState()
 
@@ -278,6 +282,30 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
         response_text=response or "",
         response_type="llm" if not skill_handled else "skill",
     )
+
+    # Record LLM metrics
+    metrics = components.get('metrics')
+    if metrics and used_llm:
+        try:
+            info = llm.last_call_info or {}
+            metrics.record(
+                provider=info.get('provider', 'unknown'),
+                method=info.get('method', 'unknown'),
+                prompt_tokens=info.get('input_tokens'),
+                completion_tokens=info.get('output_tokens'),
+                estimated_tokens=info.get('estimated_tokens'),
+                model=info.get('model'),
+                latency_ms=info.get('latency_ms'),
+                ttft_ms=info.get('ttft_ms'),
+                skill=match_info.get('skill_name') if match_info else None,
+                intent=match_info.get('handler') if match_info else None,
+                input_method='web',
+                quality_gate=info.get('quality_gate', False),
+                is_fallback=info.get('is_fallback', False),
+                error=info.get('error'),
+            )
+        except Exception as e:
+            logger.error("Metrics recording failed: %s", e)
 
     # Build stats
     stats = _build_stats(match_info, llm, used_llm, t_start, t_match, t_end)
@@ -1364,6 +1392,155 @@ async def stats_overview_handler(request):
     return web.json_response(data)
 
 
+# ---------------------------------------------------------------------------
+# Metrics Dashboard — REST endpoints + WebSocket
+# ---------------------------------------------------------------------------
+
+async def dashboard_handler(request):
+    """Serve dashboard.html for the metrics dashboard."""
+    return web.FileResponse(Path(__file__).parent / 'web' / 'dashboard.html')
+
+
+async def metrics_summary_handler(request):
+    """GET /api/metrics/summary?hours=24 — Aggregated dashboard cards."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    hours = int(request.query.get('hours', 24))
+    data = await asyncio.to_thread(metrics.get_summary, hours)
+    return web.json_response(data)
+
+
+async def metrics_timeseries_handler(request):
+    """GET /api/metrics/timeseries?hours=24&bucket=hour — Chart data."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    hours = int(request.query.get('hours', 24))
+    bucket = request.query.get('bucket', 'hour')
+    if bucket not in ('hour', 'day'):
+        bucket = 'hour'
+
+    data = await asyncio.to_thread(metrics.get_timeseries, hours, bucket)
+    return web.json_response(data)
+
+
+async def metrics_skills_handler(request):
+    """GET /api/metrics/skills?hours=24 — Skill breakdown."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    hours = int(request.query.get('hours', 24))
+    data = await asyncio.to_thread(metrics.get_skill_breakdown, hours)
+    return web.json_response(data)
+
+
+async def metrics_interactions_handler(request):
+    """GET /api/metrics/interactions?offset=0&limit=50&provider=&skill= — Paginated raw data."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    offset = int(request.query.get('offset', 0))
+    limit = min(int(request.query.get('limit', 50)), 200)
+
+    filters = {}
+    for key in ('provider', 'skill', 'method', 'input_method'):
+        val = request.query.get(key, '')
+        if val:
+            filters[key] = val
+    if request.query.get('error_only', '').lower() in ('1', 'true'):
+        filters['error_only'] = True
+    if request.query.get('fallback_only', '').lower() in ('1', 'true'):
+        filters['fallback_only'] = True
+    if request.query.get('start'):
+        filters['start'] = request.query['start']
+    if request.query.get('end'):
+        filters['end'] = request.query['end']
+
+    data = await asyncio.to_thread(metrics.get_interactions, offset, limit, filters)
+    return web.json_response(data)
+
+
+async def metrics_filters_handler(request):
+    """GET /api/metrics/filters — Distinct values for filter dropdowns."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    data = await asyncio.to_thread(metrics.get_filter_options)
+    return web.json_response(data)
+
+
+async def metrics_export_handler(request):
+    """GET /api/metrics/export?format=csv — CSV download."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    filters = {}
+    for key in ('provider', 'skill', 'method', 'input_method', 'start', 'end'):
+        val = request.query.get(key, '')
+        if val:
+            filters[key] = val
+    if request.query.get('error_only', '').lower() in ('1', 'true'):
+        filters['error_only'] = True
+
+    csv_data = await asyncio.to_thread(metrics.export_csv, filters)
+    return web.Response(
+        text=csv_data,
+        content_type='text/csv',
+        headers={'Content-Disposition': 'attachment; filename="jarvis_metrics.csv"'},
+    )
+
+
+async def dashboard_ws_handler(request):
+    """WebSocket endpoint for live dashboard metric updates."""
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    app = request.app
+    dashboard_clients = app.setdefault('dashboard_clients', set())
+    dashboard_clients.add(ws)
+
+    try:
+        async for msg in ws:
+            if msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
+                break
+            # Dashboard WS is push-only; ignore client messages
+    finally:
+        dashboard_clients.discard(ws)
+
+    return ws
+
+
 async def index_handler(request):
     """Serve index.html for the root path."""
     return web.FileResponse(Path(__file__).parent / 'web' / 'index.html')
@@ -1377,6 +1554,7 @@ def create_app(config) -> web.Application:
 
     # Routes: WebSocket, API, root index, then static assets
     app.router.add_get('/ws', websocket_handler)
+    app.router.add_get('/ws/dashboard', dashboard_ws_handler)
     app.router.add_get('/api/history', history_handler)
     app.router.add_get('/api/sessions', sessions_handler)
     app.router.add_get('/api/session/{session_id}', session_messages_handler)
@@ -1384,6 +1562,13 @@ def create_app(config) -> web.Application:
     app.router.add_post('/api/upload', upload_handler)
     app.router.add_get('/api/browse', browse_handler)
     app.router.add_get('/api/stats', stats_overview_handler)
+    app.router.add_get('/dashboard', dashboard_handler)
+    app.router.add_get('/api/metrics/summary', metrics_summary_handler)
+    app.router.add_get('/api/metrics/timeseries', metrics_timeseries_handler)
+    app.router.add_get('/api/metrics/skills', metrics_skills_handler)
+    app.router.add_get('/api/metrics/interactions', metrics_interactions_handler)
+    app.router.add_get('/api/metrics/filters', metrics_filters_handler)
+    app.router.add_get('/api/metrics/export', metrics_export_handler)
     app.router.add_get('/', index_handler)
     app.router.add_static('/', web_dir)
 
@@ -1401,6 +1586,24 @@ async def on_startup(app):
     components = await asyncio.to_thread(init_components, config, tts_proxy)
     app['components'] = components
     app['cmd_lock'] = asyncio.Lock()
+    app['dashboard_clients'] = set()
+
+    # Wire live dashboard push — MetricsTracker calls this after each record()
+    metrics = components.get('metrics')
+    if metrics:
+        loop = asyncio.get_event_loop()
+
+        def _push_to_dashboard(row: dict):
+            """Non-blocking push of new metric to all connected dashboard clients."""
+            clients = app.get('dashboard_clients', set())
+            if not clients:
+                return
+            payload = json.dumps({'type': 'new_metric', 'data': row})
+            for ws in list(clients):
+                if not ws.closed:
+                    asyncio.run_coroutine_threadsafe(ws.send_str(payload), loop)
+
+        metrics.set_on_record(_push_to_dashboard)
 
     skill_count = len(components['skill_manager'].skills)
     logger.info("JARVIS Web UI ready — %d skills loaded", skill_count)

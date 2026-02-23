@@ -400,7 +400,8 @@ class Coordinator:
                  skill_manager, conversation, reminder_manager=None,
                  news_manager=None, calendar_manager=None,
                  profile_manager=None, memory_manager=None,
-                 context_window=None, desktop_manager=None):
+                 context_window=None, desktop_manager=None,
+                 metrics=None):
         self.config = config
         self.logger = get_logger("pipeline.coordinator", config)
         self.event_queue = event_queue
@@ -417,6 +418,7 @@ class Coordinator:
         self.memory_manager = memory_manager
         self.context_window = context_window
         self.desktop_manager = desktop_manager
+        self.metrics = metrics
 
         # Web research (tool calling)
         self.web_researcher = WebResearcher(config) if config.get("llm.local.tool_calling", False) else None
@@ -773,6 +775,10 @@ class Coordinator:
             response_text=response or "",
             response_type="llm" if not result.handled else "skill",
         )
+
+        # Record LLM metrics (only when LLM was actually used)
+        used_llm = not result.handled or result.used_llm
+        self._record_metrics(result, used_llm)
 
         # Follow-up window — handled results with explicit window instructions
         # skip the default window management
@@ -1456,3 +1462,30 @@ class Coordinator:
         if source == "tts":
             # TTS failure — ensure listening resumes
             self.listener.resume_listening()
+
+    # ----- metrics recording -----
+
+    def _record_metrics(self, result: RouteResult, used_llm: bool):
+        """Record LLM interaction metrics if the LLM was used."""
+        if not self.metrics or not used_llm:
+            return
+        try:
+            info = self.llm.last_call_info or {}
+            self.metrics.record(
+                provider=info.get('provider', 'unknown'),
+                method=info.get('method', 'unknown'),
+                prompt_tokens=info.get('input_tokens'),
+                completion_tokens=info.get('output_tokens'),
+                estimated_tokens=info.get('estimated_tokens'),
+                model=info.get('model'),
+                latency_ms=info.get('latency_ms'),
+                ttft_ms=info.get('ttft_ms'),
+                skill=result.match_info.get('skill_name') if result.match_info else None,
+                intent=result.match_info.get('handler') if result.match_info else None,
+                input_method='voice',
+                quality_gate=info.get('quality_gate', False),
+                is_fallback=info.get('is_fallback', False),
+                error=info.get('error'),
+            )
+        except Exception as e:
+            self.logger.error(f"Metrics recording failed: {e}")

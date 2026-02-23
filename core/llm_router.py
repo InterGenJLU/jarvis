@@ -207,7 +207,9 @@ class LLMRouter:
         """Generate using llama-server REST API"""
         from core import persona
         system_prompt = persona.system_prompt_brief()
+        model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
 
+        start = time.time()
         try:
             response = requests.post(
                 "http://127.0.0.1:8080/v1/chat/completions",
@@ -229,53 +231,84 @@ class LLMRouter:
                     err = response.json().get("error", {})
                 except Exception:
                     err = {}
+                error_msg = str(err) if err else "bad_request"
                 if err.get("type") == "exceed_context_size_error":
+                    error_msg = "context_overflow"
                     self.logger.error(
                         f"Context overflow: {err.get('n_prompt_tokens', '?')}/"
                         f"{err.get('n_ctx', '?')} tokens"
                     )
                 else:
                     self.logger.error(f"LLM server rejected request: {err}")
+                self.last_call_info = {
+                    "provider": "qwen", "method": "generate",
+                    "input_tokens": None, "output_tokens": None,
+                    "estimated_tokens": None, "model": model_name,
+                    "latency_ms": (time.time() - start) * 1000,
+                    "ttft_ms": None, "quality_gate": False,
+                    "is_fallback": False, "error": error_msg,
+                }
                 return ""
             response.raise_for_status()
             data = response.json()
             usage = data.get("usage", {})
             self.last_call_info = {
-                "provider": "qwen",
+                "provider": "qwen", "method": "generate",
                 "input_tokens": usage.get("prompt_tokens"),
                 "output_tokens": usage.get("completion_tokens"),
+                "estimated_tokens": None, "model": model_name,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": False, "error": None,
             }
             return self.strip_filler(data["choices"][0]["message"]["content"].strip())
         except Exception as e:
             self.logger.error(f"LLM server error: {e}")
+            self.last_call_info = {
+                "provider": "qwen", "method": "generate",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": None, "model": model_name,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": False, "error": str(e),
+            }
             return ""
     
     def _generate_api(self, prompt: str, max_tokens: int = 512) -> str:
         """
         Generate response using Claude API
-        
+
         Args:
             prompt: Input prompt
             max_tokens: Maximum tokens to generate
-            
+
         Returns:
             Generated text
         """
+        start = time.time()
         try:
             # Import anthropic SDK
             import anthropic
-            
+
             # Get API key
             api_key = self.config.get_env(self.api_key_env)
             if not api_key or api_key == "your_key_here":
                 self.logger.error("Claude API key not configured")
+                self.last_call_info = {
+                    "provider": "claude", "method": "generate",
+                    "input_tokens": None, "output_tokens": None,
+                    "estimated_tokens": None, "model": self.api_model,
+                    "latency_ms": (time.time() - start) * 1000,
+                    "ttft_ms": None, "quality_gate": False,
+                    "is_fallback": True, "error": "api_key_not_configured",
+                }
                 return "I'm sorry, I don't have access to the Claude API at the moment."
-            
+
             # Create client
             client = anthropic.Anthropic(api_key=api_key)
-            
+
             self.logger.debug("Calling Claude API...")
-            
+
             # Generate response
             message = client.messages.create(
                 model=self.api_model,
@@ -284,21 +317,41 @@ class LLMRouter:
                     {"role": "user", "content": prompt}
                 ]
             )
-            
+
             response = message.content[0].text
             self.last_call_info = {
-                "provider": "claude",
+                "provider": "claude", "method": "generate",
                 "input_tokens": message.usage.input_tokens,
                 "output_tokens": message.usage.output_tokens,
+                "estimated_tokens": None, "model": self.api_model,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": True, "error": None,
             }
 
             return response
 
         except ImportError:
             self.logger.error("anthropic package not installed")
+            self.last_call_info = {
+                "provider": "claude", "method": "generate",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": None, "model": self.api_model,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": True, "error": "anthropic_not_installed",
+            }
             return "I'm sorry, the Claude API is not available."
         except Exception as e:
             self.logger.error(f"Claude API call failed: {e}")
+            self.last_call_info = {
+                "provider": "claude", "method": "generate",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": None, "model": self.api_model,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": True, "error": str(e),
+            }
             return ""
     
     def _clean_llm_output(self, output: str) -> str:
@@ -511,12 +564,21 @@ class LLMRouter:
         """Generate chat response via Claude API with proper message format"""
         if max_tokens is None:
             max_tokens = self._estimate_max_tokens(user_message)
+        start = time.time()
         try:
             import anthropic
 
             api_key = self.config.get_env(self.api_key_env)
             if not api_key or api_key == "your_key_here":
                 self.logger.error("Claude API key not configured")
+                self.last_call_info = {
+                    "provider": "claude", "method": "chat",
+                    "input_tokens": None, "output_tokens": None,
+                    "estimated_tokens": None, "model": self.api_model,
+                    "latency_ms": (time.time() - start) * 1000,
+                    "ttft_ms": None, "quality_gate": False,
+                    "is_fallback": True, "error": "api_key_not_configured",
+                }
                 return ""
 
             client = anthropic.Anthropic(api_key=api_key)
@@ -533,7 +595,6 @@ class LLMRouter:
                 messages.append({"role": "user", "content": user_message})
 
             self.logger.info(f"🔄 Claude API fallback (call #{self.api_call_count + 1})")
-            start = time.time()
 
             message = client.messages.create(
                 model=self.api_model,
@@ -543,23 +604,43 @@ class LLMRouter:
             )
 
             response = message.content[0].text
-            elapsed = time.time() - start
+            elapsed_ms = (time.time() - start) * 1000
             self.api_call_count += 1
             self.last_call_info = {
-                "provider": "claude",
+                "provider": "claude", "method": "chat",
                 "input_tokens": message.usage.input_tokens,
                 "output_tokens": message.usage.output_tokens,
+                "estimated_tokens": None, "model": self.api_model,
+                "latency_ms": elapsed_ms,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": True, "error": None,
             }
-            self.logger.info(f"✅ Claude API responded in {elapsed:.1f}s "
+            self.logger.info(f"✅ Claude API responded in {elapsed_ms / 1000:.1f}s "
                            f"(tokens: {message.usage.input_tokens}+{message.usage.output_tokens}, "
                            f"total API calls this session: {self.api_call_count})")
             return response
 
         except ImportError:
             self.logger.error("anthropic package not installed")
+            self.last_call_info = {
+                "provider": "claude", "method": "chat",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": None, "model": self.api_model,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": True, "error": "anthropic_not_installed",
+            }
             return ""
         except Exception as e:
             self.logger.error(f"Claude API call failed: {e}")
+            self.last_call_info = {
+                "provider": "claude", "method": "chat",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": None, "model": self.api_model,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": True, "error": str(e),
+            }
             return ""
 
     def chat(self, user_message: str, conversation_history: str = "",
@@ -598,6 +679,9 @@ class LLMRouter:
 
         quality_issue = self._check_response_quality(response, user_message)
         if not quality_issue:
+            # Overlay chat-level metadata onto _generate_local's last_call_info
+            if self.last_call_info:
+                self.last_call_info["method"] = "chat"
             self.logger.debug(f"Local LLM responded in {elapsed_ms:.0f}ms")
             return response
 
@@ -619,6 +703,10 @@ class LLMRouter:
 
         quality_issue = self._check_response_quality(response, user_message)
         if not quality_issue:
+            # Overlay: retry succeeded, mark quality_gate
+            if self.last_call_info:
+                self.last_call_info["method"] = "chat"
+                self.last_call_info["quality_gate"] = True
             self.logger.info(f"Local LLM succeeded on retry in {elapsed_ms:.0f}ms")
             return response
 
@@ -632,6 +720,9 @@ class LLMRouter:
         api_response = self._generate_api_chat(user_message, conversation_history,
                                                 max_tokens, conversation_messages)
         if api_response:
+            # _generate_api_chat already sets is_fallback=True; overlay quality_gate
+            if self.last_call_info:
+                self.last_call_info["quality_gate"] = True
             return api_response
 
         # Everything failed — return whatever local gave us
@@ -673,6 +764,11 @@ class LLMRouter:
         if not messages or messages[-1].get("content") != user_message:
             messages.append({"role": "user", "content": user_message})
 
+        model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
+        start = time.time()
+        first_token_time = None
+        total_chars = 0
+        stream_error = None
         try:
             response = requests.post(
                 "http://127.0.0.1:8080/v1/chat/completions",
@@ -719,6 +815,7 @@ class LLMRouter:
                     )
                 else:
                     self.logger.error(f"LLM server rejected request: {err}")
+                    stream_error = "context_overflow"
                     return
 
             response.raise_for_status()
@@ -736,13 +833,28 @@ class LLMRouter:
                         delta = chunk["choices"][0].get("delta", {})
                         token = delta.get("content", "")
                         if token:
+                            if first_token_time is None:
+                                first_token_time = time.time()
+                            total_chars += len(token)
                             yield token
                     except (json.JSONDecodeError, KeyError, IndexError) as e:
                         self.logger.debug(f"Skipping malformed SSE chunk: {e}")
                         continue
 
         except Exception as e:
+            stream_error = str(e)
             self.logger.error(f"LLM streaming error: {e}")
+        finally:
+            self.last_call_info = {
+                "provider": "qwen", "method": "stream",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": total_chars // 4 if total_chars else None,
+                "model": model_name,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
+                "quality_gate": False, "is_fallback": False,
+                "error": stream_error,
+            }
 
     def stream_with_tools(self, user_message: str, conversation_history: str = "",
                           max_tokens: int = None, memory_context: str = None,
@@ -818,6 +930,11 @@ class LLMRouter:
 
         self.logger.info(f"stream_with_tools: {len(messages)} messages, tool_choice={tool_choice}")
 
+        model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
+        start = time.time()
+        first_token_time = None
+        total_chars = 0
+        stream_error = None
         try:
             response = requests.post(
                 "http://127.0.0.1:8080/v1/chat/completions",
@@ -866,6 +983,7 @@ class LLMRouter:
                     )
                 else:
                     self.logger.error(f"LLM server rejected request: {err}")
+                    stream_error = "context_overflow"
                     return
 
             response.raise_for_status()
@@ -895,6 +1013,8 @@ class LLMRouter:
                     tool_calls = delta.get("tool_calls")
                     if tool_calls:
                         is_tool_call = True
+                        if first_token_time is None:
+                            first_token_time = time.time()
                         tc = tool_calls[0]
                         if tc.get("id"):
                             tool_call_id = tc["id"]
@@ -908,6 +1028,9 @@ class LLMRouter:
                     # Regular text token
                     token = delta.get("content", "")
                     if token:
+                        if first_token_time is None:
+                            first_token_time = time.time()
+                        total_chars += len(token)
                         yield token
 
                     # Finish with tool calls
@@ -944,7 +1067,19 @@ class LLMRouter:
                 )
 
         except Exception as e:
+            stream_error = str(e)
             self.logger.error(f"LLM streaming (tool) error: {e}")
+        finally:
+            self.last_call_info = {
+                "provider": "qwen", "method": "stream_with_tools",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": total_chars // 4 if total_chars else None,
+                "model": model_name,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
+                "quality_gate": False, "is_fallback": False,
+                "error": stream_error,
+            }
 
     def continue_after_tool_call(self, tool_call: ToolCallRequest,
                                   tool_result: str,
@@ -1008,6 +1143,11 @@ class LLMRouter:
             ),
         })
 
+        model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
+        start = time.time()
+        first_token_time = None
+        total_chars = 0
+        stream_error = None
         try:
             response = requests.post(
                 "http://127.0.0.1:8080/v1/chat/completions",
@@ -1038,12 +1178,27 @@ class LLMRouter:
                     delta = chunk["choices"][0].get("delta", {})
                     token = delta.get("content", "")
                     if token:
+                        if first_token_time is None:
+                            first_token_time = time.time()
+                        total_chars += len(token)
                         yield token
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
 
         except Exception as e:
+            stream_error = str(e)
             self.logger.error(f"LLM continue_after_tool_call error: {e}")
+        finally:
+            self.last_call_info = {
+                "provider": "qwen", "method": "continue_after_tool_call",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": total_chars // 4 if total_chars else None,
+                "model": model_name,
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
+                "quality_gate": False, "is_fallback": False,
+                "error": stream_error,
+            }
 
 
 # Convenience function

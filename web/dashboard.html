@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. — Metrics Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-left">
+            <h1>J.A.R.V.I.S. <span class="header-sub">METRICS</span></h1>
+        </div>
+        <div class="header-right">
+            <div class="time-range-selector">
+                <label for="time-range">Range:</label>
+                <select id="time-range">
+                    <option value="1">1 hour</option>
+                    <option value="6">6 hours</option>
+                    <option value="24" selected>24 hours</option>
+                    <option value="72">3 days</option>
+                    <option value="168">7 days</option>
+                    <option value="720">30 days</option>
+                </select>
+            </div>
+            <span id="ws-status" class="ws-badge disconnected">Live</span>
+            <a href="/" class="back-link">Back to Chat</a>
+        </div>
+    </header>
+
+    <!-- Summary Cards -->
+    <section id="summary-cards">
+        <div class="card" id="card-interactions">
+            <div class="card-label">Interactions</div>
+            <div class="card-value" id="val-interactions">--</div>
+        </div>
+        <div class="card" id="card-tokens">
+            <div class="card-label">Tokens Today</div>
+            <div class="card-value" id="val-tokens">--</div>
+        </div>
+        <div class="card" id="card-fallback">
+            <div class="card-label">Claude Fallback</div>
+            <div class="card-value" id="val-fallback">--</div>
+        </div>
+        <div class="card" id="card-latency">
+            <div class="card-label">Avg Latency</div>
+            <div class="card-value" id="val-latency">--</div>
+        </div>
+        <div class="card" id="card-ttft">
+            <div class="card-label">Avg TTFT</div>
+            <div class="card-value" id="val-ttft">--</div>
+        </div>
+        <div class="card" id="card-cost">
+            <div class="card-label">Claude Cost</div>
+            <div class="card-value" id="val-cost">--</div>
+        </div>
+    </section>
+
+    <!-- Charts -->
+    <section id="charts">
+        <div class="chart-box">
+            <h3>Interactions Over Time</h3>
+            <canvas id="chart-interactions"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Token Usage</h3>
+            <canvas id="chart-tokens"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Provider Distribution</h3>
+            <canvas id="chart-providers"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Top Skills</h3>
+            <canvas id="chart-skills"></canvas>
+        </div>
+    </section>
+
+    <!-- Data Explorer -->
+    <section id="explorer">
+        <div class="explorer-header">
+            <h3>Data Explorer</h3>
+            <div class="explorer-controls">
+                <select id="filter-provider"><option value="">All Providers</option></select>
+                <select id="filter-skill"><option value="">All Skills</option></select>
+                <select id="filter-method"><option value="">All Methods</option></select>
+                <select id="filter-input"><option value="">All Inputs</option></select>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="filter-errors"> Errors only
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="filter-fallback"> Fallbacks only
+                </label>
+                <button id="btn-export" class="btn-export">Export CSV</button>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table id="interactions-table">
+                <thead>
+                    <tr>
+                        <th data-col="timestamp">Time</th>
+                        <th data-col="provider">Provider</th>
+                        <th data-col="method">Method</th>
+                        <th data-col="model">Model</th>
+                        <th data-col="tokens">Tokens</th>
+                        <th data-col="latency_ms">Latency</th>
+                        <th data-col="ttft_ms">TTFT</th>
+                        <th data-col="skill">Skill</th>
+                        <th data-col="intent">Intent</th>
+                        <th data-col="input_method">Input</th>
+                        <th data-col="error">Error</th>
+                    </tr>
+                </thead>
+                <tbody id="interactions-body"></tbody>
+            </table>
+        </div>
+        <div class="pagination">
+            <button id="btn-prev" class="btn-page" disabled>Prev</button>
+            <span id="page-info">--</span>
+            <button id="btn-next" class="btn-page" disabled>Next</button>
+        </div>
+    </section>
+
+    <script src="/dashboard.js"></script>
+</body>
+</html>

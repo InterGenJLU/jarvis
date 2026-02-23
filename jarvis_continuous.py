@@ -62,6 +62,7 @@ from core.user_profile import get_profile_manager
 from core.speaker_id import SpeakerIdentifier
 from core.context_window import get_context_window
 from core.desktop_manager import get_desktop_manager
+from core.metrics_tracker import get_metrics_tracker
 
 
 class JarvisContinuous:
@@ -139,6 +140,11 @@ class JarvisContinuous:
         if config.get("desktop.enabled", True):
             self.desktop_manager = get_desktop_manager(config)
             self.logger.info("Desktop manager initialized")
+
+        # --- LLM Metrics tracking ---
+        self.metrics = get_metrics_tracker(config)
+        if self.metrics:
+            self.logger.info("LLM metrics tracking enabled")
 
         # --- Event pipeline mode (Phase 4) ---
         self.event_mode = config.get("pipeline.event_mode", False)
@@ -267,6 +273,7 @@ class JarvisContinuous:
                 memory_manager=self.memory_manager,
                 context_window=self.context_window,
                 desktop_manager=self.desktop_manager,
+                metrics=self.metrics,
             )
             self.logger.info("Event pipeline mode enabled")
 

@@ -82,6 +82,11 @@ logging:
   level: INFO
   file: /mnt/storage/jarvis/data/logs/jarvis.log
   console: true
+# LLM metrics tracking (dashboard + analytics)
+metrics:
+  db_path: /mnt/storage/jarvis/data/metrics.db
+  retention_days: 180
+
 semantic_matching:
   enabled: true
   model: all-MiniLM-L6-v2
