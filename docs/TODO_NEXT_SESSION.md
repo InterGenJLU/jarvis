@@ -1,6 +1,6 @@
 # TODO — Next Session
 
-**Updated:** February 23, 2026
+**Updated:** February 25, 2026
 
 ---
 
@@ -126,12 +126,21 @@ None!
 
 ## Pending Live Tests
 
+- **Task planner compound requests** — verify predictive timing announcement, LLM step evaluation, pause/resume ("wait" → "continue") end-to-end via voice
 - **Batch extraction (Phase 4)** — needs 25+ messages in one session to trigger
 - **Qwen3.5 vision features** — mmproj encoder downloaded, not yet integrated. Future: image understanding via `--mmproj` flag (#52)
 
+## Deferred — Revisit After Extended Usage
+
+*Task planner enhancements shelved Feb 25. Check mid-March 2026.*
+
+- **Plan templates (#56)** — cache successful plan structures. Revisit when repeated identical compound requests are observed
+- **Plan feedback (#57)** — post-execution LLM eval + pattern storage. Revisit when per-step eval data shows recurring failures
+- **Parallel step execution (#58)** — concurrent independent steps. Revisit when plans regularly exceed 4-5 steps (April 2026+)
+
 ---
 
-## Completed (Feb 10-23)
+## Completed (Feb 10-25)
 
 *Brief summary. Full details in git history and `docs/PRIORITY_ROADMAP.md`.*
 
@@ -146,6 +155,8 @@ None!
 | Doc gen prompt overhaul (prescriptive depth) | Feb 22 |
 | Qwen3-VL-8B Model Upgrade (ROCm rebuild, self-quantized Q5_K_M) | Feb 22 |
 | Qwen3.5-35B-A3B Upgrade (MoE Q3_K_M, unsloth, 48-63 tok/s) | Feb 24 |
+| Task Planner — 4 phases complete (self-awareness → compound detection → guardrails → advanced) | Feb 24-25 |
+| Task Planner bug fixes — pause/resume guards, eval timeout, skip-that, 236 tests | Feb 25 |
 | Document Generation (PPTX/DOCX/PDF with web research + Pexels) | Feb 22 |
 | Smart Ack Suppression | Feb 22 |
 | Document generation live tested (7 bugs fixed during session 45) | Feb 22 |

@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** February 23, 2026 (session 47 — doc sync, WebUI health check fix)
+**Updated:** February 25, 2026 (session 70 — task planner complete, 3 deferred items shelved)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -53,6 +53,18 @@
 | 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption. Proves concept for external users | See `memory/plan_erica_voice_windows_port.md` |
 | 53 | **Merge ack + response into single audio stream** — feed ack PCM as first bytes into StreamingAudioPipeline | 3-4 hours | Saves ~150ms + eliminates audible gap. One aplay lifecycle instead of two. User flagged: "I don't want to forget about this" | Challenges: timing (ack at 0.3s, pipeline at ~0.5-1s), lock contention, quality gate |
 | 54 | **Reduce `_open_aplay` 150ms sleep** — PipeWire device-ready wait at tts.py:319 may be reducible to 50ms | 1-2 hours | Saves 150ms per aplay open (300ms when ack + response both play). Test: change to 0.05, run 50 commands, count retry warnings | Risk: too short causes broken audio mid-sentence |
+
+---
+
+## Tier 3.5: Deferred Task Planner Enhancements — Revisit After Extended Usage
+
+*Deferred Feb 25, 2026 (session 70). All three shelved after discussion — low ROI for current 2-4 step plans. Revisit after 2-4 weeks of real-world planner usage to see if patterns emerge that justify the complexity.*
+
+| # | Item | Effort | ROI | Revisit When |
+|---|------|--------|-----|--------------|
+| 56 | **Plan templates** — cache successful plan structures for common compound patterns | 3-4 hours | Avoid re-planning identical requests. Currently negligible savings since plans are short and LLM generation is fast | When you notice repeated identical compound requests (e.g., same 3-step pattern daily). Check usage logs mid-March 2026 |
+| 57 | **Plan feedback** — post-execution LLM evaluation + store successful patterns | 4-6 hours | Learn from what worked. Already have per-step eval (Phase 4D); this adds whole-plan post-hoc pass + pattern storage | When per-step evaluation data shows recurring plan failures that a feedback loop could prevent. Mid-March 2026 |
+| 58 | **Parallel step execution** — ThreadPoolExecutor + dependency graph for concurrent steps | 6-8 hours | Execute independent steps simultaneously. Saves 2-3s on 3-step independent plans. Complex: concurrent TTS, error propagation, interrupt handling | When plans regularly exceed 4-5 independent steps OR latency becomes a user complaint. April 2026+ |
 
 ---
 
@@ -130,12 +142,14 @@
 ### Other Completed (non-roadmap enhancements)
 - Smart ack suppression — skip acknowledgements for fast/conversational queries (Feb 22)
 - Doc gen prompt overhaul — prescriptive depth, publish.sh README protection (Feb 22)
-- Edge case tests expanded — Phase 1E: 144 tests (Feb 22), then 152 tests (Feb 23)
+- Edge case tests expanded — Phase 1E: 144 tests (Feb 22), then 236 tests (Feb 25)
 - Ack speaker-to-mic bleed fix — pause listening during ack playback (Feb 23)
 - Whisper brand-name corrections — "and videos"→"amd's", "in video"→"nvidia" (Feb 23)
 - Preferred-mic hot-swap recovery — device monitor recovers from wrong-mic fallback (Feb 23)
 - jarvis-web.service — systemd service for web UI, enabled for auto-start (Feb 23)
 - WebUI health check brief mismatch — spoken vs on-screen now consistent (Feb 23)
+- Task Planner — 4 phases: self-awareness, compound detection + LLM planning + execution, guardrails, advanced features (Feb 24-25)
+- Task Planner bug fixes — pause/resume guards, eval timeout, skip-that, 12 new tests (Feb 25)
 
 ### Tier 3
 - #40: News headline trimming — 25 per category (Feb 20)
@@ -163,4 +177,4 @@
 
 ---
 
-**Total: 55 development ideas + 8 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
+**Total: 58 development ideas + 10 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**

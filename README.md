@@ -11,7 +11,8 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 - **0.1-0.2s speech recognition** — Fine-tuned Whisper v2 (198 phrases, 94%+ accuracy) on AMD GPU via CTranslate2 + ROCm
 - **Local LLM intelligence** — Qwen3.5-35B-A3B (Q3_K_M, MoE, 3B active params) via llama.cpp with native tool calling
 - **Natural blended voice** — Kokoro TTS with custom voice blend (fable + george), gapless streaming playback
-- **Conversational flow engine** — Persona module (10 response pools), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
+- **Conversational flow engine** — Persona module (17 response pools), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
+- **Self-awareness + task planning** — capability manifest, system state injection, compound request detection, LLM plan generation, sequential execution with per-step evaluation, pause/resume/cancel
 - **Semantic understanding** — ML-based intent matching using sentence-transformers, not brittle regex patterns
 - **Always-on listening** — Porcupine wake word + WebRTC VAD + ambient wake word filter + multi-turn conversation windows
 - **11 production skills** — time, weather, system info, filesystem, file editor, developer tools, desktop control, conversation, reminders, web research, news
@@ -98,10 +99,11 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
                   │  1. Confirmation interception         │
                   │  2. Dismissal / conversation close    │
                   │  3. Memory / context / news pull-up   │
+                  │  3.5 Task planner (compound detect)   │
                   │  4. Exact match (time, date)          │
                   │  5. Keyword + semantic verify         │
                   │  6. Pure semantic matching            │
-                  │  7. LLM fallback (Qwen3.5-35B-A3B)      │
+                  │  7. LLM fallback (Qwen3.5-35B-A3B)   │
                   └──────┬──────────────┬────────────────┘
                          │              │
               ┌──────────▼───┐   ┌──────▼──────────┐
@@ -112,7 +114,7 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
                          │              │
                   ┌──────▼──────────────▼────────┐
                   │   Persona + Contextual Acks   │
-                  │   (10 pools, style-tagged)     │
+                  │   (17 pools, style-tagged)     │
                   └──────────────┬────────────────┘
                                 │
                   ┌──────────────▼────────────────┐
@@ -133,8 +135,10 @@ The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS
 
 | Subsystem | What It Does |
 |-----------|-------------|
-| **Conversation Router** | Shared 7-layer priority chain for voice/console/web — one router, three frontends |
-| **Persona Engine** | 10 response pools (~50 templates), system prompts, honorific injection, style-tagged ack selection |
+| **Conversation Router** | Shared priority chain for voice/console/web — one router, three frontends |
+| **Self-Awareness** | Capability manifest + system state injected into LLM context — JARVIS knows what it can do |
+| **Task Planner** | Compound request detection (22 signals), LLM plan generation, sequential execution with per-step LLM evaluation, pause/resume/cancel/skip voice interrupts, predictive timing, error-aware planning |
+| **Persona Engine** | 17 response pools (~65 templates), system prompts, honorific injection, style-tagged ack selection |
 | **Conversation State** | Turn counting, intent history, question detection, research context tracking |
 | **Ambient Filter** | Multi-signal wake word validation: position, copula, threshold (0.80), length — blocks ambient mentions |
 | **Conversation Windows** | Adaptive follow-up windows (4-7s), extends with conversation depth, timeout cleanup |
@@ -544,6 +548,9 @@ jarvis/
 │   ├── google_calendar.py        # Google Calendar OAuth + sync
 │   ├── news_manager.py           # RSS monitoring + classification
 │   ├── desktop_manager.py        # GNOME D-Bus bridge + wmctrl fallback + volume/clipboard
+│   ├── self_awareness.py         # Capability manifest + system state for LLM context
+│   ├── task_planner.py           # Compound request detection, LLM plan generation, execution
+│   ├── metrics_tracker.py        # LLM metrics tracking (latency, tokens, errors)
 │   ├── health_check.py           # System diagnostics
 │   ├── user_profile.py           # User profiles + speaker ID
 │   ├── speaker_id.py             # Resemblyzer d-vector enrollment
@@ -577,6 +584,8 @@ jarvis/
 ├── assets/                       # Audio cues (generate your own .wav files)
 ├── scripts/                      # Utility scripts
 │   ├── install_desktop_extension.sh  # Install GNOME Shell extension
+│   ├── test_edge_cases.py            # Automated test suite (236 tests: unit, routing, LLM)
+│   ├── unit_tests.sh                 # Test runner wrapper
 │   ├── test_router.py                # Router test suite (38 tests)
 │   ├── test_desktop_manager.py       # Test desktop manager module
 │   ├── enroll_speaker.py             # Speaker voice enrollment
@@ -820,6 +829,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 2.6.0
+**Version:** 2.8.0
 **Status:** Production — actively developed
-**Last Updated:** February 22, 2026
+**Last Updated:** February 25, 2026
