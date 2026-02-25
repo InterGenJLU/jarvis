@@ -748,6 +748,7 @@ def run_console(config, mode):
         conversation=conversation,
         config=config,
         event_queue=None,  # Console: no voice interrupt queue
+        context_window=context_window,
     )
 
     # Conversation state + shared router (Phase 2-3 of conversational flow refactor)

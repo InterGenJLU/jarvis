@@ -523,8 +523,16 @@ class ConversationRouter:
                 if plan:
                     tp.active_plan = plan
                     logger.info("Plan confirmed — routing to execution")
+                    # Predictive timing
+                    time_est = ""
+                    if self.self_awareness:
+                        time_est = self.self_awareness.estimate_plan_duration(plan)
+                    if time_est:
+                        text = persona.task_announce_timed(len(plan.steps), time_est)
+                    else:
+                        text = persona.task_announce(len(plan.steps))
                     return RouteResult(
-                        text=persona.task_announce(len(plan.steps)),
+                        text=text,
                         intent="task_plan",
                         source="planner",
                         handled=True,
@@ -542,9 +550,12 @@ class ConversationRouter:
             # Unrelated command during pending confirmation — fall through
             return None
 
-        # Sub-mode 2: active plan — stop/cancel/skip from router (console path)
+        # Sub-mode 2: active plan — stop/cancel/skip/pause/resume from router
         if tp.is_active:
-            from core.task_planner import _INTERRUPT_CANCEL, _INTERRUPT_SKIP
+            from core.task_planner import (
+                _INTERRUPT_CANCEL, _INTERRUPT_SKIP,
+                _INTERRUPT_PAUSE, _INTERRUPT_RESUME,
+            )
             if words & _INTERRUPT_CANCEL:
                 tp.cancel()
                 logger.info("Active plan cancelled via router")
@@ -560,6 +571,24 @@ class ConversationRouter:
                 return RouteResult(
                     text="Skipping this step.",
                     intent="task_plan_skip",
+                    source="planner",
+                    handled=True,
+                )
+            # Pause/resume handled by event queue in voice mode;
+            # router path covers console/web where event_queue=None
+            if words & _INTERRUPT_PAUSE:
+                logger.info("Pause request via router")
+                return RouteResult(
+                    text=persona.task_paused(),
+                    intent="task_plan_pause",
+                    source="planner",
+                    handled=True,
+                )
+            if words & _INTERRUPT_RESUME:
+                logger.info("Resume request via router")
+                return RouteResult(
+                    text=persona.task_resumed(),
+                    intent="task_plan_resume",
                     source="planner",
                     handled=True,
                 )
@@ -608,8 +637,17 @@ class ConversationRouter:
         # Non-destructive: proceed directly
         tp.active_plan = plan
 
+        # Predictive timing
+        time_est = ""
+        if self.self_awareness:
+            time_est = self.self_awareness.estimate_plan_duration(plan)
+        if time_est:
+            announcement = persona.task_announce_timed(len(plan.steps), time_est)
+        else:
+            announcement = persona.task_announce(len(plan.steps))
+
         return RouteResult(
-            text=persona.task_announce(len(plan.steps)),
+            text=announcement,
             intent="task_plan",
             source="planner",
             handled=True,

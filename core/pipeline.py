@@ -452,6 +452,7 @@ class Coordinator:
             conversation=conversation,
             config=config,
             event_queue=event_queue,
+            context_window=context_window,
         )
 
         # Centralized conversation state (Phase 2 of conversational flow refactor)

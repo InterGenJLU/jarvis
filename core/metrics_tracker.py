@@ -273,6 +273,31 @@ class MetricsTracker:
             conn.close()
 
     # ------------------------------------------------------------------
+    # Read — Skill Error Rate
+    # ------------------------------------------------------------------
+
+    def get_skill_error_rate(self, skill_name: str, hours: int = 24) -> float:
+        """Error rate (0.0-1.0) for a specific skill over the given window.
+
+        Returns 0.0 if no data or no interactions.
+        """
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) as total, "
+                "SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as errors "
+                "FROM llm_interactions "
+                "WHERE skill = ? AND timestamp >= ?",
+                (skill_name, cutoff),
+            ).fetchone()
+            total = row["total"] or 0
+            errors = row["errors"] or 0
+            return round(errors / total, 3) if total > 0 else 0.0
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Read — Skill Breakdown
     # ------------------------------------------------------------------
 

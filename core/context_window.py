@@ -372,6 +372,16 @@ class ContextWindow:
             "summarized": summarized,
         }
 
+    def get_usage_percentage(self) -> float:
+        """Return context window usage as a percentage (0.0-100.0).
+
+        Returns 0.0 if context window is disabled or budget is 0.
+        """
+        if not self.enabled or self.token_budget <= 0:
+            return 0.0
+        total_tokens = sum(s.token_count for s in self.segments)
+        return round(min(total_tokens / self.token_budget * 100, 100.0), 1)
+
     # ----- Phase 4: SQLite persistence -----
 
     def _init_db(self):

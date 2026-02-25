@@ -256,6 +256,52 @@ class SelfAwareness:
         return f"~{int(avg / 1000)}s"
 
     # ------------------------------------------------------------------
+    # Error-aware planning
+    # ------------------------------------------------------------------
+
+    def get_unreliable_skills(self, threshold: float = 0.3, hours: int = 24) -> list[str]:
+        """Return skill names with error rates above threshold.
+
+        Used to warn the LLM during plan generation so it can avoid
+        or warn about unreliable skills.
+        """
+        if not self._metrics:
+            return []
+        unreliable = []
+        for cap in self.get_capabilities():
+            rate = self._metrics.get_skill_error_rate(cap.name, hours=hours)
+            if rate >= threshold:
+                unreliable.append(f"{cap.name} ({int(rate * 100)}% error rate)")
+        return unreliable
+
+    # ------------------------------------------------------------------
+    # Plan duration estimation
+    # ------------------------------------------------------------------
+
+    def estimate_plan_duration(self, plan) -> str:
+        """Human-friendly total duration estimate for a multi-step plan.
+
+        Sums per-skill average latencies from MetricsTracker.
+        Returns empty string if no metrics available.
+        """
+        if not self._metrics:
+            return ""
+        total_ms = 0.0
+        for step in plan.steps:
+            avg = self._metrics.get_skill_avg_latency(step.skill_name, hours=24)
+            if avg > 0:
+                total_ms += avg
+            else:
+                total_ms += 1000  # default 1s for unknown skills
+        if total_ms < 3000:
+            return "a few seconds"
+        elif total_ms < 60000:
+            return f"about {int(total_ms / 1000)} seconds"
+        else:
+            mins = int(total_ms / 60000)
+            return f"about {mins} minute{'s' if mins > 1 else ''}"
+
+    # ------------------------------------------------------------------
     # Cache invalidation (for future hot-reload scenarios)
     # ------------------------------------------------------------------
 

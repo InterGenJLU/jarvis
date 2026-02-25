@@ -98,6 +98,14 @@ _POOLS = {
         "Done. Next up, {desc}.",
     ],
 
+    # Task planner: plan announcement with estimated time
+    # {n} = step count, {h} = honorific, {time} = duration estimate
+    "task_announce_timed": [
+        "I'll handle that in {n} steps, {h}. Should take {time}.",
+        "Let me work through this, {h}. {n} steps, roughly {time}.",
+        "On it, {h}. {n} steps, about {time}.",
+    ],
+
     # Task planner: plan complete
     # {h} = honorific
     "task_complete": [
@@ -121,6 +129,22 @@ _POOLS = {
         "I managed {completed} of {total} steps, {h}.",
         "I completed {completed} of {total} steps before stopping, {h}.",
         "{completed} of {total} steps done, {h}.",
+    ],
+
+    # Task planner: plan paused
+    # {h} = honorific
+    "task_paused": [
+        "Understood, {h}. I'll wait.",
+        "Pausing, {h}. Let me know when to continue.",
+        "Holding, {h}.",
+    ],
+
+    # Task planner: plan resumed
+    # {h} = honorific
+    "task_resumed": [
+        "Resuming, {h}.",
+        "Picking up where we left off, {h}.",
+        "Continuing, {h}.",
     ],
 
     # TTS ack cache (no honorific — synthesized at startup)
@@ -233,6 +257,12 @@ def task_announce(n: int) -> str:
     return template.format(n=n, h=get_honorific())
 
 
+def task_announce_timed(n: int, time_est: str) -> str:
+    """Announce a multi-step plan with step count and time estimate."""
+    template = random.choice(_POOLS["task_announce_timed"])
+    return template.format(n=n, h=get_honorific(), time=time_est)
+
+
 def task_progress(desc: str) -> str:
     """Report progress between plan steps."""
     template = random.choice(_POOLS["task_progress"])
@@ -255,6 +285,18 @@ def task_partial(completed: int, total: int) -> str:
     """Announce partial plan completion."""
     template = random.choice(_POOLS["task_partial"])
     return template.format(completed=completed, total=total, h=get_honorific())
+
+
+def task_paused() -> str:
+    """Announce plan pause."""
+    template = random.choice(_POOLS["task_paused"])
+    return template.format(h=get_honorific())
+
+
+def task_resumed() -> str:
+    """Announce plan resume."""
+    template = random.choice(_POOLS["task_resumed"])
+    return template.format(h=get_honorific())
 
 
 def rundown_defer() -> str:

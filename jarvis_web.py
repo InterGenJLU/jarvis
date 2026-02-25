@@ -198,6 +198,7 @@ def init_components(config, tts_proxy):
         conversation=conversation,
         config=config,
         event_queue=None,  # Web: no voice interrupt queue
+        context_window=components.get('context_window'),
     )
 
     # Centralized conversation state (Phase 2 of conversational flow refactor)

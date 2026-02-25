@@ -302,6 +302,7 @@ def setup_state(components, case):
         task_planner.active_plan = None
         task_planner._cancel_requested = False
         task_planner._skip_requested = False
+        task_planner._paused = False
     conv_state.pending_plan_confirmation = False
 
     # Apply case-specific setup
@@ -344,6 +345,17 @@ def setup_state(components, case):
             ])
             tp.set_pending_confirmation(plan)
             conv_state.pending_plan_confirmation = True
+
+    if setup.get("active_plan_running"):
+        tp = components.get("task_planner")
+        if tp:
+            from core.task_planner import TaskPlan, PlanStep, PlanStatus
+            plan = TaskPlan(original_request="test active", steps=[
+                PlanStep(step_id=1, description="step one", skill_name="weather", input_text="weather"),
+                PlanStep(step_id=2, description="step two", skill_name="time_info", input_text="time"),
+            ])
+            plan.status = PlanStatus.RUNNING
+            tp.active_plan = plan
 
 
 # ===========================================================================
@@ -816,6 +828,189 @@ def run_task_planner_test(case):
         if "developer_tools" not in CONFIRMATION_REQUIRED_SKILLS:
             return False, f"developer_tools not in CONFIRMATION_REQUIRED_SKILLS: {CONFIRMATION_REQUIRED_SKILLS}"
         return True, f"CONFIRMATION_REQUIRED_SKILLS={CONFIRMATION_REQUIRED_SKILLS}"
+
+    # ------------------------------------------------------------------
+    # Phase 8D: Phase 4 Advanced Features
+    # ------------------------------------------------------------------
+
+    # 4A: Predictive timing
+    elif test_type == "estimate_plan_duration_no_metrics":
+        sa = comps['sa']
+        from core.task_planner import TaskPlan, PlanStep
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="weather", skill_name="weather", input_text="weather"),
+        ])
+        result = sa.estimate_plan_duration(plan)
+        # Without metrics, SelfAwareness._metrics is None → returns ""
+        if sa._metrics is None:
+            if result != "":
+                return False, f"expected empty string without metrics, got {result!r}"
+            return True, "estimate_plan_duration returns '' without metrics"
+        # With metrics but no data for skill → uses default 1s → "a few seconds"
+        return True, f"estimate_plan_duration: {result!r}"
+
+    elif test_type == "estimate_plan_duration_returns_string":
+        sa = comps['sa']
+        from core.task_planner import TaskPlan, PlanStep
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="weather", skill_name="weather", input_text="w"),
+            PlanStep(step_id=2, description="time", skill_name="time_info", input_text="t"),
+        ])
+        result = sa.estimate_plan_duration(plan)
+        if not isinstance(result, str):
+            return False, f"expected str, got {type(result)}"
+        return True, f"estimate_plan_duration returns str: {result!r}"
+
+    elif test_type == "persona_task_announce_timed":
+        from core import persona
+        msg = persona.task_announce_timed(3, "about 5 seconds")
+        if "3" not in msg:
+            return False, f"step count not in announce: {msg!r}"
+        if "5 seconds" not in msg:
+            return False, f"time estimate not in announce: {msg!r}"
+        return True, f"task_announce_timed: {msg!r}"
+
+    # 4B: Error-aware planning
+    elif test_type == "get_skill_error_rate_method":
+        from core.metrics_tracker import MetricsTracker
+        if not hasattr(MetricsTracker, 'get_skill_error_rate'):
+            return False, "MetricsTracker missing get_skill_error_rate method"
+        return True, "get_skill_error_rate method exists on MetricsTracker"
+
+    elif test_type == "get_unreliable_skills_no_metrics":
+        sa = comps['sa']
+        result = sa.get_unreliable_skills()
+        if not isinstance(result, list):
+            return False, f"expected list, got {type(result)}"
+        # Without metrics → empty list
+        if sa._metrics is None and len(result) != 0:
+            return False, f"expected empty list without metrics, got {result}"
+        return True, f"get_unreliable_skills returns list: {result}"
+
+    elif test_type == "get_unreliable_skills_method":
+        from core.self_awareness import SelfAwareness
+        if not hasattr(SelfAwareness, 'get_unreliable_skills'):
+            return False, "SelfAwareness missing get_unreliable_skills method"
+        return True, "get_unreliable_skills method exists on SelfAwareness"
+
+    elif test_type == "error_rate_method_exists":
+        from core.metrics_tracker import MetricsTracker
+        sig = MetricsTracker.get_skill_error_rate
+        if not callable(sig):
+            return False, "get_skill_error_rate is not callable"
+        return True, "get_skill_error_rate is callable"
+
+    # 4C: Context-budget-aware planning
+    elif test_type == "context_window_usage_pct_disabled":
+        from core.context_window import ContextWindow
+        if not hasattr(ContextWindow, 'get_usage_percentage'):
+            return False, "ContextWindow missing get_usage_percentage method"
+        return True, "get_usage_percentage method exists on ContextWindow"
+
+    elif test_type == "task_planner_accepts_context_window":
+        from core.task_planner import TaskPlanner
+        import inspect
+        sig = inspect.signature(TaskPlanner.__init__)
+        if 'context_window' not in sig.parameters:
+            return False, "TaskPlanner.__init__ missing context_window param"
+        return True, "TaskPlanner accepts context_window kwarg"
+
+    # 4D: LLM decision evaluation
+    elif test_type == "evaluate_prompt_exists":
+        from core.task_planner import _EVALUATE_PROMPT
+        for placeholder in ["{step_id}", "{description}", "{result_excerpt}"]:
+            if placeholder not in _EVALUATE_PROMPT:
+                return False, f"_EVALUATE_PROMPT missing {placeholder}"
+        return True, "_EVALUATE_PROMPT has required placeholders"
+
+    elif test_type == "evaluate_empty_result_stop":
+        from core.task_planner import PlanStep, TaskPlan
+        step = PlanStep(step_id=1, description="test", skill_name="weather",
+                       input_text="test", result="")
+        plan = TaskPlan(original_request="test", steps=[step])
+        decision, reason = tp._evaluate_step_result(step, plan)
+        if decision != "stop":
+            return False, f"expected 'stop' for empty result, got '{decision}'"
+        return True, f"empty result → stop: {reason}"
+
+    elif test_type == "evaluate_error_result_stop":
+        from core.task_planner import PlanStep, TaskPlan
+        step = PlanStep(step_id=1, description="test", skill_name="weather",
+                       input_text="test", result="Error: something broke")
+        plan = TaskPlan(original_request="test", steps=[step])
+        decision, reason = tp._evaluate_step_result(step, plan)
+        if decision != "stop":
+            return False, f"expected 'stop' for error result, got '{decision}'"
+        return True, f"error result → stop: {reason}"
+
+    elif test_type == "evaluate_last_step_continue":
+        from core.task_planner import PlanStep, TaskPlan
+        step = PlanStep(step_id=2, description="test", skill_name="weather",
+                       input_text="test", result="The weather is sunny")
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="s1", skill_name="weather",
+                    input_text="w", result="done"),
+            step,
+        ])
+        decision, reason = tp._evaluate_step_result(step, plan)
+        if decision != "continue":
+            return False, f"expected 'continue' for last step, got '{decision}'"
+        return True, "last step with result → continue (fast path)"
+
+    elif test_type == "evaluate_no_llm_continue":
+        from core.task_planner import PlanStep, TaskPlan
+        step = PlanStep(step_id=1, description="test", skill_name="weather",
+                       input_text="test", result="Weather is sunny")
+        plan = TaskPlan(original_request="test", steps=[
+            step,
+            PlanStep(step_id=2, description="s2", skill_name="time_info",
+                    input_text="t"),
+        ])
+        # tp has no LLM — should default to continue
+        decision, reason = tp._evaluate_step_result(step, plan)
+        if decision != "continue":
+            return False, f"expected 'continue' without LLM, got '{decision}'"
+        return True, "no LLM → continue (graceful fallback)"
+
+    # 4E: Pause/Resume
+    elif test_type == "pause_keywords_exist":
+        from core.task_planner import _INTERRUPT_PAUSE
+        for kw in ["wait", "hold", "pause"]:
+            if kw not in _INTERRUPT_PAUSE:
+                return False, f"'{kw}' not in _INTERRUPT_PAUSE"
+        return True, f"_INTERRUPT_PAUSE={_INTERRUPT_PAUSE}"
+
+    elif test_type == "resume_keywords_exist":
+        from core.task_planner import _INTERRUPT_RESUME
+        for kw in ["continue", "resume", "proceed"]:
+            if kw not in _INTERRUPT_RESUME:
+                return False, f"'{kw}' not in _INTERRUPT_RESUME"
+        return True, f"_INTERRUPT_RESUME={_INTERRUPT_RESUME}"
+
+    elif test_type == "is_paused_default":
+        if tp.is_paused:
+            return False, "is_paused should be False by default"
+        return True, "is_paused=False by default"
+
+    elif test_type == "pause_timeout_exists":
+        from core.task_planner import _PAUSE_TIMEOUT_SECONDS
+        if not isinstance(_PAUSE_TIMEOUT_SECONDS, (int, float)) or _PAUSE_TIMEOUT_SECONDS <= 0:
+            return False, f"_PAUSE_TIMEOUT_SECONDS invalid: {_PAUSE_TIMEOUT_SECONDS}"
+        return True, f"_PAUSE_TIMEOUT_SECONDS={_PAUSE_TIMEOUT_SECONDS}"
+
+    elif test_type == "persona_task_paused":
+        from core import persona
+        msg = persona.task_paused()
+        if not msg:
+            return False, "task_paused returned empty"
+        return True, f"task_paused: {msg!r}"
+
+    elif test_type == "persona_task_resumed":
+        from core import persona
+        msg = persona.task_resumed()
+        if not msg:
+            return False, "task_resumed returned empty"
+        return True, f"task_resumed: {msg!r}"
 
     return False, f"unknown task_planner test type: {test_type}"
 
@@ -1411,6 +1606,78 @@ TESTS += [
     TestCase("8C-09", "", 1, "8C", "Task Planner Guardrails",
              expect_task_planner="confirmation_required_skills",
              notes="developer_tools in CONFIRMATION_REQUIRED_SKILLS"),
+
+    # --- Phase 8D: Phase 4 Advanced Features ---
+
+    # 4A: Predictive timing
+    TestCase("8D-01", "", 1, "8D", "Task Planner Phase 4 — Predictive Timing",
+             expect_task_planner="estimate_plan_duration_no_metrics",
+             notes="estimate_plan_duration without metrics → empty string"),
+    TestCase("8D-02", "", 1, "8D", "Task Planner Phase 4 — Predictive Timing",
+             expect_task_planner="estimate_plan_duration_returns_string",
+             notes="estimate_plan_duration returns str type"),
+    TestCase("8D-03", "", 1, "8D", "Task Planner Phase 4 — Predictive Timing",
+             expect_task_planner="persona_task_announce_timed",
+             notes="task_announce_timed includes step count and time"),
+
+    # 4B: Error-aware planning
+    TestCase("8D-04", "", 1, "8D", "Task Planner Phase 4 — Error-Aware",
+             expect_task_planner="get_skill_error_rate_method",
+             notes="MetricsTracker has get_skill_error_rate method"),
+    TestCase("8D-05", "", 1, "8D", "Task Planner Phase 4 — Error-Aware",
+             expect_task_planner="get_unreliable_skills_no_metrics",
+             notes="get_unreliable_skills returns empty list without metrics"),
+    TestCase("8D-06", "", 1, "8D", "Task Planner Phase 4 — Error-Aware",
+             expect_task_planner="get_unreliable_skills_method",
+             notes="SelfAwareness has get_unreliable_skills method"),
+    TestCase("8D-07", "", 1, "8D", "Task Planner Phase 4 — Error-Aware",
+             expect_task_planner="error_rate_method_exists",
+             notes="get_skill_error_rate is callable"),
+
+    # 4C: Context-budget-aware planning
+    TestCase("8D-08", "", 1, "8D", "Task Planner Phase 4 — Context Budget",
+             expect_task_planner="context_window_usage_pct_disabled",
+             notes="ContextWindow has get_usage_percentage method"),
+    TestCase("8D-09", "", 1, "8D", "Task Planner Phase 4 — Context Budget",
+             expect_task_planner="task_planner_accepts_context_window",
+             notes="TaskPlanner.__init__ accepts context_window kwarg"),
+
+    # 4D: LLM decision evaluation
+    TestCase("8D-10", "", 1, "8D", "Task Planner Phase 4 — LLM Evaluation",
+             expect_task_planner="evaluate_prompt_exists",
+             notes="_EVALUATE_PROMPT template has required placeholders"),
+    TestCase("8D-11", "", 1, "8D", "Task Planner Phase 4 — LLM Evaluation",
+             expect_task_planner="evaluate_empty_result_stop",
+             notes="Empty step result → stop (fast path)"),
+    TestCase("8D-12", "", 1, "8D", "Task Planner Phase 4 — LLM Evaluation",
+             expect_task_planner="evaluate_error_result_stop",
+             notes="Error step result → stop (fast path)"),
+    TestCase("8D-13", "", 1, "8D", "Task Planner Phase 4 — LLM Evaluation",
+             expect_task_planner="evaluate_last_step_continue",
+             notes="Last step with result → continue (fast path)"),
+    TestCase("8D-14", "", 1, "8D", "Task Planner Phase 4 — LLM Evaluation",
+             expect_task_planner="evaluate_no_llm_continue",
+             notes="No LLM → continue (graceful fallback)"),
+
+    # 4E: Pause/Resume
+    TestCase("8D-15", "", 1, "8D", "Task Planner Phase 4 — Pause/Resume",
+             expect_task_planner="pause_keywords_exist",
+             notes="_INTERRUPT_PAUSE contains wait, hold, pause"),
+    TestCase("8D-16", "", 1, "8D", "Task Planner Phase 4 — Pause/Resume",
+             expect_task_planner="resume_keywords_exist",
+             notes="_INTERRUPT_RESUME contains continue, resume, proceed"),
+    TestCase("8D-17", "", 1, "8D", "Task Planner Phase 4 — Pause/Resume",
+             expect_task_planner="is_paused_default",
+             notes="is_paused=False by default"),
+    TestCase("8D-18", "", 1, "8D", "Task Planner Phase 4 — Pause/Resume",
+             expect_task_planner="pause_timeout_exists",
+             notes="_PAUSE_TIMEOUT_SECONDS is positive number"),
+    TestCase("8D-19", "", 1, "8D", "Task Planner Phase 4 — Pause/Resume",
+             expect_task_planner="persona_task_paused",
+             notes="task_paused returns non-empty"),
+    TestCase("8D-20", "", 1, "8D", "Task Planner Phase 4 — Pause/Resume",
+             expect_task_planner="persona_task_resumed",
+             notes="task_resumed returns non-empty"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -1446,6 +1713,36 @@ TESTS += [
              in_conversation=True,
              expect_handled=False,
              notes="'stop' with no plan context → falls through P1.5, unhandled bare word"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 2: Phase 8D — Pause/Resume Routing (P1.5)
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    # Pause with active plan → task_plan_pause intent
+    TestCase("8D-R01", "pause", 2, "8D", "Plan Pause/Resume Routing",
+             in_conversation=True,
+             setup={"active_plan_running": True},
+             expect_handled=True, expect_intent="task_plan_pause",
+             expect_source="planner",
+             notes="'pause' with active plan → paused"),
+
+    # Resume with active plan → task_plan_resume intent
+    TestCase("8D-R02", "resume", 2, "8D", "Plan Pause/Resume Routing",
+             in_conversation=True,
+             setup={"active_plan_running": True},
+             expect_handled=True, expect_intent="task_plan_resume",
+             expect_source="planner",
+             notes="'resume' with active plan → resumed"),
+
+    # "wait" with active plan → pause
+    TestCase("8D-R03", "wait", 2, "8D", "Plan Pause/Resume Routing",
+             in_conversation=True,
+             setup={"active_plan_running": True},
+             expect_handled=True, expect_intent="task_plan_pause",
+             expect_source="planner",
+             notes="'wait' with active plan → paused"),
 ]
 
 # ---------------------------------------------------------------------------

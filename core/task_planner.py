@@ -67,9 +67,14 @@ _COMPOUND_PATTERNS = [
 # Skills that require user confirmation before plan execution (arbitrary shell)
 CONFIRMATION_REQUIRED_SKILLS = {"developer_tools"}
 
-# Stop/cancel/skip keywords for voice interrupt detection
+# Stop/cancel/skip/pause keywords for voice interrupt detection
 _INTERRUPT_CANCEL = {"stop", "cancel", "abort", "halt", "nevermind", "never mind"}
 _INTERRUPT_SKIP = {"skip", "next", "skip that"}
+_INTERRUPT_PAUSE = {"wait", "hold", "pause"}
+_INTERRUPT_RESUME = {"continue", "resume", "proceed"}
+
+# Pause timeout: auto-cancel after 2 minutes of inactivity
+_PAUSE_TIMEOUT_SECONDS = 120
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +149,24 @@ JSON format:
 
 
 # ---------------------------------------------------------------------------
+# Step evaluation prompt (Phase 4D)
+# ---------------------------------------------------------------------------
+
+_EVALUATE_PROMPT = """A task plan just executed step {step_id}/{total_steps}.
+
+Step: {description}
+Result (first 500 chars): {result_excerpt}
+
+Original user request: {original_request}
+
+RULES:
+1. If the step produced a useful result, respond: CONTINUE
+2. If the step produced a partial or unexpected result that should modify the next step, respond: ADJUST <brief instruction for next step>
+3. If the step completely failed or the result makes continuing pointless, respond: STOP <brief reason>
+4. Respond with ONLY one of: CONTINUE, ADJUST <text>, or STOP <text>"""
+
+
+# ---------------------------------------------------------------------------
 # TaskPlanner
 # ---------------------------------------------------------------------------
 
@@ -156,17 +179,20 @@ class TaskPlanner:
                  self_awareness,
                  conversation=None,
                  config=None,
-                 event_queue=None):
+                 event_queue=None,
+                 context_window=None):
         self._llm = llm
         self._skill_manager = skill_manager
         self._self_awareness = self_awareness
         self._conversation = conversation
         self._config = config
         self._event_queue = event_queue  # For voice interrupt detection
+        self._context_window = context_window
 
         self.active_plan: Optional[TaskPlan] = None
         self._cancel_requested = False
         self._skip_requested = False
+        self._paused = False
         self._pending_plan_confirmation: Optional[TaskPlan] = None
 
     # ------------------------------------------------------------------
@@ -183,6 +209,11 @@ class TaskPlanner:
     def has_pending_confirmation(self) -> bool:
         """True if a plan is waiting for user yes/no confirmation."""
         return self._pending_plan_confirmation is not None
+
+    @property
+    def is_paused(self) -> bool:
+        """True if the plan is currently paused."""
+        return self._paused
 
     # ------------------------------------------------------------------
     # Destructive step detection + confirmation
@@ -249,6 +280,22 @@ class TaskPlanner:
             return None
 
         prompt = _PLAN_PROMPT.format(manifest=manifest, command=command)
+
+        # Error-aware planning: warn about unreliable skills
+        if self._self_awareness:
+            unreliable = self._self_awareness.get_unreliable_skills()
+            if unreliable:
+                warning = ("WARNING: These skills have been unreliable recently: "
+                           + ", ".join(unreliable)
+                           + ". Consider alternatives or warn the user.")
+                prompt += f"\n\n{warning}"
+
+        # Context-budget-aware planning
+        if self._context_window and self._context_window.enabled:
+            usage = self._context_window.get_usage_percentage()
+            if usage > 80.0:
+                prompt += (f"\n\nNOTE: Context memory is {usage:.0f}% full. "
+                           "Prioritize concise responses in each step.")
 
         try:
             response = self._llm.chat(
@@ -321,9 +368,9 @@ class TaskPlanner:
         """Non-blocking drain of event_queue between steps.
 
         Looks for TRANSCRIPTION_READY/COMMAND_DETECTED events matching
-        stop/cancel/skip keywords. Re-queues non-interrupt events.
+        stop/cancel/skip/pause keywords. Re-queues non-interrupt events.
 
-        Returns: "cancel", "skip", or None.
+        Returns: "cancel", "skip", "pause", or None.
         """
         if not self._event_queue:
             return None
@@ -358,6 +405,10 @@ class TaskPlanner:
                     result = "skip"
                     logger.info(f"Voice interrupt detected: skip ('{text}')")
                     break
+                elif words & _INTERRUPT_PAUSE:
+                    result = "pause"
+                    logger.info(f"Voice interrupt detected: pause ('{text}')")
+                    break
                 else:
                     # Not an interrupt — re-queue for later processing
                     requeue.append(event)
@@ -370,6 +421,126 @@ class TaskPlanner:
 
         return result
 
+    def _wait_for_resume(self) -> str:
+        """Block until resume keyword, cancel keyword, or timeout.
+
+        Called when a "pause" interrupt is detected during plan execution.
+        Polls the event_queue with 1s intervals. Accumulates non-matching
+        events and re-queues them on exit.
+
+        Returns: "resume", "cancel", or "timeout"
+        """
+        if not self._event_queue:
+            return "resume"  # Console mode: can't block on events
+
+        self._paused = True
+        deadline = time.time() + _PAUSE_TIMEOUT_SECONDS
+        accumulated = []
+
+        try:
+            while time.time() < deadline:
+                remaining = deadline - time.time()
+                timeout = min(remaining, 1.0)
+
+                try:
+                    event = self._event_queue.get(timeout=timeout)
+                except queue.Empty:
+                    # Also check for programmatic cancel during pause
+                    if self._cancel_requested:
+                        return "cancel"
+                    continue
+
+                # Extract text from event
+                text = None
+                if hasattr(event, 'type'):
+                    from core.events import EventType
+                    if event.type in (EventType.TRANSCRIPTION_READY,
+                                      EventType.COMMAND_DETECTED):
+                        data = event.data
+                        if isinstance(data, dict):
+                            text = data.get("text", "").lower().strip()
+                        elif isinstance(data, str):
+                            text = data.lower().strip()
+
+                if text:
+                    words = set(re.findall(r'\b\w+\b', text))
+                    if words & _INTERRUPT_CANCEL:
+                        return "cancel"
+                    if words & _INTERRUPT_RESUME or "go ahead" in text:
+                        return "resume"
+                    # Non-matching text — accumulate for re-queue
+                    accumulated.append(event)
+                else:
+                    accumulated.append(event)
+
+            # Timeout reached
+            return "timeout"
+        finally:
+            self._paused = False
+            # Re-queue accumulated events
+            for event in accumulated:
+                self._event_queue.put(event)
+
+    # ------------------------------------------------------------------
+    # Step evaluation (Phase 4D)
+    # ------------------------------------------------------------------
+
+    def _evaluate_step_result(self, step: PlanStep, plan: TaskPlan) -> tuple[str, str]:
+        """LLM-based evaluation of step result quality.
+
+        Returns:
+            (decision, reason) where decision is "continue"|"adjust"|"stop"
+            and reason is the LLM's explanation (empty for "continue").
+
+        Fast-paths skip the LLM call for clearly empty/error results
+        and for the last step (no continuation decision needed).
+        Falls back to "continue" on LLM failure.
+        """
+        result_text = (step.result or "").strip()
+
+        # Fast path: clearly empty or error result — no LLM call needed
+        if not result_text or result_text.lower().startswith("error:"):
+            return ("stop", "empty or error result")
+
+        # Fast path: last step — no continuation decision needed
+        if step.step_id >= len(plan.steps):
+            return ("continue", "")
+
+        if not self._llm:
+            return ("continue", "")
+
+        prompt = _EVALUATE_PROMPT.format(
+            step_id=step.step_id,
+            total_steps=len(plan.steps),
+            description=step.description,
+            result_excerpt=result_text[:500],
+            original_request=plan.original_request,
+        )
+
+        try:
+            response = self._llm.chat(
+                user_message=prompt,
+                max_tokens=100,
+            )
+            if not response:
+                return ("continue", "")
+
+            response = response.strip()
+            upper = response.upper()
+
+            if upper.startswith("STOP"):
+                reason = response[4:].strip().lstrip(":").strip()
+                return ("stop", reason or "LLM decided to stop")
+            elif upper.startswith("ADJUST"):
+                instruction = response[6:].strip().lstrip(":").strip()
+                return ("adjust", instruction)
+            else:
+                # CONTINUE or unrecognized → continue
+                return ("continue", "")
+        except Exception as e:
+            logger.warning(f"Step evaluation LLM call failed: {e} — defaulting to continue")
+            return ("continue", "")
+
     # ------------------------------------------------------------------
     # Plan execution
     # ------------------------------------------------------------------
@@ -378,12 +549,14 @@ class TaskPlanner:
                      progress_callback: Optional[Callable[[str], None]] = None) -> str:
         """Execute a plan step-by-step via direct skill handler calls.
 
-        Phase 3 behavior:
+        Phase 3+4 behavior:
             - On step failure (empty result or exception): break loop,
               mark remaining steps SKIPPED (all sequential steps are dependent).
-            - Between steps: check for voice interrupts (cancel/skip).
+            - Between steps: check for voice interrupts (cancel/skip/pause).
             - On cancel: mark remaining SKIPPED, set plan CANCELLED.
             - On skip: mark current step SKIPPED, continue to next.
+            - After each successful step: LLM evaluates continue/adjust/stop.
+            - On LLM "stop": break loop. On "adjust": modify next step input.
 
         Args:
             plan: The plan to execute.
@@ -419,6 +592,21 @@ class TaskPlanner:
                 step.status = StepStatus.SKIPPED
                 logger.info(f"Step {step.step_id} skipped by voice")
                 continue
+            elif interrupt == "pause":
+                logger.info(f"Plan paused before step {step.step_id}")
+                if progress_callback:
+                    progress_callback("Paused. Say 'continue' to resume or 'cancel' to stop.")
+                resume_result = self._wait_for_resume()
+                if resume_result in ("cancel", "timeout"):
+                    self._mark_remaining_skipped(plan, step.step_id)
+                    plan.status = PlanStatus.CANCELLED
+                    if resume_result == "timeout":
+                        logger.info("Plan auto-cancelled after pause timeout")
+                    else:
+                        logger.info("Plan cancelled during pause")
+                    break
+                # resume_result == "resume" → continue with this step
+                logger.info("Plan resumed")
 
             step.status = StepStatus.RUNNING
             logger.info(f"Executing step {step.step_id}/{len(plan.steps)}: {step.description}")
@@ -435,6 +623,20 @@ class TaskPlanner:
                     step.status = StepStatus.COMPLETED
                     results.append(f"[{step.description}]: {result}")
                     prior_context = result
+
+                    # LLM decision evaluation (Phase 4D)
+                    decision, reason = self._evaluate_step_result(step, plan)
+                    if decision == "stop":
+                        logger.info(f"LLM evaluation: stop after step {step.step_id} — {reason}")
+                        self._mark_remaining_skipped(plan, step.step_id + 1)
+                        break
+                    elif decision == "adjust" and reason:
+                        # Modify next step's input with adjustment instruction
+                        next_steps = [s for s in plan.steps
+                                      if s.step_id == step.step_id + 1]
+                        if next_steps:
+                            next_steps[0].input_text += f"\n\nAdjustment: {reason}"
+                            logger.info(f"LLM evaluation: adjust next step — {reason}")
                 else:
                     # Failure: break loop, remaining steps depend on this one
                     step.status = StepStatus.FAILED
