@@ -221,12 +221,22 @@ def init_tier2_components():
         from core.web_research import WebResearcher
         web_researcher = WebResearcher(config)
 
+    # Task planner (no LLM needed — tests don't call generate_plan)
+    from core.self_awareness import SelfAwareness
+    from core.task_planner import TaskPlanner
+    self_awareness = SelfAwareness(skill_manager=skill_manager, config=config)
+    task_planner = TaskPlanner(
+        llm=None, skill_manager=skill_manager,
+        self_awareness=self_awareness, event_queue=None,
+    )
+
     conv_state = ConversationState()
     router = ConversationRouter(
         skill_manager=skill_manager, conversation=conversation, llm=llm,
         reminder_manager=reminder_manager, memory_manager=memory_manager,
         news_manager=news_manager, context_window=context_window,
         conv_state=conv_state, config=config, web_researcher=web_researcher,
+        task_planner=task_planner,
     )
 
     elapsed = time.perf_counter() - t0
@@ -240,6 +250,7 @@ def init_tier2_components():
         "memory_manager": memory_manager,
         "reminder_manager": reminder_manager,
         "news_manager": news_manager,
+        "task_planner": task_planner,
     }
 
 
@@ -284,6 +295,15 @@ def setup_state(components, case):
         if hasattr(skill_obj, '_pending_confirmation'):
             skill_obj._pending_confirmation = None
 
+    # Reset task planner state
+    task_planner = components.get("task_planner")
+    if task_planner:
+        task_planner._pending_plan_confirmation = None
+        task_planner.active_plan = None
+        task_planner._cancel_requested = False
+        task_planner._skip_requested = False
+    conv_state.pending_plan_confirmation = False
+
     # Apply case-specific setup
     setup = case.setup
     if not setup:
@@ -314,6 +334,16 @@ def setup_state(components, case):
         fe = skill_manager.skills.get("file_editor")
         if fe:
             fe._pending_confirmation = setup["pending_confirmation"]
+
+    if setup.get("pending_plan_confirmation"):
+        tp = components.get("task_planner")
+        if tp:
+            from core.task_planner import TaskPlan, PlanStep
+            plan = TaskPlan(original_request="test destructive", steps=[
+                PlanStep(step_id=1, description="run shell", skill_name="developer_tools", input_text="ls"),
+            ])
+            tp.set_pending_confirmation(plan)
+            conv_state.pending_plan_confirmation = True
 
 
 # ===========================================================================
@@ -688,6 +718,104 @@ def run_task_planner_test(case):
         if plan is not None:
             return False, f"expected None without LLM, got plan with {len(plan.steps)} steps"
         return True, "generate_plan returns None without LLM (graceful)"
+
+    # ------------------------------------------------------------------
+    # Phase 8C: Guardrails — destructive, confirmation, cancel, skip
+    # ------------------------------------------------------------------
+
+    elif test_type == "has_destructive_true":
+        from core.task_planner import TaskPlan, PlanStep
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="check weather", skill_name="weather", input_text="weather"),
+            PlanStep(step_id=2, description="run shell cmd", skill_name="developer_tools", input_text="ls"),
+        ])
+        if not tp.has_destructive_steps(plan):
+            return False, "expected has_destructive_steps=True for developer_tools step"
+        return True, "has_destructive_steps=True when developer_tools present"
+
+    elif test_type == "has_destructive_false":
+        from core.task_planner import TaskPlan, PlanStep
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="check weather", skill_name="weather", input_text="weather"),
+            PlanStep(step_id=2, description="get time", skill_name="time_info", input_text="time"),
+        ])
+        if tp.has_destructive_steps(plan):
+            return False, "expected has_destructive_steps=False for safe skills"
+        return True, "has_destructive_steps=False for safe-only plan"
+
+    elif test_type == "pending_confirmation_lifecycle":
+        from core.task_planner import TaskPlan, PlanStep
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="run cmd", skill_name="developer_tools", input_text="ls"),
+        ])
+        # Initially no pending confirmation
+        if tp.has_pending_confirmation:
+            return False, "has_pending_confirmation should be False initially"
+        # Set pending
+        tp.set_pending_confirmation(plan)
+        if not tp.has_pending_confirmation:
+            return False, "has_pending_confirmation should be True after set"
+        # Resolve with yes
+        result = tp.resolve_confirmation(True)
+        if result is None:
+            return False, "resolve_confirmation(True) should return plan"
+        if tp.has_pending_confirmation:
+            return False, "has_pending_confirmation should be False after resolve"
+        return True, "pending confirmation lifecycle: set→confirm→cleared"
+
+    elif test_type == "pending_confirmation_deny":
+        from core.task_planner import TaskPlan, PlanStep, PlanStatus
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="run cmd", skill_name="developer_tools", input_text="ls"),
+        ])
+        tp.set_pending_confirmation(plan)
+        result = tp.resolve_confirmation(False)
+        if result is not None:
+            return False, f"resolve_confirmation(False) should return None, got {result}"
+        if plan.status != PlanStatus.CANCELLED:
+            return False, f"denied plan status should be CANCELLED, got {plan.status}"
+        if tp.has_pending_confirmation:
+            return False, "has_pending_confirmation should be False after deny"
+        return True, "pending confirmation deny: plan CANCELLED, cleared"
+
+    elif test_type == "skip_sets_flag":
+        tp._skip_requested = False
+        tp.skip_current()
+        if not tp._skip_requested:
+            return False, "skip_current() should set _skip_requested=True"
+        tp._skip_requested = False  # cleanup
+        return True, "skip_current() sets _skip_requested flag"
+
+    elif test_type == "cancel_clears_pending":
+        from core.task_planner import TaskPlan, PlanStep
+        plan = TaskPlan(original_request="test", steps=[
+            PlanStep(step_id=1, description="run cmd", skill_name="developer_tools", input_text="ls"),
+        ])
+        tp.set_pending_confirmation(plan)
+        tp.cancel()
+        if tp.has_pending_confirmation:
+            return False, "cancel() should clear pending confirmation"
+        return True, "cancel() clears pending confirmation"
+
+    elif test_type == "persona_task_cancelled":
+        from core import persona
+        msg = persona.task_cancelled()
+        if not msg:
+            return False, "task_cancelled returned empty"
+        return True, f"task_cancelled: {msg!r}"
+
+    elif test_type == "persona_task_partial":
+        from core import persona
+        msg = persona.task_partial(2, 4)
+        if "2" not in msg or "4" not in msg:
+            return False, f"task_partial missing counts: {msg!r}"
+        return True, f"task_partial: {msg!r}"
+
+    elif test_type == "confirmation_required_skills":
+        from core.task_planner import CONFIRMATION_REQUIRED_SKILLS
+        if "developer_tools" not in CONFIRMATION_REQUIRED_SKILLS:
+            return False, f"developer_tools not in CONFIRMATION_REQUIRED_SKILLS: {CONFIRMATION_REQUIRED_SKILLS}"
+        return True, f"CONFIRMATION_REQUIRED_SKILLS={CONFIRMATION_REQUIRED_SKILLS}"
 
     return False, f"unknown task_planner test type: {test_type}"
 
@@ -1244,6 +1372,80 @@ TESTS += [
     TestCase("8B-19", "research AMD and create a presentation", 1, "8B", "Task Planner",
              expect_task_planner="generate_plan_no_llm",
              notes="generate_plan returns None without LLM (graceful)"),
+
+    # --- Phase 8C: Guardrails (destructive, confirmation, cancel, skip) ---
+
+    # Destructive step detection
+    TestCase("8C-01", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="has_destructive_true",
+             notes="Plan with developer_tools step → destructive=True"),
+    TestCase("8C-02", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="has_destructive_false",
+             notes="Plan with only safe skills → destructive=False"),
+
+    # Confirmation lifecycle
+    TestCase("8C-03", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="pending_confirmation_lifecycle",
+             notes="set→confirm→cleared lifecycle"),
+    TestCase("8C-04", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="pending_confirmation_deny",
+             notes="Deny sets plan CANCELLED, clears pending"),
+
+    # Skip / cancel flags
+    TestCase("8C-05", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="skip_sets_flag",
+             notes="skip_current() sets _skip_requested flag"),
+    TestCase("8C-06", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="cancel_clears_pending",
+             notes="cancel() clears pending confirmation"),
+
+    # Persona pools for Phase 3
+    TestCase("8C-07", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="persona_task_cancelled",
+             notes="task_cancelled returns non-empty"),
+    TestCase("8C-08", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="persona_task_partial",
+             notes="task_partial includes completed/total counts"),
+
+    # Constants
+    TestCase("8C-09", "", 1, "8C", "Task Planner Guardrails",
+             expect_task_planner="confirmation_required_skills",
+             notes="developer_tools in CONFIRMATION_REQUIRED_SKILLS"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 2: Phase 8C — Plan Control Routing (P1.5)
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    # Pending confirmation: "yes" → confirm → task_plan intent
+    TestCase("8C-R01", "yes", 2, "8C", "Plan Control Routing",
+             in_conversation=True,
+             setup={"pending_plan_confirmation": True},
+             expect_handled=True, expect_intent="task_plan",
+             expect_source="planner",
+             notes="Affirm pending destructive plan → confirmed"),
+
+    # Pending confirmation: "no" → deny → task_plan_cancelled intent
+    TestCase("8C-R02", "no", 2, "8C", "Plan Control Routing",
+             in_conversation=True,
+             setup={"pending_plan_confirmation": True},
+             expect_handled=True, expect_intent="task_plan_cancelled",
+             expect_source="planner",
+             notes="Deny pending destructive plan → cancelled"),
+
+    # Pending confirmation: unrelated command → falls through (not handled by P1.5)
+    TestCase("8C-R03", "what time is it", 2, "8C", "Plan Control Routing",
+             in_conversation=True,
+             setup={"pending_plan_confirmation": True},
+             expect_handled=True, expect_skill="time_info",
+             notes="Unrelated cmd during pending confirmation → falls through to skills"),
+
+    # No pending confirmation, no active plan: "stop" falls through P1.5
+    TestCase("8C-R04", "stop", 2, "8C", "Plan Control Routing",
+             in_conversation=True,
+             expect_handled=False,
+             notes="'stop' with no plan context → falls through P1.5, unhandled bare word"),
 ]
 
 # ---------------------------------------------------------------------------

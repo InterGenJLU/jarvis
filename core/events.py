@@ -38,6 +38,10 @@ class EventType(Enum):
     REMINDER_FIRE = auto()              # A reminder is due (data: reminder dict)
     NEWS_ANNOUNCEMENT = auto()          # Urgent news to announce
 
+    # Task planner
+    PLAN_STEP_COMPLETE = auto()         # A plan step finished (data: step dict)
+    PLAN_INTERRUPTED = auto()           # Plan was interrupted (data: reason str)
+
     # System
     SHUTDOWN = auto()                   # Graceful shutdown requested
     ERROR = auto()                      # Error propagation (data: dict with source, error)

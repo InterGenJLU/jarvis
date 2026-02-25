@@ -38,6 +38,7 @@ class ConversationState:
 
     # --- Task planner ---
     active_plan: Optional[dict] = None   # Active multi-step plan (set by task planner)
+    pending_plan_confirmation: bool = False  # Waiting for yes/no on destructive plan
 
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
@@ -77,6 +78,7 @@ class ConversationState:
         self.research_results = None
         self.research_exchange = None
         self.active_plan = None
+        self.pending_plan_confirmation = False
         self.last_intent = ""
         self.last_response_type = ""
         self.last_response_text = ""

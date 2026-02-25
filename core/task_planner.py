@@ -1,7 +1,7 @@
 """
 Task Planner — decompose compound requests into multi-step skill chains.
 
-Phase 2 of the Autonomous Task Planner plan.
+Phase 2-3 of the Autonomous Task Planner plan.
 
 Design:
     - Pre-P4 whitelist gate detects compound requests (~microseconds, no LLM call)
@@ -9,10 +9,12 @@ Design:
     - Planner owns the execution loop; frontends provide progress_callback only
     - Steps execute sequentially via skill_manager.execute_intent() (direct P4)
     - Prior step results are injected as context for subsequent steps
+    - Phase 3: Destructive step confirmation, failure-breaks, voice interrupts
 """
 
 import json
 import logging
+import queue
 import re
 import time
 from dataclasses import dataclass, field
@@ -60,6 +62,14 @@ _COMPOUND_PATTERNS = [
     else re.compile(re.escape(signal), re.IGNORECASE)
     for signal in COMPOUND_SIGNALS
 ]
+
+
+# Skills that require user confirmation before plan execution (arbitrary shell)
+CONFIRMATION_REQUIRED_SKILLS = {"developer_tools"}
+
+# Stop/cancel/skip keywords for voice interrupt detection
+_INTERRUPT_CANCEL = {"stop", "cancel", "abort", "halt", "nevermind", "never mind"}
+_INTERRUPT_SKIP = {"skip", "next", "skip that"}
 
 
 # ---------------------------------------------------------------------------
@@ -145,15 +155,19 @@ class TaskPlanner:
                  skill_manager,
                  self_awareness,
                  conversation=None,
-                 config=None):
+                 config=None,
+                 event_queue=None):
         self._llm = llm
         self._skill_manager = skill_manager
         self._self_awareness = self_awareness
         self._conversation = conversation
         self._config = config
+        self._event_queue = event_queue  # For voice interrupt detection
 
         self.active_plan: Optional[TaskPlan] = None
         self._cancel_requested = False
+        self._skip_requested = False
+        self._pending_plan_confirmation: Optional[TaskPlan] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -164,6 +178,46 @@ class TaskPlanner:
         """True if a plan is currently executing."""
         return (self.active_plan is not None
                 and self.active_plan.status == PlanStatus.RUNNING)
+
+    @property
+    def has_pending_confirmation(self) -> bool:
+        """True if a plan is waiting for user yes/no confirmation."""
+        return self._pending_plan_confirmation is not None
+
+    # ------------------------------------------------------------------
+    # Destructive step detection + confirmation
+    # ------------------------------------------------------------------
+
+    def has_destructive_steps(self, plan: TaskPlan) -> bool:
+        """Check if any step targets a skill requiring confirmation."""
+        return any(
+            step.skill_name in CONFIRMATION_REQUIRED_SKILLS
+            for step in plan.steps
+        )
+
+    def set_pending_confirmation(self, plan: TaskPlan):
+        """Store a plan awaiting user yes/no."""
+        self._pending_plan_confirmation = plan
+        logger.info(f"Plan pending confirmation: {len(plan.steps)} steps")
+
+    def resolve_confirmation(self, confirmed: bool) -> Optional[TaskPlan]:
+        """Resolve pending confirmation. Returns plan if confirmed, None if denied."""
+        plan = self._pending_plan_confirmation
+        self._pending_plan_confirmation = None
+
+        if not plan:
+            return None
+
+        if confirmed:
+            logger.info("Plan confirmed by user")
+            return plan
+        else:
+            plan.status = PlanStatus.CANCELLED
+            for step in plan.steps:
+                if step.status == StepStatus.PENDING:
+                    step.status = StepStatus.SKIPPED
+            logger.info("Plan denied by user — cancelled")
+            return None
 
     # ------------------------------------------------------------------
     # Compound detection (microseconds, no LLM call)
@@ -260,12 +314,76 @@ class TaskPlanner:
         return plan
 
     # ------------------------------------------------------------------
+    # Voice interrupt detection
+    # ------------------------------------------------------------------
+
+    def _check_for_interrupt(self) -> Optional[str]:
+        """Non-blocking drain of event_queue between steps.
+
+        Looks for TRANSCRIPTION_READY/COMMAND_DETECTED events matching
+        stop/cancel/skip keywords. Re-queues non-interrupt events.
+
+        Returns: "cancel", "skip", or None.
+        """
+        if not self._event_queue:
+            return None
+
+        requeue = []
+        result = None
+
+        while True:
+            try:
+                event = self._event_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            # Extract text from event
+            text = None
+            if hasattr(event, 'type'):
+                from core.events import EventType
+                if event.type in (EventType.TRANSCRIPTION_READY, EventType.COMMAND_DETECTED):
+                    data = event.data
+                    if isinstance(data, dict):
+                        text = data.get("text", "").lower().strip()
+                    elif isinstance(data, str):
+                        text = data.lower().strip()
+
+            if text:
+                words = set(re.findall(r'\b\w+\b', text))
+                if words & _INTERRUPT_CANCEL:
+                    result = "cancel"
+                    logger.info(f"Voice interrupt detected: cancel ('{text}')")
+                    break
+                elif words & _INTERRUPT_SKIP:
+                    result = "skip"
+                    logger.info(f"Voice interrupt detected: skip ('{text}')")
+                    break
+                else:
+                    # Not an interrupt — re-queue for later processing
+                    requeue.append(event)
+            else:
+                requeue.append(event)
+
+        # Re-queue non-interrupt events
+        for event in requeue:
+            self._event_queue.put(event)
+
+        return result
+
+    # ------------------------------------------------------------------
     # Plan execution
     # ------------------------------------------------------------------
 
     def execute_plan(self, plan: TaskPlan, *,
                      progress_callback: Optional[Callable[[str], None]] = None) -> str:
         """Execute a plan step-by-step via direct skill handler calls.
+
+        Phase 3 behavior:
+            - On step failure (empty result or exception): break loop,
+              mark remaining steps SKIPPED (all sequential steps are dependent).
+            - Between steps: check for voice interrupts (cancel/skip).
+            - On cancel: mark remaining SKIPPED, set plan CANCELLED.
+            - On skip: mark current step SKIPPED, continue to next.
 
         Args:
             plan: The plan to execute.
@@ -276,18 +394,31 @@ class TaskPlanner:
         """
         self.active_plan = plan
         self._cancel_requested = False
+        self._skip_requested = False
         plan.status = PlanStatus.RUNNING
 
         results = []
         prior_context = ""
 
         for step in plan.steps:
-            # Check for cancellation
+            # Check for programmatic cancellation (from cancel() method)
             if self._cancel_requested:
-                step.status = StepStatus.SKIPPED
+                self._mark_remaining_skipped(plan, step.step_id)
                 plan.status = PlanStatus.CANCELLED
                 logger.info(f"Plan cancelled at step {step.step_id}")
                 break
+
+            # Check for voice interrupt between steps
+            interrupt = self._check_for_interrupt()
+            if interrupt == "cancel":
+                self._mark_remaining_skipped(plan, step.step_id)
+                plan.status = PlanStatus.CANCELLED
+                logger.info(f"Plan cancelled by voice at step {step.step_id}")
+                break
+            elif interrupt == "skip":
+                step.status = StepStatus.SKIPPED
+                logger.info(f"Step {step.step_id} skipped by voice")
+                continue
 
             step.status = StepStatus.RUNNING
             logger.info(f"Executing step {step.step_id}/{len(plan.steps)}: {step.description}")
@@ -305,13 +436,17 @@ class TaskPlanner:
                     results.append(f"[{step.description}]: {result}")
                     prior_context = result
                 else:
+                    # Failure: break loop, remaining steps depend on this one
                     step.status = StepStatus.FAILED
-                    logger.warning(f"Step {step.step_id} returned empty result")
-                    # Continue to next step — it may not depend on this one
+                    logger.warning(f"Step {step.step_id} returned empty result — breaking plan")
+                    self._mark_remaining_skipped(plan, step.step_id + 1)
+                    break
             except Exception as e:
                 step.status = StepStatus.FAILED
                 step.result = f"Error: {e}"
-                logger.error(f"Step {step.step_id} failed: {e}")
+                logger.error(f"Step {step.step_id} failed: {e} — breaking plan")
+                self._mark_remaining_skipped(plan, step.step_id + 1)
+                break
 
         # Set final plan status
         if plan.status != PlanStatus.CANCELLED:
@@ -322,6 +457,12 @@ class TaskPlanner:
         final = self._synthesize_results(plan, results)
         self.active_plan = None
         return final
+
+    def _mark_remaining_skipped(self, plan: TaskPlan, from_step_id: int):
+        """Mark all steps from from_step_id onward as SKIPPED."""
+        for step in plan.steps:
+            if step.step_id >= from_step_id and step.status == StepStatus.PENDING:
+                step.status = StepStatus.SKIPPED
 
     def _execute_step(self, step: PlanStep, prior_context: str) -> Optional[str]:
         """Execute a single plan step.
@@ -383,18 +524,27 @@ class TaskPlanner:
             return self._llm_synthesis(f"Based on your knowledge, answer: {input_text}")
 
     def _synthesize_results(self, plan: TaskPlan, results: list[str]) -> str:
-        """Combine step results into a final response."""
+        """Combine step results into a final response.
+
+        Handles: full completion, partial completion, cancellation, and failure.
+        """
+        completed = [s for s in plan.steps if s.status == StepStatus.COMPLETED]
+        failed = [s for s in plan.steps if s.status == StepStatus.FAILED]
+        skipped = [s for s in plan.steps if s.status == StepStatus.SKIPPED]
+
+        # Cancelled with nothing completed — no synthesis needed
+        if plan.status == PlanStatus.CANCELLED and not completed:
+            return ""  # Caller will use persona.task_cancelled()
+
+        # Nothing completed at all (failure, not cancellation)
         if not results:
             return "I wasn't able to complete any of the steps for that request."
 
-        completed = [s for s in plan.steps if s.status == StepStatus.COMPLETED]
-        failed = [s for s in plan.steps if s.status == StepStatus.FAILED]
-
         # Single completed step — return its result directly
-        if len(completed) == 1 and not failed:
+        if len(completed) == 1 and not failed and not skipped:
             return completed[0].result
 
-        # Multiple steps — ask LLM to synthesize
+        # Multiple steps or partial — ask LLM to synthesize
         combined = "\n\n".join(results)
         synthesis_prompt = (
             f"The user asked: \"{plan.original_request}\"\n\n"
@@ -403,9 +553,16 @@ class TaskPlanner:
             f"Be concise and conversational."
         )
 
-        if failed:
-            partial_note = f"\nNote: {len(failed)} step(s) failed. Report what succeeded."
-            synthesis_prompt += partial_note
+        if plan.status == PlanStatus.CANCELLED and completed:
+            synthesis_prompt += (
+                f"\nNote: the plan was cancelled after {len(completed)} of "
+                f"{len(plan.steps)} steps. Report what was completed."
+            )
+        elif failed:
+            synthesis_prompt += (
+                f"\nNote: {len(failed)} step(s) failed and {len(skipped)} "
+                f"subsequent step(s) were skipped. Report what succeeded."
+            )
 
         try:
             return self._llm.chat(user_message=synthesis_prompt, max_tokens=400)
@@ -422,9 +579,13 @@ class TaskPlanner:
         if self.active_plan and self.active_plan.status == PlanStatus.RUNNING:
             self._cancel_requested = True
             logger.info("Plan cancellation requested")
+        # Also cancel pending confirmation
+        if self._pending_plan_confirmation:
+            self.resolve_confirmation(False)
 
     def skip_current(self):
         """Skip the currently running step."""
+        self._skip_requested = True
         if not self.active_plan:
             return
         for step in self.active_plan.steps:

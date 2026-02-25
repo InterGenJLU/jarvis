@@ -122,6 +122,7 @@ class ConversationRouter:
         Priority order:
             greeting  — wake word only / empty command
             P1        — Rundown acceptance/deferral
+            P1.5      — Plan control (confirmation or active plan interrupt)
             P2        — Reminder acknowledgment
             P2.5      — Memory forget confirmation/cancellation
             P2.7      — Dismissal detection (conversation window only)
@@ -150,6 +151,11 @@ class ConversationRouter:
 
         # --- Priority 2: Reminder acknowledgment ---
         result = self._handle_reminder_ack()
+        if result:
+            return result
+
+        # --- Priority 1.5: Plan control (confirmation or active plan interrupt) ---
+        result = self._handle_plan_control(command)
         if result:
             return result
 
@@ -493,11 +499,79 @@ class ConversationRouter:
             source="canned", handled=True,
         )
 
+    def _handle_plan_control(self, command: str) -> RouteResult | None:
+        """P1.5: Plan control — pending confirmation or active plan interrupt.
+
+        Two sub-modes:
+        1. Pending confirmation: match yes/no → resolve → trigger execution or cancel.
+        2. Active plan: match stop/cancel/skip → call cancel()/skip_current().
+        """
+        tp = self.task_planner
+        if not tp:
+            return None
+
+        cmd_lower = command.lower().strip()
+        words = set(re.findall(r'\b\w+\b', cmd_lower))
+
+        # Sub-mode 1: pending destructive plan confirmation
+        if tp.has_pending_confirmation:
+            affirm = {"yes", "yeah", "yep", "go ahead", "proceed", "sure", "do it", "confirm"}
+            deny = {"no", "nope", "nah", "cancel", "nevermind", "stop", "don't"}
+
+            if words & affirm:
+                plan = tp.resolve_confirmation(True)
+                if plan:
+                    tp.active_plan = plan
+                    logger.info("Plan confirmed — routing to execution")
+                    return RouteResult(
+                        text=persona.task_announce(len(plan.steps)),
+                        intent="task_plan",
+                        source="planner",
+                        handled=True,
+                        open_window=30.0,
+                    )
+            if words & deny:
+                tp.resolve_confirmation(False)
+                logger.info("Plan denied by user")
+                return RouteResult(
+                    text=persona.task_cancelled(),
+                    intent="task_plan_cancelled",
+                    source="planner",
+                    handled=True,
+                )
+            # Unrelated command during pending confirmation — fall through
+            return None
+
+        # Sub-mode 2: active plan — stop/cancel/skip from router (console path)
+        if tp.is_active:
+            from core.task_planner import _INTERRUPT_CANCEL, _INTERRUPT_SKIP
+            if words & _INTERRUPT_CANCEL:
+                tp.cancel()
+                logger.info("Active plan cancelled via router")
+                return RouteResult(
+                    text=persona.task_cancelled(),
+                    intent="task_plan_cancel",
+                    source="planner",
+                    handled=True,
+                )
+            if words & _INTERRUPT_SKIP:
+                tp.skip_current()
+                logger.info("Active plan step skipped via router")
+                return RouteResult(
+                    text="Skipping this step.",
+                    intent="task_plan_skip",
+                    source="planner",
+                    handled=True,
+                )
+
+        return None
+
     def _handle_task_planning(self, command: str) -> RouteResult | None:
         """Pre-P4: Multi-step task planning for compound requests.
 
         Whitelist gate detects conjunctive phrases (~microseconds).
         If compound, LLM generates a plan; returns RouteResult with intent="task_plan".
+        If plan has destructive steps, returns confirmation prompt instead.
         If not compound (or LLM says single-step), falls through to P4 as normal.
         """
         tp = self.task_planner
@@ -513,16 +587,33 @@ class ConversationRouter:
             logger.info("Planner returned no plan — falling through to single-skill routing")
             return None
 
-        # Store plan for frontend execution
-        tp.active_plan = plan
         logger.info(f"Plan generated: {len(plan.steps)} steps")
+
+        # Check for destructive steps — require confirmation
+        if tp.has_destructive_steps(plan):
+            from core.task_planner import CONFIRMATION_REQUIRED_SKILLS
+            destructive = [s for s in plan.steps
+                           if s.skill_name in CONFIRMATION_REQUIRED_SKILLS]
+            desc = destructive[0].description if destructive else "a system command"
+            tp.set_pending_confirmation(plan)
+            logger.info(f"Plan requires confirmation (destructive step: {desc})")
+            return RouteResult(
+                text=f"This plan includes running a command on your system: {desc}. Shall I proceed?",
+                intent="task_plan_confirm",
+                source="planner",
+                handled=True,
+                open_window=30.0,
+            )
+
+        # Non-destructive: proceed directly
+        tp.active_plan = plan
 
         return RouteResult(
             text=persona.task_announce(len(plan.steps)),
             intent="task_plan",
             source="planner",
             handled=True,
-            open_window=30.0,  # Keep window open for multi-step execution
+            open_window=30.0,
         )
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:

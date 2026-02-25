@@ -740,13 +740,14 @@ def run_console(config, mode):
         config=config,
     )
 
-    # Task planner (Phase 2 of task planner)
+    # Task planner (Phase 2-3 of task planner)
     task_planner = TaskPlanner(
         llm=llm,
         skill_manager=skill_manager,
         self_awareness=self_awareness,
         conversation=conversation,
         config=config,
+        event_queue=None,  # Console: no voice interrupt queue
     )
 
     # Conversation state + shared router (Phase 2-3 of conversational flow refactor)
@@ -906,10 +907,18 @@ def run_console(config, mode):
                         if mode == "hybrid" and real_tts:
                             real_tts.speak(msg)
 
-                    response = task_planner.execute_plan(
-                        task_planner.active_plan,
-                        progress_callback=_console_progress,
-                    )
+                    try:
+                        response = task_planner.execute_plan(
+                            task_planner.active_plan,
+                            progress_callback=_console_progress,
+                        )
+                    except KeyboardInterrupt:
+                        task_planner.cancel()
+                        response = ""
+                        cancel_msg = persona.task_cancelled()
+                        console.print(f"\n[bold yellow]📋 {cancel_msg}[/bold yellow]")
+                        if mode == "hybrid" and real_tts:
+                            real_tts.speak(cancel_msg)
                     used_llm = True  # Plan execution uses LLM
             else:
                 # LLM fallback (streaming with typewriter output)

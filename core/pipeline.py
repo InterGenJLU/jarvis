@@ -444,13 +444,14 @@ class Coordinator:
             config=config,
         )
 
-        # Task planner (Phase 2 of task planner)
+        # Task planner (Phase 2-3 of task planner)
         self.task_planner = TaskPlanner(
             llm=llm,
             skill_manager=skill_manager,
             self_awareness=self.self_awareness,
             conversation=conversation,
             config=config,
+            event_queue=event_queue,
         )
 
         # Centralized conversation state (Phase 2 of conversational flow refactor)
@@ -852,7 +853,13 @@ class Coordinator:
     # ----- task plan execution -----
 
     def _execute_task_plan(self) -> str:
-        """Execute the active task plan with TTS progress callbacks."""
+        """Execute the active task plan with TTS progress callbacks.
+
+        Phase 3: Resumes listener during plan execution so voice interrupts
+        can be captured. Handles cancellation and partial completion outcomes.
+        """
+        from core.task_planner import PlanStatus
+
         plan = self.task_planner.active_plan
         if not plan:
             return "I'm sorry, the plan was lost before I could execute it."
@@ -863,17 +870,39 @@ class Coordinator:
             print(f"📋 {msg}")
             self._speak_and_wait(msg)
 
+        # Resume listening so voice interrupts ("stop", "cancel") are captured
+        self.listener.resume_listening()
+
         result = self.task_planner.execute_plan(
             plan, progress_callback=progress_callback,
         )
 
-        # Speak completion
-        if result:
+        # Pause listening before speaking outcome
+        self.listener.pause_listening()
+
+        # Speak outcome based on plan status
+        completed_count = sum(
+            1 for s in plan.steps
+            if s.status.value == "completed"
+        )
+        total = len(plan.steps)
+
+        if plan.status == PlanStatus.CANCELLED:
+            if completed_count > 0:
+                # Partial completion — speak partial message + result
+                msg = persona.task_partial(completed_count, total)
+                print(f"📋 {msg}")
+                self._speak_and_wait(msg)
+            else:
+                msg = persona.task_cancelled()
+                print(f"📋 {msg}")
+                self._speak_and_wait(msg)
+        elif result:
             completion = persona.task_complete()
             print(f"📋 {completion}")
             self._speak_and_wait(completion)
 
-        return result or "I wasn't able to complete the requested steps."
+        return result or ""
 
     # ----- streaming LLM -----
 

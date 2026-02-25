@@ -190,13 +190,14 @@ def init_components(config, tts_proxy):
         config=config,
     )
 
-    # Task planner (Phase 2 of task planner)
+    # Task planner (Phase 2-3 of task planner)
     components['task_planner'] = TaskPlanner(
         llm=components['llm'],
         skill_manager=components['skill_manager'],
         self_awareness=components['self_awareness'],
         conversation=conversation,
         config=config,
+        event_queue=None,  # Web: no voice interrupt queue
     )
 
     # Centralized conversation state (Phase 2 of conversational flow refactor)

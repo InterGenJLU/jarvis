@@ -106,6 +106,23 @@ _POOLS = {
         "Finished, {h}.",
     ],
 
+    # Task planner: plan cancelled
+    # {h} = honorific
+    "task_cancelled": [
+        "Understood, {h}. I've stopped the plan.",
+        "Cancelled, {h}.",
+        "Very well, {h}. Plan stopped.",
+        "Of course, {h}. I've halted the plan.",
+    ],
+
+    # Task planner: partial completion
+    # {completed}/{total} = step counts, {h} = honorific
+    "task_partial": [
+        "I managed {completed} of {total} steps, {h}.",
+        "I completed {completed} of {total} steps before stopping, {h}.",
+        "{completed} of {total} steps done, {h}.",
+    ],
+
     # TTS ack cache (no honorific — synthesized at startup)
     # Each entry is (phrase, style_tag).  Style tags:
     #   "neutral"  — generic, used as fallback for any style
@@ -226,6 +243,18 @@ def task_complete() -> str:
     """Announce plan completion."""
     template = random.choice(_POOLS["task_complete"])
     return template.format(h=get_honorific())
+
+
+def task_cancelled() -> str:
+    """Announce plan cancellation."""
+    template = random.choice(_POOLS["task_cancelled"])
+    return template.format(h=get_honorific())
+
+
+def task_partial(completed: int, total: int) -> str:
+    """Announce partial plan completion."""
+    template = random.choice(_POOLS["task_partial"])
+    return template.format(completed=completed, total=total, h=get_honorific())
 
 
 def rundown_defer() -> str:
