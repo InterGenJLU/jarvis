@@ -53,6 +53,7 @@ from core.document_buffer import DocumentBuffer, BINARY_EXTENSIONS
 from core.speech_chunker import SpeechChunker
 from core.metrics_tracker import get_metrics_tracker
 from core.self_awareness import SelfAwareness
+from core.task_planner import TaskPlanner
 
 logger = logging.getLogger("jarvis.web")
 
@@ -189,6 +190,15 @@ def init_components(config, tts_proxy):
         config=config,
     )
 
+    # Task planner (Phase 2 of task planner)
+    components['task_planner'] = TaskPlanner(
+        llm=components['llm'],
+        skill_manager=components['skill_manager'],
+        self_awareness=components['self_awareness'],
+        conversation=conversation,
+        config=config,
+    )
+
     # Centralized conversation state (Phase 2 of conversational flow refactor)
     components['conv_state'] = ConversationState()
 
@@ -205,6 +215,7 @@ def init_components(config, tts_proxy):
         config=config,
         web_researcher=components['web_researcher'],
         self_awareness=components['self_awareness'],
+        task_planner=components['task_planner'],
     )
 
     return components
@@ -259,6 +270,27 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
         skill_handled = True
         used_llm = result.used_llm
         match_info = result.match_info
+
+        # Task plan: send announcement, then execute steps
+        task_planner = components.get('task_planner')
+        if result.intent == "task_plan" and task_planner and task_planner.active_plan:
+            # Send announcement first
+            if ws:
+                await ws.send_json({"type": "stream_token", "token": response + "\n\n"})
+
+            def _web_progress(desc):
+                from core import persona as _persona
+                msg = _persona.task_progress(desc)
+                # Can't await from sync callback — log instead (ws gets final result)
+                logger.info(f"Plan progress: {msg}")
+
+            plan_result = await asyncio.to_thread(
+                task_planner.execute_plan,
+                task_planner.active_plan,
+                progress_callback=_web_progress,
+            )
+            response = plan_result or "I wasn't able to complete the requested steps."
+            used_llm = True
     else:
         # LLM fallback (streaming over WebSocket when ws is available)
         used_llm = True

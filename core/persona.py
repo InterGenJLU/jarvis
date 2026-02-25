@@ -82,6 +82,30 @@ _POOLS = {
         "Let me look into that, {h}, please give me a moment.",
     ],
 
+    # Task planner: plan announcement
+    # {n} = step count, {h} = honorific
+    "task_announce": [
+        "I'll handle that in {n} steps, {h}.",
+        "Let me work through this, {h}. {n} steps.",
+        "On it, {h}. I'll need {n} steps for this.",
+    ],
+
+    # Task planner: progress between steps
+    # {desc} = step description, {h} = honorific
+    "task_progress": [
+        "Moving on — {desc}.",
+        "That's handled. Now {desc}.",
+        "Done. Next up, {desc}.",
+    ],
+
+    # Task planner: plan complete
+    # {h} = honorific
+    "task_complete": [
+        "All done, {h}.",
+        "That's everything, {h}.",
+        "Finished, {h}.",
+    ],
+
     # TTS ack cache (no honorific — synthesized at startup)
     # Each entry is (phrase, style_tag).  Style tags:
     #   "neutral"  — generic, used as fallback for any style
@@ -184,6 +208,24 @@ def system_prompt_with_awareness(manifest: str, state: str = "") -> str:
     if state:
         sections.append(state)
     return "\n\n".join(sections)
+
+
+def task_announce(n: int) -> str:
+    """Announce a multi-step plan with step count."""
+    template = random.choice(_POOLS["task_announce"])
+    return template.format(n=n, h=get_honorific())
+
+
+def task_progress(desc: str) -> str:
+    """Report progress between plan steps."""
+    template = random.choice(_POOLS["task_progress"])
+    return template.format(desc=desc, h=get_honorific())
+
+
+def task_complete() -> str:
+    """Announce plan completion."""
+    template = random.choice(_POOLS["task_complete"])
+    return template.format(h=get_honorific())
 
 
 def rundown_defer() -> str:

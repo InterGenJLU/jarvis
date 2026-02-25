@@ -99,7 +99,8 @@ class ConversationRouter:
                  conv_state=None,
                  config=None,
                  web_researcher=None,
-                 self_awareness=None):
+                 self_awareness=None,
+                 task_planner=None):
         self.skill_manager = skill_manager
         self.conversation = conversation
         self.llm = llm
@@ -111,6 +112,7 @@ class ConversationRouter:
         self.config = config
         self.web_researcher = web_researcher
         self.self_awareness = self_awareness
+        self.task_planner = task_planner
 
     def route(self, command: str, *,
               in_conversation: bool = False,
@@ -127,6 +129,7 @@ class ConversationRouter:
             P3        — Memory operations (forget, transparency, fact, recall)
             P3.5      — Research follow-up (conversation window only)
             P3.7      — News article pull-up
+            Pre-P4    — Multi-step task planning (compound requests)
             P4        — Skill routing (skipped when doc_buffer active)
             P5        — News continuation
             LLM       — Prepare context for streaming (frontend handles delivery)
@@ -186,6 +189,12 @@ class ConversationRouter:
         result = self._handle_news_pullup(command)
         if result:
             return result
+
+        # --- Pre-P4: Multi-step task planning ---
+        if not (doc_buffer and doc_buffer.active):
+            result = self._handle_task_planning(command)
+            if result:
+                return result
 
         # --- Priority 4: Skill routing (skip when doc_buffer active) ---
         if not (doc_buffer and doc_buffer.active):
@@ -482,6 +491,38 @@ class ConversationRouter:
         return RouteResult(
             text=persona.pick("news_pullup"), intent="news_pullup",
             source="canned", handled=True,
+        )
+
+    def _handle_task_planning(self, command: str) -> RouteResult | None:
+        """Pre-P4: Multi-step task planning for compound requests.
+
+        Whitelist gate detects conjunctive phrases (~microseconds).
+        If compound, LLM generates a plan; returns RouteResult with intent="task_plan".
+        If not compound (or LLM says single-step), falls through to P4 as normal.
+        """
+        tp = self.task_planner
+        if not tp:
+            return None
+
+        if not tp.needs_planning(command):
+            return None
+
+        logger.info(f"Compound request detected — generating plan for: {command[:80]}")
+        plan = tp.generate_plan(command)
+        if not plan:
+            logger.info("Planner returned no plan — falling through to single-skill routing")
+            return None
+
+        # Store plan for frontend execution
+        tp.active_plan = plan
+        logger.info(f"Plan generated: {len(plan.steps)} steps")
+
+        return RouteResult(
+            text=persona.task_announce(len(plan.steps)),
+            intent="task_plan",
+            source="planner",
+            handled=True,
+            open_window=30.0,  # Keep window open for multi-step execution
         )
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:

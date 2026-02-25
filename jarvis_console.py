@@ -59,6 +59,7 @@ from core.context_window import get_context_window, estimate_tokens, TOKEN_RATIO
 from core.document_buffer import DocumentBuffer, BINARY_EXTENSIONS
 from core.metrics_tracker import get_metrics_tracker
 from core.self_awareness import SelfAwareness
+from core.task_planner import TaskPlanner
 
 
 class TTSProxy:
@@ -739,6 +740,15 @@ def run_console(config, mode):
         config=config,
     )
 
+    # Task planner (Phase 2 of task planner)
+    task_planner = TaskPlanner(
+        llm=llm,
+        skill_manager=skill_manager,
+        self_awareness=self_awareness,
+        conversation=conversation,
+        config=config,
+    )
+
     # Conversation state + shared router (Phase 2-3 of conversational flow refactor)
     conv_state = ConversationState()
     router = ConversationRouter(
@@ -753,6 +763,7 @@ def run_console(config, mode):
         config=config,
         web_researcher=web_researcher,
         self_awareness=self_awareness,
+        task_planner=task_planner,
     )
 
     # Command history (persists across sessions) + document buffer
@@ -882,6 +893,24 @@ def run_console(config, mode):
                 used_llm = result.used_llm
                 match_info = result.match_info
                 skill_already_spoke = len(tts_proxy.get_pending_announcements()) > 0
+
+                # Task plan: print announcement, then execute steps
+                if result.intent == "task_plan" and task_planner.active_plan:
+                    console.print(f"\n[bold cyan]J.A.R.V.I.S.:[/bold cyan] {response}\n")
+                    if mode == "hybrid" and real_tts:
+                        real_tts.speak(response)
+
+                    def _console_progress(desc):
+                        msg = persona.task_progress(desc)
+                        console.print(f"  [dim]📋 {msg}[/dim]")
+                        if mode == "hybrid" and real_tts:
+                            real_tts.speak(msg)
+
+                    response = task_planner.execute_plan(
+                        task_planner.active_plan,
+                        progress_callback=_console_progress,
+                    )
+                    used_llm = True  # Plan execution uses LLM
             else:
                 # LLM fallback (streaming with typewriter output)
                 used_llm = True

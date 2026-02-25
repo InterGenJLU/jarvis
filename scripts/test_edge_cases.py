@@ -81,6 +81,7 @@ class TestCase:
     expect_normalized: Optional[str] = None   # TTS normalizer output (substring match)
     expect_chunks: Optional[list] = None      # speech chunker output
     expect_self_awareness: Optional[str] = None  # self-awareness test type
+    expect_task_planner: Optional[str] = None    # task planner test type
 
     # LLM expectations (Tier 4)
     llm_system: Optional[str] = None          # system prompt (None = use default JARVIS prompt)
@@ -575,6 +576,123 @@ def run_self_awareness_test(case):
 
 
 # ===========================================================================
+# Tier 1: Task planner test runner
+# ===========================================================================
+
+_tp_components = {}
+
+
+def _get_tp_components():
+    """Build a minimal TaskPlanner instance for testing."""
+    if _tp_components:
+        return _tp_components
+
+    from core.task_planner import TaskPlanner, COMPOUND_SIGNALS, _COMPOUND_PATTERNS
+
+    # Reuse the SA components (which have real skill_manager loaded)
+    sa_comps = _get_sa_components()
+
+    _tp_components['signals'] = COMPOUND_SIGNALS
+    _tp_components['patterns'] = _COMPOUND_PATTERNS
+    _tp_components['sa'] = sa_comps['sa']
+    _tp_components['sm'] = sa_comps['sm']
+
+    # Build TaskPlanner with no LLM (for unit tests that don't need generation)
+    tp = TaskPlanner(
+        llm=None,
+        skill_manager=sa_comps['sm'],
+        self_awareness=sa_comps['sa'],
+    )
+    _tp_components['tp'] = tp
+    return _tp_components
+
+
+def run_task_planner_test(case):
+    """Test TaskPlanner methods."""
+    comps = _get_tp_components()
+    tp = comps['tp']
+    test_type = case.expect_task_planner
+
+    if test_type == "needs_planning_true":
+        result = tp.needs_planning(case.input)
+        if not result:
+            return False, f"expected needs_planning=True for '{case.input}'"
+        return True, f"needs_planning=True: '{case.input[:50]}'"
+
+    elif test_type == "needs_planning_false":
+        result = tp.needs_planning(case.input)
+        if result:
+            return False, f"expected needs_planning=False for '{case.input}'"
+        return True, f"needs_planning=False: '{case.input[:50]}'"
+
+    elif test_type == "compound_signals_count":
+        from core.task_planner import COMPOUND_SIGNALS
+        if len(COMPOUND_SIGNALS) < 15:
+            return False, f"only {len(COMPOUND_SIGNALS)} signals, expected >=15"
+        return True, f"{len(COMPOUND_SIGNALS)} compound signals"
+
+    elif test_type == "plan_step_dataclass":
+        from core.task_planner import PlanStep, StepStatus
+        step = PlanStep(step_id=1, description="test", skill_name="weather", input_text="hi")
+        if step.status != StepStatus.PENDING:
+            return False, f"default status={step.status}, expected PENDING"
+        if step.result != "":
+            return False, f"default result={step.result!r}, expected ''"
+        return True, "PlanStep dataclass defaults correct"
+
+    elif test_type == "task_plan_dataclass":
+        from core.task_planner import TaskPlan, PlanStatus
+        plan = TaskPlan(original_request="test")
+        if plan.status != PlanStatus.PENDING:
+            return False, f"default status={plan.status}, expected PENDING"
+        if plan.created_at <= 0:
+            return False, f"created_at not set: {plan.created_at}"
+        if len(plan.steps) != 0:
+            return False, f"steps not empty: {len(plan.steps)}"
+        return True, "TaskPlan dataclass defaults correct"
+
+    elif test_type == "is_active_default":
+        if tp.is_active:
+            return False, "is_active should be False by default"
+        return True, "is_active=False by default"
+
+    elif test_type == "cancel_no_plan":
+        # Should not error when no active plan
+        tp.cancel()
+        return True, "cancel() with no active plan: no error"
+
+    elif test_type == "persona_task_announce":
+        from core import persona
+        msg = persona.task_announce(3)
+        if "3" not in msg:
+            return False, f"step count not in announce: {msg!r}"
+        return True, f"task_announce: {msg!r}"
+
+    elif test_type == "persona_task_progress":
+        from core import persona
+        msg = persona.task_progress("checking the weather")
+        if "weather" not in msg.lower():
+            return False, f"description not in progress: {msg!r}"
+        return True, f"task_progress: {msg!r}"
+
+    elif test_type == "persona_task_complete":
+        from core import persona
+        msg = persona.task_complete()
+        if not msg:
+            return False, "task_complete returned empty"
+        return True, f"task_complete: {msg!r}"
+
+    elif test_type == "generate_plan_no_llm":
+        # Without LLM, generate_plan should return None (not crash)
+        plan = tp.generate_plan("research AMD and create a presentation")
+        if plan is not None:
+            return False, f"expected None without LLM, got plan with {len(plan.steps)} steps"
+        return True, "generate_plan returns None without LLM (graceful)"
+
+    return False, f"unknown task_planner test type: {test_type}"
+
+
+# ===========================================================================
 # Tier 2: Routing test runner
 # ===========================================================================
 
@@ -863,6 +981,8 @@ def run_test(case, components, results):
             passed, detail = run_chunker_test(case)
         elif case.expect_self_awareness is not None:
             passed, detail = run_self_awareness_test(case)
+        elif case.expect_task_planner is not None:
+            passed, detail = run_task_planner_test(case)
         else:
             results.skip(case.id, "No tier-1 expectation set")
             return
@@ -1051,6 +1171,79 @@ TESTS += [
     TestCase("8A-10", "", 1, "8A", "Self-Awareness",
              expect_self_awareness="persona_with_awareness",
              notes="system_prompt_with_awareness() includes manifest + state + base prompt"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 1: Phase 8B — Task Planner Unit Tests
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    # needs_planning: should detect compound requests
+    TestCase("8B-01", "research AMD GPU drivers and create a presentation", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_true",
+             notes="'and create' triggers compound detection"),
+    TestCase("8B-02", "check the weather and then remind me if it rains", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_true",
+             notes="'and then' triggers compound detection"),
+    TestCase("8B-03", "find my config file and open it", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_true",
+             notes="'and open' triggers compound detection"),
+    TestCase("8B-04", "search for Python tutorials, then show me the results", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_true",
+             notes="', then ' triggers compound detection"),
+    TestCase("8B-05", "look up the weather and also set a reminder", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_true",
+             notes="'and also' triggers compound detection"),
+
+    # needs_planning: should NOT detect single-step requests
+    TestCase("8B-06", "what's the weather like today", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_false",
+             notes="Simple weather query — no compound signal"),
+    TestCase("8B-07", "search for AMD GPU drivers", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_false",
+             notes="Single search — no compound signal"),
+    TestCase("8B-08", "create a presentation about cybersecurity", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_false",
+             notes="Single doc gen — no compound signal"),
+    TestCase("8B-09", "remind me to call mom at 3pm", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_false",
+             notes="Single reminder — no compound signal"),
+    TestCase("8B-10", "what time is it in Tokyo", 1, "8B", "Task Planner",
+             expect_task_planner="needs_planning_false",
+             notes="Simple time query — no compound signal"),
+
+    # Data structure tests
+    TestCase("8B-11", "", 1, "8B", "Task Planner",
+             expect_task_planner="compound_signals_count",
+             notes="At least 15 compound signal patterns defined"),
+    TestCase("8B-12", "", 1, "8B", "Task Planner",
+             expect_task_planner="plan_step_dataclass",
+             notes="PlanStep defaults: status=PENDING, result=''"),
+    TestCase("8B-13", "", 1, "8B", "Task Planner",
+             expect_task_planner="task_plan_dataclass",
+             notes="TaskPlan defaults: status=PENDING, created_at>0, steps empty"),
+    TestCase("8B-14", "", 1, "8B", "Task Planner",
+             expect_task_planner="is_active_default",
+             notes="is_active=False when no plan running"),
+    TestCase("8B-15", "", 1, "8B", "Task Planner",
+             expect_task_planner="cancel_no_plan",
+             notes="cancel() with no active plan doesn't error"),
+
+    # Persona templates
+    TestCase("8B-16", "", 1, "8B", "Task Planner",
+             expect_task_planner="persona_task_announce",
+             notes="task_announce includes step count"),
+    TestCase("8B-17", "", 1, "8B", "Task Planner",
+             expect_task_planner="persona_task_progress",
+             notes="task_progress includes step description"),
+    TestCase("8B-18", "", 1, "8B", "Task Planner",
+             expect_task_planner="persona_task_complete",
+             notes="task_complete returns non-empty"),
+
+    # Graceful degradation
+    TestCase("8B-19", "research AMD and create a presentation", 1, "8B", "Task Planner",
+             expect_task_planner="generate_plan_no_llm",
+             notes="generate_plan returns None without LLM (graceful)"),
 ]
 
 # ---------------------------------------------------------------------------

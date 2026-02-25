@@ -31,6 +31,7 @@ from core.conversation_router import ConversationRouter, RouteResult
 from core.llm_router import ToolCallRequest
 from core.web_research import WebResearcher, format_search_results
 from core.self_awareness import SelfAwareness
+from core.task_planner import TaskPlanner
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +444,15 @@ class Coordinator:
             config=config,
         )
 
+        # Task planner (Phase 2 of task planner)
+        self.task_planner = TaskPlanner(
+            llm=llm,
+            skill_manager=skill_manager,
+            self_awareness=self.self_awareness,
+            conversation=conversation,
+            config=config,
+        )
+
         # Centralized conversation state (Phase 2 of conversational flow refactor)
         self.conv_state = ConversationState()
 
@@ -480,6 +490,7 @@ class Coordinator:
             config=config,
             web_researcher=self.web_researcher,
             self_awareness=self.self_awareness,
+            task_planner=self.task_planner,
         )
 
         # Wire timeout cleanup so silence-expired windows get same cleanup as dismissals
@@ -753,9 +764,14 @@ class Coordinator:
         if result.handled:
             response = result.text
 
-            # Speak response (unless handler already spoke via TTS proxy,
-            # e.g. deliver_rundown or a skill that calls tts.speak directly)
-            if response and not self.tts._spoke:
+            # Task plan: speak announcement, then execute the plan
+            if result.intent == "task_plan" and self.task_planner.active_plan:
+                if response:
+                    self._speak_and_wait(response)
+                response = self._execute_task_plan()
+            elif response and not self.tts._spoke:
+                # Speak response (unless handler already spoke via TTS proxy,
+                # e.g. deliver_rundown or a skill that calls tts.speak directly)
                 self._speak_and_wait(response)
 
             # Conversation window side effects
@@ -832,6 +848,32 @@ class Coordinator:
         self.listener.open_conversation_window(self.listener._extended_duration)
         self.listener.resume_listening()
         self.state = PipelineState.IDLE
+
+    # ----- task plan execution -----
+
+    def _execute_task_plan(self) -> str:
+        """Execute the active task plan with TTS progress callbacks."""
+        plan = self.task_planner.active_plan
+        if not plan:
+            return "I'm sorry, the plan was lost before I could execute it."
+
+        def progress_callback(description: str):
+            """Speak progress between steps."""
+            msg = persona.task_progress(description)
+            print(f"📋 {msg}")
+            self._speak_and_wait(msg)
+
+        result = self.task_planner.execute_plan(
+            plan, progress_callback=progress_callback,
+        )
+
+        # Speak completion
+        if result:
+            completion = persona.task_complete()
+            print(f"📋 {completion}")
+            self._speak_and_wait(completion)
+
+        return result or "I wasn't able to complete the requested steps."
 
     # ----- streaming LLM -----
 

@@ -36,6 +36,9 @@ class ConversationState:
     # --- Conversation depth ---
     turn_count: int = 0                    # Number of user turns in current window
 
+    # --- Task planner ---
+    active_plan: Optional[dict] = None   # Active multi-step plan (set by task planner)
+
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
     window_opened_at: float = 0.0        # When the conversation window opened
@@ -73,6 +76,7 @@ class ConversationState:
         self.jarvis_asked_question = False
         self.research_results = None
         self.research_exchange = None
+        self.active_plan = None
         self.last_intent = ""
         self.last_response_type = ""
         self.last_response_text = ""
