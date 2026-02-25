@@ -253,8 +253,10 @@ class SkillManager:
         """
         # Normalize user text: lowercase, strip punctuation
         normalized = user_text.strip().lower()
-        # Remove ALL punctuation (not just trailing)
-        normalized = normalized.translate(str.maketrans('', '', '?.!,;:'))
+        # Remove punctuation but preserve dots within file extensions
+        # (e.g. "report.pptx" stays "report.pptx" so \bpptx\b matches)
+        normalized = normalized.translate(str.maketrans('', '', '?!,;:'))
+        normalized = re.sub(r'\.(?=\s|$)', '', normalized)  # only sentence-ending dots
 
         self.logger.debug(f"🔍 Normalized: '{normalized}'")
 
@@ -397,7 +399,7 @@ class SkillManager:
 
         best_match = tied_skills[0]
         if best_score > 0:
-            entities = {}
+            entities = {'_keyword_count': best_score}
 
             if best_match == 'weather':
                 # Check for specific weather queries
@@ -629,8 +631,15 @@ class SkillManager:
                             return response
                         else:
                             self.logger.info(f"Keyword->semantic fallback rejected: {best_intent} (score={best_score:.2f} < threshold={intent_threshold})")
-                            # Keyword already confirmed the skill — try relaxed threshold
-                            relaxed_threshold = max(intent_threshold * 0.7, 0.40)
+                            # Keyword already confirmed the skill — scale relaxed threshold
+                            # by keyword count (more keywords = stronger signal, lower bar)
+                            kw_count = (entities or {}).get('_keyword_count', 1)
+                            if kw_count >= 3:
+                                relaxed_threshold = max(intent_threshold * 0.4, 0.20)
+                            elif kw_count >= 2:
+                                relaxed_threshold = max(intent_threshold * 0.6, 0.30)
+                            else:
+                                relaxed_threshold = max(intent_threshold * 0.7, 0.40)
                             if best_score >= relaxed_threshold:
                                 self.logger.info(f"Keyword->semantic relaxed match: {best_intent} (score={best_score:.2f} >= relaxed {relaxed_threshold:.2f})")
                                 self._last_match_info = {"layer": "keyword_semantic_relaxed", "skill_name": skill_name, "intent_id": best_intent, "confidence": best_score, "handler_name": best_handler.__name__}

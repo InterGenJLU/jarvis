@@ -14,6 +14,7 @@ Usage:
 import os
 os.environ['HSA_OVERRIDE_GFX_VERSION'] = '11.0.0'
 os.environ['ROCM_PATH'] = '/opt/rocm-7.2.0'
+os.environ['TQDM_DISABLE'] = '1'  # Suppress sentence-transformer progress bars
 
 import sys
 import re
@@ -32,6 +33,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 os.environ['JARVIS_LOG_FILE_ONLY'] = '1'
+os.environ['JARVIS_LOG_TARGET'] = 'web'
 
 from aiohttp import web
 
@@ -1639,11 +1641,17 @@ def main():
     parser.add_argument("--voice", action="store_true", help="Start with voice enabled")
     args = parser.parse_args()
 
-    # Setup logging
+    # Setup logging — route to web.log file + console
+    log_file = Path(__file__).parent / "logs" / "web.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(str(log_file)),
+        ],
     )
 
     config = load_config()

@@ -54,12 +54,13 @@ class Logger:
             log_file = None
             console_enabled = True
 
-        # Override: suppress console logging when running in console mode.
-        # Always use a dedicated console log file (separate from voice pipeline's
-        # jarvis.log) so console-mode logs don't get buried in 100K+ voice entries.
+        # Override: suppress console logging for non-voice frontends.
+        # Use dedicated log files (separate from voice pipeline's jarvis.log)
+        # so logs don't get buried in 100K+ voice entries.
         if os.environ.get('JARVIS_LOG_FILE_ONLY'):
             console_enabled = False
-            log_file = str(Path(__file__).parent.parent / "logs" / "console.log")
+            target = os.environ.get('JARVIS_LOG_TARGET', 'console')
+            log_file = str(Path(__file__).parent.parent / "logs" / f"{target}.log")
         
         level = getattr(logging, level_str.upper(), logging.INFO)
         logger.setLevel(level)

@@ -1348,6 +1348,73 @@ TESTS += [
              2, "1E", "Multi-Step Compound",
              expect_skill="file_editor", expect_handled=True,
              notes="Comparison + PPTX + explicit share — full multi-step"),
+
+    # Research + presentation + explicit .pptx filename (regression: dot stripping
+    # killed 'pptx' keyword, causing tie with filesystem's 'find' keyword)
+    TestCase("1E-13",
+             "Research the 5 best grooming habits for Huskies and prepare a presentation detailing them. Include approximate costs for any grooming tools or accessories you find in your research. Call it Husky_Grooming_101.pptx",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Long research+presentation with .pptx extension — dot must be "
+                   "preserved so 'pptx' keyword matches and breaks filesystem tie"),
+
+    # Research + document + explicit .docx filename
+    TestCase("1E-14",
+             "Look into the top 10 cybersecurity certifications and write a report about them. Save it as certs_overview.docx",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="Research + .docx extension — dot preservation ensures keyword match"),
+
+    # Research + presentation with 'find' in body (keyword collision test)
+    TestCase("1E-15",
+             "find the best practices for remote work and create a presentation about them",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="'find' ties filesystem, but 'create'+'presentation' gives file_editor "
+                   "2 keywords to break the tie"),
+
+    # Bare .pdf creation with research preamble
+    TestCase("1E-16",
+             "research recent advances in quantum computing and generate a PDF report called quantum_2026.pdf",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="'generate' + 'pdf' + 'report' — multiple file_editor keywords"),
+
+    # High word count — presentation buried in verbose instructions
+    TestCase("1E-17",
+             "I need you to go online and find the five most important grooming habits "
+             "for Siberian Huskies including brushing frequency and recommended tools "
+             "and approximate costs for each item you find in your research and then "
+             "prepare a detailed seven slide presentation covering all of that and "
+             "call it Husky_Grooming_101.pptx",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="50+ word request — 'presentation' signal diluted by research "
+                   "instructions but .pptx extension anchors to file_editor"),
+
+    # High word count — document request with lots of requirements
+    TestCase("1E-18",
+             "Do some research on the top five programming languages for data science "
+             "in 2026 and find out what makes each one unique including their strengths "
+             "and weaknesses and any notable libraries or frameworks that set them apart "
+             "and then put together a comprehensive report comparing all of them and "
+             "save it as data_science_languages.docx",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="50+ word request — 'report' + '.docx' must survive keyword "
+                   "dilution from 'find' and other generic words"),
+
+    # High word count — verbose presentation with no explicit extension
+    TestCase("1E-19",
+             "Can you search the web for the latest statistics on remote work adoption "
+             "rates across different industries and find out which sectors have the "
+             "highest percentage of remote workers and then create a PowerPoint "
+             "presentation that breaks down the data by industry with charts and "
+             "comparisons and save it in the share folder",
+             2, "1E", "Multi-Step Compound",
+             expect_skill="file_editor", expect_handled=True,
+             notes="50+ words, no explicit extension — 'create' + 'PowerPoint' + "
+                   "'presentation' + 'share' keywords anchor to file_editor"),
 ]
 
 
