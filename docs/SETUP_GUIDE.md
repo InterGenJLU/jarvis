@@ -200,6 +200,14 @@ systemctl --user show jarvis | grep Environment
 # See GPU_TROUBLESHOOTING.md
 ```
 
+### SIGSEGV on Service Restart
+When restarting JARVIS (`systemctl --user restart jarvis`), you may see:
+```
+jarvis.service: Main process exited, code=dumped, status=11/SEGV
+jarvis.service: Failed with result 'core-dump'.
+```
+**This is normal and harmless.** Native GPU libraries (CTranslate2, PyTorch/ROCm) sometimes segfault during teardown when receiving SIGTERM. The service restarts cleanly every time thanks to `Restart=always`. No data loss or functional impact.
+
 ### Service Won't Start
 ```bash
 # Check logs
