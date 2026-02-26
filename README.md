@@ -11,11 +11,12 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 - **0.1-0.2s speech recognition** — Fine-tuned Whisper v2 (198 phrases, 94%+ accuracy) on AMD GPU via CTranslate2 + ROCm
 - **Local LLM intelligence** — Qwen3.5-35B-A3B (Q3_K_M, MoE, 3B active params) via llama.cpp with native tool calling
 - **Natural blended voice** — Kokoro TTS with custom voice blend (fable + george), gapless streaming playback
-- **Conversational flow engine** — Persona module (17 response pools), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
+- **Conversational flow engine** — Persona module (24 response pools, ~90 templates), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
 - **Self-awareness + task planning** — capability manifest, system state injection, compound request detection, LLM plan generation, sequential execution with per-step evaluation, pause/resume/cancel
+- **Social introductions** — "Meet my niece Arya" triggers butler-style multi-turn introduction flow with name confirmation, pronunciation checks, and persistent people database
 - **Semantic understanding** — ML-based intent matching using sentence-transformers, not brittle regex patterns
 - **Always-on listening** — Porcupine wake word + WebRTC VAD + ambient wake word filter + multi-turn conversation windows
-- **11 production skills** — time, weather, system info, filesystem, file editor, developer tools, desktop control, conversation, reminders, web research, news
+- **12 production skills** — time, weather, system info, filesystem, file editor, developer tools, desktop control, conversation, reminders, web research, news, social introductions
 - **Three frontends** — voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
 - **Privacy by design** — everything runs locally; Claude API is a last-resort quality fallback only
 
@@ -165,6 +166,7 @@ The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS
 | **Developer Tools** | "Search the codebase for TODO" / "Git status" / "Show me the network" | 13 intents: codebase search, git multi-repo, system admin, general shell, visual output, 3-tier safety |
 | **Desktop Control** | "Open Chrome" / "Volume up" / "Switch to workspace 2" | 16 intents: app launch/close, window management, volume, workspaces, focus, clipboard via GNOME Shell extension D-Bus bridge |
 | **Conversation** | "Good morning" / "Thank you" / "How are you?" | Natural greetings, small talk, dismissal detection |
+| **Social Introductions** | "Meet my niece Arya" / "Who is Arya?" / "Forget Arya" | Multi-turn butler-style introduction flow: name confirmation, pronunciation check, fact gathering, persistent people database with TTS pronunciation overrides |
 | **Reminders** | "Remind me at 3pm" / "What's on my schedule?" | Priority tones, nag behavior, acknowledgment tracking |
 | **Web Research** | "How far is New York from London?" / "Who won the Super Bowl?" | Qwen3.5 native tool calling → DuckDuckGo → multi-source synthesis |
 | **News** | "Read me the headlines" / "Any cybersecurity news?" | 16 RSS feeds, urgency classification, semantic dedup, category filtering |
@@ -175,8 +177,8 @@ The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS
 - **Google Calendar** — Two-way sync with dedicated JARVIS calendar, OAuth, incremental sync, background polling
 - **Daily & Weekly Rundowns** — Interactive state machine: offered → re-asked → deferred → retry → pending mention
 - **Health Check** — 5-layer system diagnostic (GPU, LLM, STT, TTS, skills) with ANSI terminal report + voice summary
-- **Document Generation** — "Create a presentation about X" or "Write a report on Y" → web research → structured outline → PPTX/DOCX/PDF with Pexels stock images, saved to share folder
 - **User Profiles** — Speaker identification via resemblyzer d-vectors, dynamic honorifics, voice enrollment
+- **People Manager** — SQLite contacts database, relationship tracking, TTS pronunciation overrides, LLM context injection
 
 ---
 
@@ -551,6 +553,7 @@ jarvis/
 │   ├── self_awareness.py         # Capability manifest + system state for LLM context
 │   ├── task_planner.py           # Compound request detection, LLM plan generation, execution
 │   ├── metrics_tracker.py        # LLM metrics tracking (latency, tokens, errors)
+│   ├── people_manager.py         # People database, TTS pronunciation overrides, LLM context injection
 │   ├── health_check.py           # System diagnostics
 │   ├── user_profile.py           # User profiles + speaker ID
 │   ├── speaker_id.py             # Resemblyzer d-vector enrollment
@@ -572,7 +575,8 @@ jarvis/
 │   └── personal/
 │       ├── conversation/         # Greetings, small talk
 │       ├── reminders/            # Voice reminders + calendar
-│       └── news/                 # RSS headline delivery
+│       ├── news/                 # RSS headline delivery
+│       └── social_introductions/ # Butler-style introductions + people database
 │
 ├── web/                          # Web UI frontend
 │   ├── index.html                # Chat layout
@@ -829,6 +833,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 2.8.0
+**Version:** 2.9.0
 **Status:** Production — actively developed
 **Last Updated:** February 25, 2026
