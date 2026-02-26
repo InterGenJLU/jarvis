@@ -79,7 +79,7 @@ _POOLS = {
         "I'll see what else I can find on it, {h}, one moment.",
         "I'll check to see what else there is on that, {h}, one moment.",
         "Let me look, {h}, I'll see what else I can find, one moment.",
-        "Let me look into that, {h}, please give me a moment.",
+        "Let me look into it, {h}, please give me a moment.",
     ],
 
     # Task planner: plan announcement
@@ -158,7 +158,7 @@ _POOLS = {
         ("Just a moment.", "neutral"),
         ("One second.", "neutral"),
         ("Let me check.", "checking"),
-        ("Let me look into that.", "checking"),
+        ("Let me look into it.", "checking"),
         ("Checking on that.", "checking"),
         ("Give me just a moment.", "working"),
         ("Working on that.", "working"),
@@ -215,6 +215,10 @@ def system_prompt() -> str:
         f"5. ONLY use imperial units (miles, Fahrenheit, pounds). NEVER include metric conversions in parentheses. Do NOT write '750 miles (1,207 kilometers)' — just write '750 miles'.\n"
         f"6. NEVER begin your response with filler like 'Certainly', 'Of course', 'Absolutely', "
         f"'Sure thing', 'Great question', or 'Right away'. Jump straight into the answer.\n"
+        f"7. When asked about yourself — your model, capabilities, status, memory, facts you remember, "
+        f"how you work, or what you can do — answer from the State and CAPABILITIES sections in your context. "
+        f"Your fact count, model name, and system metrics are all in the State line. "
+        f"NEVER web search for information about yourself.\n"
         f"STYLE: You are speaking aloud. Be concise, natural, and conversational. "
         f"For factual questions: 1-3 clear sentences. "
         f"For deeper questions: up to a short paragraph, informative but not lecturing. "

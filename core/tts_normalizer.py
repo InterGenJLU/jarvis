@@ -19,6 +19,12 @@ class TTSNormalizer:
             "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
         }
         
+        # TTS-safe phonetic spellings for single letters that get misread
+        # (e.g. Kokoro reads "A" as the article "uh" instead of the letter)
+        self._letter_phonetic = {
+            'A': 'eh', 'I': 'Eye', 'O': 'Oh', 'U': 'You',
+        }
+
         # Number words for spoken numbers
         self.ones = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
         self.teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
@@ -259,13 +265,13 @@ class TTSNormalizer:
             if trailing_letter:
                 spoken_ver += f" {trailing_letter}"
 
-            # Speak suffix segments: "-35B" → "dash thirty-five B"
+            # Speak suffix segments: "-35B" → ", thirty-five B" (commas for natural pauses)
             spoken_suffixes = ''
             if suffixes:
                 for seg in suffixes.split('-'):
                     if not seg:
                         continue
-                    spoken_suffixes += f" dash {self._alphanumeric_segment(seg)}"
+                    spoken_suffixes += f", {self._alphanumeric_segment(seg)}"
 
             return f"{spoken_name} {spoken_ver}{spoken_suffixes}"
 
@@ -296,8 +302,11 @@ class TTSNormalizer:
             elif part.isdigit():
                 spoken.append(self._number_to_words(int(part)))
             elif part.isupper() and len(part) <= 3:
-                # Short uppercase = spell out (A, B, AB)
-                spoken.append(' '.join(part))
+                # Short uppercase = spell out with TTS-safe phonetics
+                # Single letters like "A" get misread as the article "uh"
+                spoken.append(' '.join(
+                    self._letter_phonetic.get(c, c) for c in part
+                ))
             else:
                 spoken.append(part)
         return ' '.join(spoken)

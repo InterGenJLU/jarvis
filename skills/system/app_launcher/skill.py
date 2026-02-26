@@ -197,7 +197,7 @@ class AppLauncherSkill(BaseSkill):
                 "what windows are open",
                 "show running apps",
                 "list open windows",
-                "what's running",
+                "what apps are running on my desktop",
             ],
             handler=self.list_windows,
             threshold=0.50,

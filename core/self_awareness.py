@@ -11,6 +11,7 @@ Phase 1 of the Autonomous Task Planner plan.
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -43,6 +44,7 @@ class SystemState:
     context_tokens_used: int = 0
     context_token_budget: int = 0
     llm_provider: str = "unknown"
+    llm_quant: str = ""
     llm_avg_latency_ms: float = 0.0
 
 
@@ -171,8 +173,13 @@ class SelfAwareness:
         if self._config:
             model_path = self._config.get("llm.local.model_path", "")
             if model_path:
-                # Extract model name from path: "/path/to/Qwen3.5-35B-A3B-Q3_K_M.gguf" → "Qwen3.5-35B-A3B-Q3_K_M"
-                state.llm_provider = os.path.splitext(os.path.basename(model_path))[0]
+                # Extract model name and quant suffix separately
+                # "/path/to/Qwen3.5-35B-A3B-Q3_K_M.gguf" → name="Qwen3.5-35B-A3B", quant="Q3_K_M"
+                name = os.path.splitext(os.path.basename(model_path))[0]
+                quant_match = re.search(r'-([QIF]\d[^\-]*)$', name)
+                state.llm_provider = re.sub(r'-[QIF]\d[^\-]*$', '', name)
+                if quant_match:
+                    state.llm_quant = quant_match.group(1)
             else:
                 state.llm_provider = "unknown"
         if self._metrics:
@@ -229,8 +236,13 @@ class SelfAwareness:
         """One-line state summary for system prompt injection."""
         state = self.get_system_state()
         parts = []
+        if state.llm_provider and state.llm_provider != "unknown":
+            llm_label = f"LLM: {state.llm_provider}"
+            if state.llm_quant:
+                llm_label += f" ({state.llm_quant} quant)"
+            parts.append(llm_label)
         if state.memory_fact_count:
-            parts.append(f"{state.memory_fact_count} facts")
+            parts.append(f"{state.memory_fact_count} remembered facts about the user")
         if state.context_token_budget:
             parts.append(f"{state.context_tokens_used}/{state.context_token_budget} ctx tokens")
         if state.llm_avg_latency_ms:

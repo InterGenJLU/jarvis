@@ -229,7 +229,7 @@ class DeveloperToolsSkill(BaseSkill):
                 "let me see the logs",
                 "pull up the process list",
                 "display the search results",
-                "show me what's running",
+                "show me the running processes",
             ],
             handler=self.show_output,
             threshold=0.50,
