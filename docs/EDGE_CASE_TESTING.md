@@ -591,6 +591,51 @@ These test cases (2A-05..08) describe **mid-rundown interruption** — a feature
 
 ---
 
+## Voice Pipeline Tests (Separate Suite)
+
+Automated TTS→STT round-trip tests (`scripts/test_voice_pipeline.py`). Generates WAV audio via
+Kokoro TTS, feeds into Whisper STT, compares transcription against expectations. Validates the
+full audio pipeline without a microphone — catches pronunciation issues, Whisper correction gaps,
+and TTS normalization round-trip failures.
+
+**Current results: 25/25 (100%)**
+
+```bash
+python3 scripts/test_voice_pipeline.py              # All phases
+python3 scripts/test_voice_pipeline.py --phase V2   # Single phase
+python3 scripts/test_voice_pipeline.py --id V2-03   # Single test
+python3 scripts/test_voice_pipeline.py --verbose     # Show all (not just failures)
+python3 scripts/test_voice_pipeline.py --save-wav /tmp/debug  # Save WAVs
+```
+
+| Phase | Category | Tests | What It Validates |
+|-------|----------|-------|-------------------|
+| V1 | Core Commands | 8 | Routing-critical phrases survive TTS→STT |
+| V2 | Brand Names | 6 | Technical brand names (AMD, NVIDIA, Docker, Kubernetes) |
+| V3 | Normalizer Round-Trip | 4 | IPs, ports, file paths, file sizes through TTS normalization |
+| V4 | Contractions | 4 | "what's", "don't", "can't" — Whisper contraction handling |
+| V5 | Edge Cases | 3 | Single words ("yes", "no", "Jarvis") |
+
+**Key findings from initial run:**
+- NVIDIA: Kokoro pronounces as "in-video" — Whisper can't recover the brand name
+- Normalizer round-trip: Whisper reconstructs numeric forms (e.g., spoken "one ninety two" → "192")
+- All core commands (V1) pass with 0% WER — routing-critical phrases are solid
+
+### Pronunciation Audit Tool
+
+Interactive companion for subjective pronunciation review:
+
+```bash
+python3 scripts/pronunciation_audit.py                    # Generate 16 WAVs to /tmp
+python3 scripts/pronunciation_audit.py --play             # Generate + interactive review
+python3 scripts/pronunciation_audit.py --category Names   # Filter by category
+python3 scripts/pronunciation_audit.py --custom "Hello"   # Ad-hoc phrase
+```
+
+Categories: Names (3), Persona (4), Technical (4), Normalizer (5)
+
+---
+
 ## Test Execution Log
 
 Track session-by-session execution here:
@@ -610,6 +655,7 @@ Track session-by-session execution here:
 | 69 | Feb 25 | Task planner tests | 242 | 0 | +62 tests across task planner, routing expansion, additional unit tests. |
 | 74 | Feb 25 | Social introductions | 270 | 0 | +14 people manager unit tests + 14 intro routing tests. Tier 1: 112, Tier 2: 130, Tier 4: 28. |
 | 78 | Feb 26 | Phase 9C: Intro state machine | 294 | 0 | +10 multi-turn state machine tests (happy path, correction, P2.6 interception, timeout, already-known, filler strip, multiple facts, list_people states, fix pronunciation flow, done phrases). +14 from Tier 1/2 recount. Tier 1: 115, Tier 2: 151, Tier 4: 28. |
+| 80 | Feb 26 | Voice pipeline tests | 25 | 0 | NEW SUITE: `test_voice_pipeline.py` — 25 TTS→STT round-trip tests (V1-V5). `generate_wav()` added to tts.py. `pronunciation_audit.py` for interactive review. NVIDIA pronunciation issue documented (Kokoro→"in-video"). |
 
 ---
 

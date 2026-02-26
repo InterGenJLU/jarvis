@@ -196,6 +196,56 @@ class TextToSpeech:
             f"Ack cache: {len(self._ack_cache)} phrases pre-synthesized in {elapsed:.1f}s"
         )
 
+    def generate_wav(self, text: str, normalize: bool = True) -> bytes:
+        """Generate WAV audio from text without playing it.
+
+        Uses Kokoro to synthesize speech and returns a complete WAV file
+        as bytes (24kHz, mono, int16). Does NOT acquire _tts_lock — no
+        audio hardware is touched.
+
+        Args:
+            text: Text to synthesize
+            normalize: Whether to apply TTS normalization (default: True)
+
+        Returns:
+            WAV file as bytes, or empty bytes on failure
+
+        Raises:
+            RuntimeError: If engine is not Kokoro
+        """
+        if self.engine != "kokoro":
+            raise RuntimeError("generate_wav() requires Kokoro engine")
+
+        if not text or not text.strip():
+            return b""
+
+        if normalize and self.normalization_enabled and self.normalizer:
+            text = self.normalizer.normalize(text)
+
+        import io
+        import wave
+
+        chunks = []
+        for gs, ps, audio in self._kokoro_pipeline(
+            text, voice=self._kokoro_voice, speed=self._kokoro_speed
+        ):
+            chunks.append(self._np.asarray(audio))
+
+        if not chunks:
+            return b""
+
+        full = self._np.concatenate(chunks)
+        int16 = (full * 32767).astype(self._np.int16)
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self.sample_rate)
+            wf.writeframes(int16.tobytes())
+
+        return buf.getvalue()
+
     def speak_ack(self, style_hint: str = None) -> bool:
         """Play a random pre-cached acknowledgment phrase instantly.
 
