@@ -340,15 +340,23 @@ def check_services():
     except Exception as e:
         results.append(_check("jarvis.service", "red", f"Error: {e}"))
 
-    # --- llama-server ---
-    try:
-        ok, health_out = _run("curl -s --max-time 3 http://localhost:8080/health")
-        if ok and "ok" in health_out.lower():
-            results.append(_check("llama-server", "green", "Responsive (healthy)"))
-        else:
-            results.append(_check("llama-server", "red", f"Unhealthy: {health_out[:60]}"))
-    except Exception as e:
-        results.append(_check("llama-server", "red", f"Error: {e}"))
+    # --- llama-server (retry on boot — model loading takes a few seconds) ---
+    llama_ok = False
+    llama_detail = ""
+    for attempt in range(4):  # up to ~12s total wait
+        try:
+            ok, health_out = _run("curl -s --max-time 3 http://localhost:8080/health")
+            if ok and "ok" in health_out.lower():
+                llama_ok = True
+                llama_detail = "Responsive (healthy)"
+                break
+            else:
+                llama_detail = f"Unhealthy: {health_out[:60]}"
+        except Exception as e:
+            llama_detail = f"Error: {e}"
+        if attempt < 3:
+            time.sleep(3)
+    results.append(_check("llama-server", "green" if llama_ok else "red", llama_detail))
 
     # --- Recent errors ---
     try:
