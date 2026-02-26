@@ -255,9 +255,13 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     match_info = None
 
     # --- Route through shared priority chain ---
+    # Web UI is always in-conversation: every typed message is intentional,
+    # and unlike voice mode there's no silence-based window close.  This
+    # enables P3.5 research follow-ups and context augmentation for
+    # follow-up queries like "please elaborate".
     router = components['router']
     result = await asyncio.to_thread(
-        router.route, command, in_conversation=False, doc_buffer=doc_buffer,
+        router.route, command, in_conversation=True, doc_buffer=doc_buffer,
     )
     t_match = time.perf_counter()
 

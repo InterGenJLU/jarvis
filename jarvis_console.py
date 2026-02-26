@@ -886,9 +886,12 @@ def run_console(config, mode):
             match_info = None
 
             # --- Route through shared priority chain ---
+            # Console is always in-conversation: every typed command is
+            # intentional, enabling P3.5 research follow-ups and context
+            # augmentation for follow-up queries like "elaborate further".
             result = router.route(
                 command,
-                in_conversation=False,
+                in_conversation=True,
                 doc_buffer=doc_buffer,
             )
             t_match = time.perf_counter()
