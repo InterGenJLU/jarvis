@@ -479,6 +479,12 @@ class Coordinator:
             "hello", "hey", "hi", "bye", "goodbye",
         }
 
+        # People manager (social introductions + pronunciation)
+        self.people_manager = None
+        if config.get("people.enabled", False):
+            from core.people_manager import get_people_manager
+            self.people_manager = get_people_manager(config)
+
         # Shared command router (Phase 3 of conversational flow refactor)
         self.router = ConversationRouter(
             skill_manager=skill_manager,
@@ -493,6 +499,7 @@ class Coordinator:
             web_researcher=self.web_researcher,
             self_awareness=self.self_awareness,
             task_planner=self.task_planner,
+            people_manager=self.people_manager,
         )
 
         # Wire timeout cleanup so silence-expired windows get same cleanup as dismissals

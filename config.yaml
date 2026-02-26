@@ -114,6 +114,11 @@ context_window:
   db_path: /mnt/storage/jarvis/data/memory.db
   segment_retention_days: 7
 
+# People manager (social introductions + pronunciation)
+people:
+  enabled: true
+  db_path: /mnt/storage/jarvis/data/people.db
+
 # System health check
 health_check:
   run_on_startup: true

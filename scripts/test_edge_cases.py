@@ -230,13 +230,19 @@ def init_tier2_components():
         self_awareness=self_awareness, event_queue=None,
     )
 
+    # People manager
+    people_manager = None
+    if config.get("people.enabled", False):
+        from core.people_manager import get_people_manager
+        people_manager = get_people_manager(config)
+
     conv_state = ConversationState()
     router = ConversationRouter(
         skill_manager=skill_manager, conversation=conversation, llm=llm,
         reminder_manager=reminder_manager, memory_manager=memory_manager,
         news_manager=news_manager, context_window=context_window,
         conv_state=conv_state, config=config, web_researcher=web_researcher,
-        task_planner=task_planner,
+        task_planner=task_planner, people_manager=people_manager,
     )
 
     elapsed = time.perf_counter() - t0
@@ -305,6 +311,11 @@ def setup_state(components, case):
         task_planner._paused = False
         task_planner._event_queue = None
     conv_state.pending_plan_confirmation = False
+
+    # Reset social introductions state machine
+    intro_skill = skill_manager.get_skill("social_introductions")
+    if intro_skill and hasattr(intro_skill, '_reset_state'):
+        intro_skill._reset_state()
 
     # Apply case-specific setup
     setup = case.setup
@@ -641,6 +652,112 @@ def run_self_awareness_test(case):
         if "JARVIS" not in prompt:
             return False, "base system prompt missing"
         return True, f"awareness prompt: {len(prompt)} chars"
+
+    # --- PeopleManager unit tests (reuses expect_self_awareness dispatch) ---
+
+    elif test_type == "people_manager_crud":
+        import tempfile, os
+        from core.people_manager import PeopleManager
+        from core.config import load_config
+        cfg = load_config()
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        cfg._config.setdefault("people", {})["db_path"] = tmp.name
+        pm = PeopleManager(cfg)
+        try:
+            # Add
+            pid = pm.add_person("TestArya", "niece")
+            if not pid:
+                return False, "add_person returned empty"
+            # Get
+            person = pm.get_person_by_name("TestArya")
+            if not person:
+                return False, "get_person_by_name returned None"
+            if person["relationship"] != "niece":
+                return False, f"relationship={person['relationship']}"
+            # Case-insensitive
+            person2 = pm.get_person_by_name("testarya")
+            if not person2:
+                return False, "case-insensitive lookup failed"
+            # Add fact
+            fid = pm.add_person_fact(pid, "loves horses")
+            if not fid:
+                return False, "add_person_fact returned empty"
+            # Get with facts
+            full = pm.get_person_with_facts("TestArya")
+            if not full or len(full.get("facts", [])) != 1:
+                return False, f"facts count={len(full.get('facts', []))}"
+            if "horses" not in full["facts"][0]["content"]:
+                return False, f"fact content={full['facts'][0]['content']}"
+            # Update pronunciation
+            pm.update_pronunciation(pid, "Areea")
+            person3 = pm.get_person_by_name("TestArya")
+            if person3["pronunciation"] != "Areea":
+                return False, f"pronunciation={person3['pronunciation']}"
+            # Delete
+            pm.delete_person(pid)
+            if pm.get_person_by_name("TestArya") is not None:
+                return False, "person not deleted"
+            return True, "CRUD: add, get, case-insensitive, fact, pronunciation, delete"
+        finally:
+            os.unlink(tmp.name)
+
+    elif test_type == "people_manager_tts":
+        import tempfile, os
+        from core.people_manager import PeopleManager
+        from core.config import load_config
+        cfg = load_config()
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        cfg._config.setdefault("people", {})["db_path"] = tmp.name
+        pm = PeopleManager(cfg)
+        try:
+            pid = pm.add_person("Arya", "niece", pronunciation="Areea")
+            # Test substitution
+            result = pm._name_substitution("I met Arya today")
+            if "Areea" not in result:
+                return False, f"substitution failed: {result}"
+            # Word boundary: should NOT replace inside other words
+            result2 = pm._name_substitution("The aryan theme")
+            if "Areean" in result2:
+                return False, f"boundary violation: {result2}"
+            # Case insensitive
+            result3 = pm._name_substitution("ARYA is great")
+            if "Areea" not in result3:
+                return False, f"case-insensitive failed: {result3}"
+            return True, "TTS substitution: basic, boundary, case-insensitive"
+        finally:
+            pm.delete_person(pid)
+            os.unlink(tmp.name)
+
+    elif test_type == "people_manager_context":
+        import tempfile, os
+        from core.people_manager import PeopleManager
+        from core.config import load_config
+        cfg = load_config()
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        cfg._config.setdefault("people", {})["db_path"] = tmp.name
+        pm = PeopleManager(cfg)
+        try:
+            pid = pm.add_person("TestSarah", "friend")
+            pm.add_person_fact(pid, "works at Google")
+            # Mentioned
+            ctx = pm.get_people_context("I saw TestSarah yesterday")
+            if not ctx or "TestSarah" not in ctx:
+                return False, f"context missing person: {ctx}"
+            if "friend" not in ctx:
+                return False, f"context missing relationship: {ctx}"
+            if "Google" not in ctx:
+                return False, f"context missing fact: {ctx}"
+            # Not mentioned
+            ctx2 = pm.get_people_context("the weather is nice")
+            if ctx2 is not None:
+                return False, f"false positive context: {ctx2}"
+            return True, "Context injection: mentioned + not-mentioned"
+        finally:
+            pm.delete_person(pid)
+            os.unlink(tmp.name)
 
     return False, f"unknown self_awareness test type: {test_type}"
 
@@ -2604,6 +2721,87 @@ TESTS += [
              2, "1G", "Print Document",
              expect_skill="file_editor", expect_handled=True,
              notes="Keyword 'print' → file_editor, semantic → print_document"),
+]
+
+
+# ---------------------------------------------------------------------------
+# TIER 2: Phase 9A — Social Introductions Routing
+# ---------------------------------------------------------------------------
+# Tests that introduction, who-is, and list-people commands route to the
+# social_introductions skill.
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    # Introduction commands
+    TestCase("9A-01", "meet my niece Arya",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → introduce_person"),
+    TestCase("9A-02", "this is my brother Jake",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → introduce_person"),
+    TestCase("9A-03", "I'd like you to meet my friend Sarah",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → introduce_person"),
+    TestCase("9A-04", "my coworker's name is Dave",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → introduce_person"),
+
+    # Who-is queries
+    TestCase("9A-05", "who is Arya",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → who_is"),
+    TestCase("9A-06", "tell me about Jake",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → who_is ('what do you know about' goes to P3 memory recall)"),
+
+    # List people
+    TestCase("9A-07", "who do you know",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → list_people"),
+
+    # Pronunciation fix
+    TestCase("9A-08", "you're mispronouncing her name",
+             2, "9A", "Social Introductions",
+             expect_skill="social_introductions", expect_handled=True,
+             notes="Semantic → fix_pronunciation"),
+
+    # Negative tests — should NOT route to social_introductions
+    TestCase("9A-09", "what's the weather like",
+             2, "9A", "Social Introductions Negative",
+             expect_not_skill="social_introductions",
+             notes="Weather query should not hit introductions"),
+    TestCase("9A-10", "remind me to call mom",
+             2, "9A", "Social Introductions Negative",
+             expect_not_skill="social_introductions",
+             notes="Reminder should not hit introductions"),
+    TestCase("9A-11", "what time is it",
+             2, "9A", "Social Introductions Negative",
+             expect_not_skill="social_introductions",
+             notes="Time query should not hit introductions"),
+]
+
+
+# ---------------------------------------------------------------------------
+# TIER 1: Phase 9B — PeopleManager Unit Tests
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("9B-01", "", 1, "9B", "PeopleManager CRUD",
+             expect_self_awareness="people_manager_crud",
+             notes="Add, get, update, delete person + facts"),
+    TestCase("9B-02", "", 1, "9B", "PeopleManager TTS Substitution",
+             expect_self_awareness="people_manager_tts",
+             notes="Pronunciation substitution in text"),
+    TestCase("9B-03", "", 1, "9B", "PeopleManager Context Injection",
+             expect_self_awareness="people_manager_context",
+             notes="People context for LLM injection"),
 ]
 
 

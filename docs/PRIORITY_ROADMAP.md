@@ -23,6 +23,7 @@
 
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
+| 59 | **Social introductions** — "meet my niece Arya" → name/relationship extraction, optional speaker enrollment, butler-style greeting | 3-4 hours | Pure personality. Makes JARVIS feel *real*. Leverages existing speaker_id, user_profile, honorific, persona. Optional enrollment prompt ("Shall I add Ms. Arya to the household, sir?"). Gender from relationship words (niece→Ms., nephew→Mr.). Edge cases: pets, groups, re-introductions | NEW Feb 25 |
 | 7 | **Inject user facts into web research** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Risk: history poisoning needs careful scoping |
 | 9 | **Email skill (Gmail)** — voice-composed email via Gmail API + OAuth | 6-8 hours | Major productivity — compose, read, reply, search, archive by voice | Same OAuth pattern as Calendar. Full schema in MASTER_DESIGN.md |
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user |

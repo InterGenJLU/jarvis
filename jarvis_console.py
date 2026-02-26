@@ -751,6 +751,12 @@ def run_console(config, mode):
         context_window=context_window,
     )
 
+    # People manager (social introductions + pronunciation)
+    people_manager = None
+    if config.get("people.enabled", False):
+        from core.people_manager import get_people_manager
+        people_manager = get_people_manager(config)
+
     # Conversation state + shared router (Phase 2-3 of conversational flow refactor)
     conv_state = ConversationState()
     router = ConversationRouter(
@@ -766,6 +772,7 @@ def run_console(config, mode):
         web_researcher=web_researcher,
         self_awareness=self_awareness,
         task_planner=task_planner,
+        people_manager=people_manager,
     )
 
     # Command history (persists across sessions) + document buffer

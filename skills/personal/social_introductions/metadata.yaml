@@ -1,0 +1,17 @@
+name: social_introductions
+version: 1.0.0
+description: Introduce people to JARVIS, manage contacts, pronunciation coaching
+category: personal
+author: Jarvis Team
+enabled: true
+priority: 7
+
+dependencies: []
+
+keywords:
+  - meet
+  - introduce
+  - introduction
+  - who is
+  - pronunciation
+  - pronounce

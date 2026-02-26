@@ -147,6 +147,51 @@ _POOLS = {
         "Continuing, {h}.",
     ],
 
+    # Social introductions: confirm the name
+    # {h} = honorific, {rel} = relationship ("niece", "friend", etc.)
+    "intro_name_confirm": [
+        "Wonderful, {h}! And forgive me... just so I get it right... your {rel}'s name, you said it was...?",
+        "Splendid, {h}! Now, I want to be sure I have the name right... your {rel}, you said...?",
+        "Very good, {h}. And just so I don't muck this up... your {rel}'s name was...?",
+        "How lovely, {h}. And so I don't embarrass myself... your {rel}'s name, once more?",
+    ],
+
+    # Social introductions: pronunciation check
+    # {h} = honorific, {name} = person's name
+    "intro_pron_check": [
+        "{name}... like that, {h}?",
+        "So that's {name}? Have I got it right, {h}?",
+        "{name}. Am I saying that properly, {h}?",
+    ],
+
+    # Social introductions: pronunciation corrected attempt
+    "intro_pron_corrected": [
+        "{name}... better, {h}?",
+        "Let me try again... {name}. How's that, {h}?",
+        "{name}. Closer, {h}?",
+    ],
+
+    # Social introductions: ask for more facts
+    "intro_ask_facts": [
+        "Splendid! Anything else I should know about {name}, {h}?",
+        "Lovely! Is there anything else about {name} I should remember, {h}?",
+        "Wonderful. Tell me more about {name} if you'd like, {h}.",
+    ],
+
+    # Social introductions: introduction complete
+    "intro_complete": [
+        "I'll remember your {rel} {name} well, {h}.",
+        "Noted, {h}. {name} is now part of the household register.",
+        "Wonderful. Your {rel} {name}, committed to memory, {h}.",
+        "Consider it done, {h}. I shan't forget {name}.",
+    ],
+
+    # Social introductions: unknown person (recall miss)
+    "intro_unknown": [
+        "I'm afraid I don't know anyone called {name}, {h}. Would you like to introduce them?",
+        "I don't have a {name} on file, {h}. Shall I make their acquaintance?",
+    ],
+
     # TTS ack cache (no honorific — synthesized at startup)
     # Each entry is (phrase, style_tag).  Style tags:
     #   "neutral"  — generic, used as fallback for any style
@@ -192,6 +237,46 @@ def pool_tagged(category: str) -> list[tuple[str, str]]:
     Used by TTS ack cache to build style-aware pre-synthesized audio.
     """
     return list(_POOLS[category])
+
+
+# ---------------------------------------------------------------------------
+# Social introductions helpers
+# ---------------------------------------------------------------------------
+
+def intro_name_confirm(rel: str) -> str:
+    """Pick a name-confirmation prompt for the introduction flow."""
+    template = random.choice(_POOLS["intro_name_confirm"])
+    return template.format(h=get_honorific(), rel=rel)
+
+
+def intro_pron_check(name: str) -> str:
+    """Pick a pronunciation-check prompt."""
+    template = random.choice(_POOLS["intro_pron_check"])
+    return template.format(name=name, h=get_honorific())
+
+
+def intro_pron_corrected(name: str) -> str:
+    """Pick a pronunciation-corrected prompt."""
+    template = random.choice(_POOLS["intro_pron_corrected"])
+    return template.format(name=name, h=get_honorific())
+
+
+def intro_ask_facts(name: str) -> str:
+    """Pick a prompt asking for additional facts."""
+    template = random.choice(_POOLS["intro_ask_facts"])
+    return template.format(name=name, h=get_honorific())
+
+
+def intro_complete(name: str, rel: str) -> str:
+    """Pick a completion message for the introduction flow."""
+    template = random.choice(_POOLS["intro_complete"])
+    return template.format(name=name, rel=rel, h=get_honorific())
+
+
+def intro_unknown(name: str) -> str:
+    """Pick a response when a queried person is not known."""
+    template = random.choice(_POOLS["intro_unknown"])
+    return template.format(name=name, h=get_honorific())
 
 
 # ---------------------------------------------------------------------------

@@ -100,7 +100,8 @@ class ConversationRouter:
                  config=None,
                  web_researcher=None,
                  self_awareness=None,
-                 task_planner=None):
+                 task_planner=None,
+                 people_manager=None):
         self.skill_manager = skill_manager
         self.conversation = conversation
         self.llm = llm
@@ -113,6 +114,7 @@ class ConversationRouter:
         self.web_researcher = web_researcher
         self.self_awareness = self_awareness
         self.task_planner = task_planner
+        self.people_manager = people_manager
 
     def route(self, command: str, *,
               in_conversation: bool = False,
@@ -125,6 +127,7 @@ class ConversationRouter:
             P1.5      — Plan control (confirmation or active plan interrupt)
             P2        — Reminder acknowledgment
             P2.5      — Memory forget confirmation/cancellation
+            P2.6      — Introduction state machine (social introductions)
             P2.7      — Dismissal detection (conversation window only)
             P2.8      — Bare acknowledgment filter (conversation window only)
             P3        — Memory operations (forget, transparency, fact, recall)
@@ -161,6 +164,11 @@ class ConversationRouter:
 
         # --- Priority 2.5: Memory forget confirmation ---
         result = self._handle_forget_confirm(command)
+        if result:
+            return result
+
+        # --- Priority 2.6: Introduction state machine (multi-turn) ---
+        result = self._handle_intro_state(command)
         if result:
             return result
 
@@ -308,6 +316,27 @@ class ConversationRouter:
             return RouteResult(
                 text=text, intent="forget_cancel",
                 source="memory", handled=True,
+            )
+        return None
+
+    def _handle_intro_state(self, command: str) -> RouteResult | None:
+        """P2.6: Active introduction flow continuation.
+
+        When the social_introductions skill has an active multi-turn state
+        machine (e.g. confirming a name, checking pronunciation), intercept
+        the command here before it reaches skill routing or LLM.
+        """
+        intro_skill = self.skill_manager.get_skill("social_introductions")
+        if not intro_skill or not getattr(intro_skill, 'is_intro_active', False):
+            return None
+
+        response = intro_skill.handle_intro_turn(command)
+        if response:
+            logger.info("Handled by introduction state machine")
+            return RouteResult(
+                text=response, intent="intro_flow",
+                source="skill", handled=True,
+                open_window=60.0,
             )
         return None
 
@@ -840,6 +869,15 @@ class ConversationRouter:
                 command,
                 user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
             )
+
+        # People context injection (known contacts mentioned in utterance)
+        if self.people_manager:
+            people_ctx = self.people_manager.get_people_context(
+                command,
+                user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
+            )
+            if people_ctx:
+                memory_context = f"{people_ctx}\n\n{memory_context}" if memory_context else people_ctx
 
         # Self-awareness: inject capability manifest + compact state
         if self.self_awareness:
