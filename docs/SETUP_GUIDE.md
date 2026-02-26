@@ -294,6 +294,6 @@ JARVIS automatically backs up to:
 
 ---
 
-**Version:** 2.6.0
-**Last Updated:** February 23, 2026
+**Version:** 2.9.0
+**Last Updated:** February 25, 2026
 **Status:** Production Ready

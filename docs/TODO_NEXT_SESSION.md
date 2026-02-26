@@ -126,6 +126,7 @@ None!
 
 ## Pending Live Tests
 
+- **Social introductions** — restart JARVIS, test "Meet my niece Arya" end-to-end via voice, verify TTS pronunciation overrides
 - **Task planner compound requests** — verify predictive timing announcement, LLM step evaluation, pause/resume ("wait" → "continue") end-to-end via voice
 - **Batch extraction (Phase 4)** — needs 25+ messages in one session to trigger
 - **Qwen3.5 vision features** — mmproj encoder downloaded, not yet integrated. Future: image understanding via `--mmproj` flag (#52)
@@ -156,7 +157,9 @@ None!
 | Qwen3-VL-8B Model Upgrade (ROCm rebuild, self-quantized Q5_K_M) | Feb 22 |
 | Qwen3.5-35B-A3B Upgrade (MoE Q3_K_M, unsloth, 48-63 tok/s) | Feb 24 |
 | Task Planner — 4 phases complete (self-awareness → compound detection → guardrails → advanced) | Feb 24-25 |
-| Task Planner bug fixes — pause/resume guards, eval timeout, skip-that, 236 tests | Feb 25 |
+| Task Planner bug fixes — pause/resume guards, eval timeout, skip-that | Feb 25 |
+| Social introductions — PeopleManager, multi-turn intro skill, P2.6 router, 270 tests | Feb 25 |
+| TTS pronunciation fixes (6 items), RAM reporting, llama-server boot race fix | Feb 25 |
 | Document Generation (PPTX/DOCX/PDF with web research + Pexels) | Feb 22 |
 | Smart Ack Suppression | Feb 22 |
 | Document generation live tested (7 bugs fixed during session 45) | Feb 22 |

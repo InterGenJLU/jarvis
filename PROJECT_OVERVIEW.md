@@ -1,6 +1,6 @@
 # JARVIS - Personal AI Assistant
 
-**Version:** 2.8.0 (Production Ready)
+**Version:** 2.9.0 (Production Ready)
 **Last Updated:** February 25, 2026
 **Status:** ✅ Stable, Feature-Rich, Voice-Controlled
 
@@ -40,7 +40,7 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Wake Word Detection** - Porcupine "Jarvis" with 100% accuracy
 - **Speech Recognition** - Fine-tuned Whisper v2 (CTranslate2, GPU-accelerated, 94%+ accuracy, 198 phrases, Southern accent)
 - **Natural Language Understanding** - Semantic intent matching (sentence-transformers)
-- **Conversational Flow Engine** - Persona module (17 response pools, ~65 templates), ConversationState (turn tracking), ConversationRouter (shared priority chain)
+- **Conversational Flow Engine** - Persona module (24 response pools, ~90 templates), ConversationState (turn tracking), ConversationRouter (shared priority chain)
 - **Text-to-Speech** - Kokoro 82M (primary, CPU, fable+george blend) + Piper ONNX fallback
 - **LLM Intelligence** - Qwen3.5-35B-A3B (Q3_K_M, MoE, 3B active params) via llama.cpp + Claude API fallback with quality gating
 - **Web Research** - Qwen3.5 native tool calling + DuckDuckGo + trafilatura, multi-source synthesis
@@ -51,10 +51,11 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Self-Awareness** - Capability manifest + system state injected into LLM context — JARVIS knows what it can do, its current state, and skill reliability
 - **Task Planner** - Compound request detection (22 signals), LLM plan generation, sequential execution with per-step LLM evaluation, pause/resume/cancel/skip voice interrupts, predictive timing announcements, error-aware + context-budget-aware planning
 - **LLM Metrics Dashboard** - Real-time tracking (latency, tokens, errors), web dashboard at `/metrics`, persistent SQLite, per-skill breakdowns
+- **People Manager + Social Introductions** - "Meet my niece Arya" triggers multi-turn intro flow (name confirmation, pronunciation check, fact gathering). SQLite people database with TTS pronunciation overrides and LLM context injection for known contacts
 - **Three Frontends** - Voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
 - **Web UI** - aiohttp WebSocket server, streaming LLM, markdown rendering, session sidebar, health HUD, file handling
 
-### Skills (11 Active)
+### Skills (12 Active)
 
 #### 🌤️ Weather
 - Current conditions, forecasts, rain probability
@@ -110,6 +111,13 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - Greetings, small talk, acknowledgments, butler personality
 - *"Jarvis, how are you?"*
 
+#### 🤝 Social Introductions
+- Multi-turn butler-style introduction flow with name confirmation and pronunciation checks
+- People database: relationship tracking, fact storage, TTS pronunciation overrides
+- *"Jarvis, meet my niece Arya"*
+- *"Jarvis, who is Arya?"*
+- *"Jarvis, forget Arya"*
+
 ### Additional Systems
 - **Conversational Memory** - SQLite fact store + FAISS semantic search, recall, batch LLM extraction, proactive surfacing, forget/transparency
 - **Context Window** - Topic-segmented working memory, relevance-scored assembly, cross-session persistence
@@ -120,7 +128,7 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Hardware Failure Handling** - Startup retry, device monitoring, degraded mode, graceful recovery
 - **GNOME Desktop Bridge** - Custom GNOME Shell extension (D-Bus), Wayland-native window management, wmctrl fallback
 - **GitHub Publishing** - Automated redaction pipeline, PII verification, non-interactive `--auto` publish
-- **Automated Test Suite** - 236 tests (106 unit + 130 routing) across 8 phases + 28 live LLM tests
+- **Automated Test Suite** - 270 tests (112 unit + 130 routing + 28 LLM) across 9 phases
 
 ---
 
@@ -158,6 +166,7 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 │  CONVERSATION ROUTER - Priority Chain                   │
 │  Layer 1: Confirmation interception                     │
 │  Layer 2: Dismissal / conversation close                │
+│  Layer 2.6: Social introductions (multi-turn)           │
 │  Layer 3: Memory / context / news pull-up               │
 │  Pre-P4: Task planner (compound request detection)      │
 │  Layer 4: Exact match (time, date)                      │
@@ -381,7 +390,13 @@ User: Hears response
 - ✅ **Task Planner Phase 3** — Guardrails: destructive operation confirmation, failure-breaks, voice interrupts (cancel/skip via event queue)
 - ✅ **Task Planner Phase 4** — Predictive timing announcements, error-aware planning (unreliable skill warnings), context-budget-aware planning (>80% warning), LLM per-step evaluation (continue/adjust/stop), pause/resume with 120s timeout
 - ✅ **5 bug fixes** — Pause/resume guards (voice-only), eval timeout (10s), dead "skip that" phrase removed, 12 new tests
-- ✅ **Edge case tests expanded** — 236 tests (106 unit + 130 routing), 100% pass rate
+
+### Phase 19: Social Introductions + People Manager (Feb 25) 🚀
+- ✅ **PeopleManager** — `core/people_manager.py`: SQLite-backed people + facts database, TTS pronunciation overrides via normalizer, LLM context injection for known contacts
+- ✅ **Social Introductions Skill** — 5 semantic intents (meet, who-is, recall, forget, update), multi-turn state machine (name confirm → pronunciation check → fact gathering → complete)
+- ✅ **Persona expansion** — 7 new response pools (~25 templates) for introduction flows
+- ✅ **Router P2.6** — Introduction state machine intercept in ConversationRouter priority chain
+- ✅ **Edge case tests expanded** — 270 tests (112 unit + 130 routing + 28 LLM), 100% pass rate
 
 ---
 
@@ -416,15 +431,16 @@ Optimized for consumer hardware. No expensive GPUs required (though AMD GPU supp
 ## 🗺️ Roadmap
 
 ### Recently Completed
-- [x] ~~Self-awareness + task planner (4 phases)~~ — Done (Feb 24-25). Compound detection, LLM planning, guardrails, advanced features, 236 tests
-- [x] ~~Qwen3.5-35B-A3B model upgrade~~ — Done (Feb 24). MoE, Q3_K_M, 48-63 tok/s
-- [x] ~~LLM Metrics Dashboard (5 phases)~~ — Done (Feb 23). Real-time tracking, web dashboard, SQLite
-- [x] ~~Document Generation (PPTX/DOCX/PDF)~~ — Done (Feb 22). Two-stage LLM pipeline, web research, Pexels
-- [x] ~~Whisper v2 retraining~~ — Done (Feb 21). 198 phrases, 94%+ accuracy
-- [x] ~~Conversational Flow Refactor (4 phases)~~ — Done (Feb 21). Persona, State, Router, Polish
-- [x] ~~Web Chat UI (5 phases)~~ — Done (Feb 20). Streaming, sessions, markdown
-- [x] ~~App launcher + desktop control~~ — Done (Feb 19). 16 intents, GNOME Shell extension
-- [x] ~~Web research (Qwen tool calling)~~ — Done (Feb 18). DuckDuckGo + trafilatura
+- Social introductions + People Manager (Feb 25)
+- Self-awareness + task planner — 4 phases (Feb 24-25)
+- Qwen3.5-35B-A3B model upgrade — MoE, Q3_K_M, 48-63 tok/s (Feb 24)
+- LLM Metrics Dashboard — 5 phases (Feb 23)
+- Document Generation — PPTX/DOCX/PDF (Feb 22)
+- Whisper v2 fine-tuning — 198 phrases, 94%+ accuracy (Feb 21)
+- Conversational Flow Refactor — 4 phases (Feb 21)
+- Web Chat UI — 5 phases (Feb 20)
+- App launcher + desktop control — 16 intents, GNOME Shell extension (Feb 19)
+- Web research — Qwen tool calling + DuckDuckGo (Feb 18)
 
 ### Up Next
 - [ ] Inject user facts into web research
@@ -620,14 +636,14 @@ Include:
 - ✅ Web research via local LLM tool calling (no cloud required)
 - ✅ Conversational memory with semantic recall across sessions
 - ✅ Speaker identification and dynamic user profiles
-- ✅ 11 modular skills with semantic intent matching (including 16-intent desktop control)
+- ✅ 12 modular skills with semantic intent matching (including 16-intent desktop control + social introductions)
 - ✅ Self-awareness layer with capability manifest + system state for LLM context
 - ✅ Task planner with compound detection, LLM planning, per-step evaluation, pause/resume
 - ✅ Conversational flow engine with persona, state tracking, and shared router
 - ✅ Three frontends: voice, console, web UI (all sharing one router)
 - ✅ Web Chat UI with streaming, markdown, session sidebar, and health HUD
 - ✅ Ambient wake word filter (multi-signal, blocks false triggers)
-- ✅ 38 router tests + 236 edge case tests (100%) including 28 live LLM validation tests
+- ✅ 38 router tests + 270 edge case tests (100%) including 28 live LLM validation tests
 - ✅ Hardware failure graceful degradation
 - ✅ Sub-600ms skill responses (300-600ms)
 - ✅ Open source on GitHub with automated PII redaction

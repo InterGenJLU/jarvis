@@ -1,5 +1,31 @@
 # JARVIS Changelog
 
+## [2026-02-25] - Social Introductions + People Manager + TTS Pronunciation
+
+### Major Features
+- **Social Introductions Skill** — `skills/personal/social_introductions/`
+  - "Meet my niece Arya" triggers multi-turn butler-style introduction flow
+  - 5 semantic intents: meet, who-is, recall, forget, update
+  - Multi-turn state machine: name confirmation → pronunciation check → fact gathering → complete
+  - Relationship extraction (niece, friend, brother, etc.)
+- **PeopleManager** — `core/people_manager.py`
+  - SQLite-backed people + person_facts database
+  - TTS pronunciation overrides (phonetic spellings injected via tts_normalizer)
+  - LLM context injection for known contacts mentioned in utterances
+- **Persona Expansion** — `core/persona.py`
+  - 7 new response pools for introduction flows (~25 templates)
+  - Helper functions: intro_name_confirm, intro_pron_check, intro_complete, etc.
+- **Router P2.6** — Introduction state machine intercept in ConversationRouter priority chain
+
+### Other Changes
+- Pipeline + console: PeopleManager initialization and wiring
+- config.yaml: people.enabled + db_path configuration
+- TTS pronunciation fixes (6 items) and RAM reporting accuracy
+- llama-server health check retry for boot race condition
+- Edge case tests expanded to 270 (112 unit + 130 routing + 28 LLM), 100% pass rate
+
+---
+
 ## [2026-02-24] - Qwen3.5-35B-A3B Upgrade + LLM Test Suite + Voice Fixes
 
 ### Major Features

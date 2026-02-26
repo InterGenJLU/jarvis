@@ -12,7 +12,7 @@
 The automated test harness (`scripts/test_edge_cases.py`) validates routing and unit-level behavior
 by injecting text directly into the pipeline — no voice/mic/TTS needed.
 
-**Current results: 180/180 (100%) — Tier 1: 39/39 | Tier 2: 113/113 | Tier 4: 28/28**
+**Current results: 270/270 (100%) — Tier 1: 112/112 | Tier 2: 130/130 | Tier 4: 28/28**
 
 ### Quick Reference
 
@@ -32,8 +32,8 @@ python3 scripts/test_edge_cases.py --json        # JSON output
 
 | Tier | Scope | Tests | Load Time | Description |
 |------|-------|-------|-----------|-------------|
-| 1 | Unit | 39 | <1s | Ambient filter (13), noise filter (7), TTS normalizer (14), speech chunker (5) |
-| 2 | Routing | 113 | ~5s | Intent routing (40), priority chain/state machines (28), skill validation (23), priority ordering (2), routing expansion (20) |
+| 1 | Unit | 112 | <1s | Ambient filter (13), noise filter (7), TTS normalizer (14), speech chunker (5), people manager (14), + additional unit tests |
+| 2 | Routing | 130 | ~5s | Intent routing (40), priority chain/state machines (28), skill validation (23), priority ordering (2), routing expansion (20), + additional routing tests |
 | 3 | Execution | — | Future | Run skill handlers, validate response content |
 | 4 | LLM | 28 | ~60s | System prompt adherence (5), personality (3), tool calling (4), structured output (2), multi-turn context (2), safety/refusal (3), hallucination resistance (2), technical knowledge (4), voice fitness (3). Requires llama-server on port 8080 |
 
@@ -606,6 +606,9 @@ Track session-by-session execution here:
 | 39 | Feb 22 | Phase 2 expansion | 132 | 0 | +10 tests: 2A-04, 2B-01..04, 2C-03, 2C-04b, 2D-05, 2F-03, 2F-05. Phase 2: 28/30, 4 deferred (mid-rundown = future feature). |
 | 44 | Feb 22 | Phase 1E expansion | 144 | 0 | +12 tests across Phase 1E. All tiers passing. |
 | 46 | Feb 23 | Additional routing tests | 152 | 0 | +8 tests. Tier 1: 39 unit + Tier 2: 113 routing. |
+| 61 | Feb 24 | Tier 4 LLM tests | 180 | 0 | +28 LLM tests (9 phases). Requires llama-server. |
+| 69 | Feb 25 | Task planner tests | 242 | 0 | +62 tests across task planner, routing expansion, additional unit tests. |
+| 74 | Feb 25 | Social introductions | 270 | 0 | +14 people manager unit tests + 14 intro routing tests. Tier 1: 112, Tier 2: 130, Tier 4: 28. |
 
 ---
 
@@ -640,7 +643,7 @@ Look for these log patterns:
 
 ---
 
-**Total: ~200 test cases across 9 phases, 30+ subsections**
-**Automated: 152 tests (Tier 1: 39 unit + Tier 2: 113 routing) via `scripts/test_edge_cases.py` — includes post-test artifact cleanup**
+**Total: ~200 manual test cases across 9 phases, 30+ subsections**
+**Automated: 270 tests (Tier 1: 112 unit + Tier 2: 130 routing + Tier 4: 28 LLM) via `scripts/test_edge_cases.py` — includes post-test artifact cleanup**
 **Phase 2: 28/30 automated, 4 deferred (mid-rundown interruption — future feature)**
 **Remaining: Phases 3-9 require live voice/hybrid/web testing**

@@ -22,7 +22,8 @@ Skills are modular components that handle specific intents and commands. JARVIS 
 └── personal/            # User-specific skills
     ├── conversation/    # Greetings, small talk
     ├── reminders/       # Voice reminders + calendar
-    └── news/            # RSS headline delivery
+    ├── news/            # RSS headline delivery
+    └── social_introductions/  # Butler-style introductions + people DB
 ```
 
 Each skill directory contains:

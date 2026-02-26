@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** February 25, 2026 (session 70 — task planner complete, 3 deferred items shelved)
+**Updated:** February 25, 2026 (session 74 — social introductions complete)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -23,7 +23,6 @@
 
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
-| 59 | **Social introductions** — "meet my niece Arya" → name/relationship extraction, optional speaker enrollment, butler-style greeting | 3-4 hours | Pure personality. Makes JARVIS feel *real*. Leverages existing speaker_id, user_profile, honorific, persona. Optional enrollment prompt ("Shall I add Ms. Arya to the household, sir?"). Gender from relationship words (niece→Ms., nephew→Mr.). Edge cases: pets, groups, re-introductions | NEW Feb 25 |
 | 7 | **Inject user facts into web research** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Risk: history poisoning needs careful scoping |
 | 9 | **Email skill (Gmail)** — voice-composed email via Gmail API + OAuth | 6-8 hours | Major productivity — compose, read, reply, search, archive by voice | Same OAuth pattern as Calendar. Full schema in MASTER_DESIGN.md |
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user |
@@ -151,6 +150,7 @@
 - WebUI health check brief mismatch — spoken vs on-screen now consistent (Feb 23)
 - Task Planner — 4 phases: self-awareness, compound detection + LLM planning + execution, guardrails, advanced features (Feb 24-25)
 - Task Planner bug fixes — pause/resume guards, eval timeout, skip-that, 12 new tests (Feb 25)
+- #59: Social introductions — PeopleManager + multi-turn intro skill + P2.6 router + persona pools + 14 tests (Feb 25)
 
 ### Tier 3
 - #40: News headline trimming — 25 per category (Feb 20)
@@ -178,4 +178,4 @@
 
 ---
 
-**Total: 58 development ideas + 10 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
+**Total: 58 development ideas + 11 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
