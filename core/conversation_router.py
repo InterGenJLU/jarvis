@@ -514,6 +514,22 @@ class ConversationRouter:
 
         return None
 
+    # -------------------------------------------------------------------
+    # Follow-up detection
+    # -------------------------------------------------------------------
+
+    _FOLLOWUP_PHRASES = [
+        "elaborate", "expand on", "tell me more", "go deeper",
+        "explain further", "break it down", "more detail",
+        "what do you mean", "can you clarify", "say more",
+        "keep going", "continue", "go on",
+    ]
+
+    def _is_followup_request(self, command: str) -> bool:
+        """Detect if a command is a follow-up about the previous answer."""
+        cmd = command.strip().lower()
+        return any(phrase in cmd for phrase in self._FOLLOWUP_PHRASES)
+
     def _handle_news_pullup(self, command: str) -> RouteResult | None:
         """P3.7: News article pull-up (opens browser)."""
         nm = self.news_manager
@@ -905,14 +921,30 @@ class ConversationRouter:
                 f"message: {subjects}. Briefly acknowledge you'll remember this.]"
             )
 
-        # Research exchange augmentation (follow-ups like "try again")
-        if in_conversation and self.conv_state.research_exchange:
-            prev = self.conv_state.research_exchange
-            llm_command = (
-                f"Context: The user just asked '{prev['query']}' and I answered: "
-                f"'{prev['answer']}'\n\n"
-                f"Now the user asks: {llm_command}"
-            )
+        # Follow-up context injection: when user asks to elaborate/expand,
+        # inject the prior exchange so the LLM knows what to elaborate on.
+        # This works with stream_with_tools() which excludes history from
+        # the messages array (to avoid triggering unnecessary web searches).
+        if in_conversation and self._is_followup_request(command):
+            # Prefer research exchange if available, else use conv_state
+            if self.conv_state.research_exchange:
+                prev_q = self.conv_state.research_exchange['query']
+                prev_a = self.conv_state.research_exchange['answer']
+            elif self.conv_state.last_response_text:
+                prev_q = self.conv_state.last_command
+                prev_a = self.conv_state.last_response_text
+            else:
+                prev_q = prev_a = None
+
+            if prev_q and prev_a:
+                # Truncate long answers to avoid blowing up context
+                if len(prev_a) > 800:
+                    prev_a = prev_a[:800] + "..."
+                llm_command = (
+                    f"Context — the user just asked '{prev_q}' and you answered: "
+                    f"'{prev_a}'\n\n"
+                    f"Now the user asks: {llm_command}"
+                )
 
         # Document buffer injection
         if doc_buffer and doc_buffer.active:

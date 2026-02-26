@@ -906,6 +906,10 @@ class LLMRouter:
             "- Greetings ('hello', 'how are you', 'thanks')\n"
             "- Creative requests (jokes, stories, poems)\n"
             "- Following instructions ('repeat that', 'say it again')\n"
+            "- Follow-up requests about YOUR previous answer ('elaborate', "
+            "'expand on that', 'tell me more', 'go deeper', 'explain further', "
+            "'break it down more') — just give a more detailed answer using "
+            "the context provided\n"
             "- Pure opinions with no factual component"
         )
         if memory_context:
@@ -913,9 +917,10 @@ class LLMRouter:
         messages = [{"role": "system", "content": system_prompt}]
 
         # Do NOT include conversation history for tool calling.
-        # Context window messages (topically relevant) actively suppress tool use —
-        # if the LLM sees a prior answer about the same topic, it copies it instead
-        # of calling the tool. Keep it clean: system prompt + user message only.
+        # History in the messages array makes Qwen over-eager to search
+        # (even general knowledge questions trigger web_search).
+        # Follow-up context is handled upstream: the router injects the
+        # prior exchange into user_message for follow-up queries.
 
         if not messages or messages[-1].get("content") != user_message:
             messages.append({"role": "user", "content": user_message})
