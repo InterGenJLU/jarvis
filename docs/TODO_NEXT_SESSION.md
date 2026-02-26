@@ -1,10 +1,24 @@
 # TODO — Next Session
 
-**Updated:** February 25, 2026
+**Updated:** February 26, 2026
 
 ---
 
 ## Tier 1: High ROI — Do Now/Soon
+
+### 0. Mobile iOS App — COMING VERY SOON (#60)
+**Priority:** HIGHEST — Active Development
+**Concept:** Native Swift iPhone app with full JARVIS access from anywhere.
+**Key Features:**
+- Always-listening "Jarvis" wake word (Porcupine iOS SDK, on-device, background mode)
+- Real-time voice via WebRTC (server-side Whisper STT + Kokoro TTS — same voice as desktop)
+- Full chat UI via WKWebView (existing web UI, zero rebuild)
+- Secure remote access via Tailscale VPN (no public exposure)
+- Apple Shortcuts integration ("Hey Siri, ask Jarvis...")
+- iOS 18 Vocal Shortcuts as zero-battery wake word fallback
+**Phases:** 6 phases, ~5-8 days total
+**Prerequisites:** Apple Developer account ($99/yr), Mac with Xcode, Tailscale (free), Picovoice (free)
+**Plan:** `memory/plan_mobile_ios_app.md`
 
 ### 1. Inject User Facts into Web Research
 **Priority:** HIGH
@@ -100,8 +114,8 @@
 **Concept:** Full JARVIS on Windows. ~2-3 weeks effort. Biggest audience for community adoption.
 **Design:** `memory/plan_erica_voice_windows_port.md`
 
-### Mobile Access
-**Concept:** Remote command via phone. Different tech stack entirely.
+### ~~Mobile Access~~ — PROMOTED to Tier 1 as #60 (native iOS app)
+See Tier 1 above.
 
 ---
 
@@ -159,6 +173,7 @@ None!
 | Task Planner — 4 phases complete (self-awareness → compound detection → guardrails → advanced) | Feb 24-25 |
 | Task Planner bug fixes — pause/resume guards, eval timeout, skip-that | Feb 25 |
 | Social introductions — PeopleManager, multi-turn intro skill, P2.6 router, 270 tests | Feb 25 |
+| Phase 9C: Intro state machine tests — 10 multi-turn tests (happy path, correction, P2.6, timeout, etc.), 294 total tests | Feb 26 |
 | TTS pronunciation fixes (6 items), RAM reporting, llama-server boot race fix | Feb 25 |
 | Document Generation (PPTX/DOCX/PDF with web research + Pexels) | Feb 22 |
 | Smart Ack Suppression | Feb 22 |

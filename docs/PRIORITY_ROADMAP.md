@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** February 25, 2026 (session 74 — social introductions complete)
+**Updated:** February 26, 2026 (session 76 — mobile iOS app promoted to Tier 2)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -34,6 +34,9 @@
 | 51 | **Vision/OCR skill — Phase 1 Tesseract** — "read this" / "what does this say" via screenshot + OCR | 1-2 days | Immediate daily utility. CPU-only, 95-98% accuracy, 0.5-2s/page. Input via clipboard/screenshot/file | Proposed: `skills/system/vision/`. 4 intents: read_screen, describe_image, read_document, read_chart |
 | 52 | **Vision/OCR skill — Phase 2-3 Qwen3.5** — full image understanding via mmproj vision encoder | 3-5 days | Chart reading, diagram understanding, visual Q&A, slide verification, web UI file upload. mmproj already downloaded (861MB) | Dynamic mmproj loading only for image tasks. Model-swap strategy needed (tight VRAM with Q3_K_M) |
 | 55 | **Network awareness skill** — "what's on my network?" / "anything suspicious?" via voice | 4-8 hours | Device discovery (arp-scan/nmap), baseline known vs unknown devices, port/service anomaly detection, traffic analysis summaries, threat alerts | Fits threat hunting background. Natural skill: `skills/system/network/`. Intents: scan_network, list_devices, check_threats, network_status |
+| 60 | **Mobile iOS app — COMING VERY SOON** — native Swift app with always-listening wake word + full chat UI + real-time voice | 5-8 days | JARVIS from anywhere via iPhone. Porcupine "Jarvis" wake word (on-device), WebRTC voice streaming to server (Whisper STT + Kokoro TTS), WKWebView chat UI, Tailscale VPN, Apple Shortcuts integration | Plan: `memory/plan_mobile_ios_app.md`. 6 phases. Requires Apple Developer account ($99/yr) + Mac with Xcode |
+| 61 | **Concurrent multi-user support** — handle two simultaneous mobile users (primary + secondary) | 4-8 hours | REQUIRED before dual-phone deployment. llama-server `--parallel 2`, per-user chat history, STT/TTS request queuing, session isolation, speaker-ID-based context separation | Depends on #60. Current bottlenecks: `--parallel 1`, single chat_history.jsonl, shared context window |
+| 62 | **Usage data pipeline + CI/CD** — nightly automated collection of interaction data → analysis → regression testing | 1-2 days | Two active mobile users = real usage data at scale. Automated: metric extraction, pattern analysis, test case generation, quality regression, routing accuracy tracking. Builds on existing metrics_tracker.py + chat_history.jsonl | Depends on #60 + #61. Cron/systemd timer for nightly runs. Output: daily report + auto-generated edge case tests |
 
 ---
 
@@ -86,7 +89,7 @@
 |---|------|--------|-----|-------|
 | 25 | **Web dashboard** — local Flask/FastAPI web UI for JARVIS management | 10-15 hours | Demo/showoff feature. Low daily utility | TODO |
 | 26 | **STT worker process** — GPU isolation via separate subprocess | 2-3 hours | Only needed if GPU conflicts resurface. Currently stable | STT_WORKER_PROCESS.md |
-| 27 | **Mobile access** — remote command via phone | 20+ hours | Entirely different tech stack | TODO |
+| 27 | ~~**Mobile access**~~ — **PROMOTED to Tier 2 as #60** (native iOS app with wake word + voice + chat UI) | — | — | See #60 in Tier 2 |
 | 28 | **GitHub publishing cleanup** — CONTRIBUTING.md, INSTALLATION.md, API_KEYS.md, setup.sh | 3-4 hours | Community-facing polish. Only matters if users adopt | GITHUB_PUBLISHING_PLAN.md |
 | 30 | **Multi-speaker conversation tracking** — who said what when both speak | 4-6 hours | Speaker ID Phase 3+. Requires reliable speaker identification first | MASTER_DESIGN.md |
 | 48 | **Windows native port** — full JARVIS on Windows, abstraction layers for audio/desktop/notifications | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_erica_voice_windows_port.md` |
@@ -178,4 +181,4 @@
 
 ---
 
-**Total: 58 development ideas + 11 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
+**Total: 61 development ideas + 11 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**

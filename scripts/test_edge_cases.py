@@ -82,6 +82,7 @@ class TestCase:
     expect_chunks: Optional[list] = None      # speech chunker output
     expect_self_awareness: Optional[str] = None  # self-awareness test type
     expect_task_planner: Optional[str] = None    # task planner test type
+    expect_intro_flow: Optional[str] = None      # intro state machine test type
 
     # LLM expectations (Tier 4)
     llm_system: Optional[str] = None          # system prompt (None = use default JARVIS prompt)
@@ -1320,6 +1321,402 @@ def run_task_planner_test(case):
 
 
 # ===========================================================================
+# Tier 2: Intro flow multi-turn test runner (Phase 9C)
+# ===========================================================================
+
+def run_intro_flow_test(case, components):
+    """Multi-turn state machine tests for social introductions.
+
+    Creates a temp PeopleManager DB, patches the singleton and skill reference,
+    runs the test through the router, then restores everything.
+    """
+    import tempfile
+    from core import people_manager as pm_module
+    from core.people_manager import PeopleManager
+    from core.config import load_config
+
+    test_type = case.expect_intro_flow
+    router = components["router"]
+    skill_manager = components["skill_manager"]
+    intro_skill = skill_manager.get_skill("social_introductions")
+
+    if not intro_skill:
+        return False, "social_introductions skill not loaded"
+
+    # Save originals
+    original_instance = pm_module._instance
+    original_router_pm = router.people_manager
+
+    # Create temp DB
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    cfg = load_config()
+    cfg._config.setdefault("people", {})["db_path"] = tmp.name
+    temp_pm = PeopleManager(cfg)
+
+    # Patch everywhere: singleton, router, skill cache
+    pm_module._instance = temp_pm
+    router.people_manager = temp_pm
+    intro_skill._manager_ref = temp_pm
+
+    # Reset state
+    intro_skill._reset_state()
+    conv_state = components["conv_state"]
+    conv_state.jarvis_asked_question = False
+    conv_state.turn_count = 0
+
+    try:
+        if test_type == "happy_path":
+            return _test_intro_happy_path(router, intro_skill, temp_pm)
+        elif test_type == "correction_path":
+            return _test_intro_correction(router, intro_skill, temp_pm)
+        elif test_type == "p26_interception":
+            return _test_p26_interception(router, intro_skill, temp_pm)
+        elif test_type == "timeout_expiry":
+            return _test_timeout_expiry(router, intro_skill, temp_pm)
+        elif test_type == "already_known":
+            return _test_already_known(router, intro_skill, temp_pm)
+        elif test_type == "filler_strip":
+            return _test_filler_strip(router, intro_skill, temp_pm)
+        elif test_type == "multiple_facts":
+            return _test_multiple_facts(router, intro_skill, temp_pm)
+        elif test_type == "list_people_states":
+            return _test_list_people_states(router, intro_skill, temp_pm)
+        elif test_type == "fix_pronunciation_flow":
+            return _test_fix_pronunciation_flow(router, intro_skill, temp_pm)
+        elif test_type == "done_phrases":
+            return _test_done_phrases(router, intro_skill, temp_pm)
+        else:
+            return False, f"unknown intro_flow test type: {test_type}"
+    finally:
+        # Restore
+        pm_module._instance = original_instance
+        router.people_manager = original_router_pm
+        intro_skill._manager_ref = None  # lazy re-fetch from singleton
+        intro_skill._reset_state()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+def _test_intro_happy_path(router, intro_skill, pm):
+    """Full happy path: introduce → confirm name → accept pronunciation → add fact → done."""
+    # Step 1: "meet my niece Arya" → skill routing, starts flow
+    r1 = router.route("meet my niece Arya")
+    if not r1.handled:
+        return False, f"Step 1: not handled"
+    if intro_skill._state.value != "awaiting_name_confirm":
+        return False, f"Step 1: state={intro_skill._state.value}, expected awaiting_name_confirm"
+
+    # Step 2: Confirm name → pronunciation check
+    r2 = router.route("Arya")
+    if not r2.handled or r2.intent != "intro_flow":
+        return False, f"Step 2: intent={r2.intent}, expected intro_flow"
+    if intro_skill._state.value != "awaiting_pronunciation_check":
+        return False, f"Step 2: state={intro_skill._state.value}, expected awaiting_pronunciation_check"
+
+    # Step 3: Accept pronunciation → ask for facts
+    r3 = router.route("yes")
+    if not r3.handled or r3.intent != "intro_flow":
+        return False, f"Step 3: intent={r3.intent}"
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"Step 3: state={intro_skill._state.value}, expected awaiting_facts"
+
+    # Step 4: Provide a fact → still in facts phase
+    r4 = router.route("she loves horses")
+    if not r4.handled or r4.intent != "intro_flow":
+        return False, f"Step 4: intent={r4.intent}"
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"Step 4: state={intro_skill._state.value}, expected awaiting_facts"
+
+    # Step 5: Done → back to IDLE
+    r5 = router.route("done")
+    if not r5.handled:
+        return False, f"Step 5: not handled"
+    if intro_skill._state.value != "idle":
+        return False, f"Step 5: state={intro_skill._state.value}, expected idle"
+
+    # Verify DB: person exists with correct data
+    person = pm.get_person_with_facts("Arya")
+    if not person:
+        return False, "DB: person 'Arya' not found"
+    if person["relationship"] != "niece":
+        return False, f"DB: relationship={person['relationship']}, expected niece"
+    facts = person.get("facts", [])
+    if len(facts) != 1 or "horses" not in facts[0]["content"]:
+        return False, f"DB: facts={[f['content'] for f in facts]}"
+
+    return True, "IDLE→NAME_CONFIRM→PRON_CHECK→FACTS→IDLE + DB verified"
+
+
+def _test_intro_correction(router, intro_skill, pm):
+    """Pronunciation correction path: deny → provide correction → accept → done."""
+    # Start intro
+    r1 = router.route("meet my friend Aiko")
+    if not r1.handled:
+        return False, f"Step 1: not handled"
+
+    # Confirm name
+    r2 = router.route("Aiko")
+    if intro_skill._state.value != "awaiting_pronunciation_check":
+        return False, f"Step 2: state={intro_skill._state.value}"
+
+    # Deny pronunciation
+    r3 = router.route("no")
+    if intro_skill._state.value != "awaiting_pronunciation_correction":
+        return False, f"Step 3: state={intro_skill._state.value}, expected awaiting_pronunciation_correction"
+
+    # Provide correction
+    r4 = router.route("Eye-koh")
+    if intro_skill._state.value != "awaiting_pronunciation_check":
+        return False, f"Step 4: state={intro_skill._state.value}, expected awaiting_pronunciation_check"
+
+    # Accept corrected pronunciation
+    r5 = router.route("yes")
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"Step 5: state={intro_skill._state.value}, expected awaiting_facts"
+
+    # Done
+    r6 = router.route("done")
+    if intro_skill._state.value != "idle":
+        return False, f"Step 6: state={intro_skill._state.value}, expected idle"
+
+    # Verify pronunciation stored in DB
+    person = pm.get_person_by_name("Aiko")
+    if not person:
+        return False, "DB: person 'Aiko' not found"
+    if person["pronunciation"] != "Eye-koh":
+        return False, f"DB: pronunciation={person['pronunciation']}, expected Eye-koh"
+
+    return True, "Correction: deny→correct→accept→done, pronunciation stored"
+
+
+def _test_p26_interception(router, intro_skill, pm):
+    """P2.6 interception: mid-flow utterances route via intro state, not skills."""
+    # Start intro and advance to facts phase
+    router.route("meet my brother Jake")
+    router.route("Jake")
+    router.route("yes")  # accept pronunciation → AWAITING_FACTS
+
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"Setup failed: state={intro_skill._state.value}"
+
+    # "he's a pilot" could be routed to skills (e.g., conversation) but should
+    # be intercepted by P2.6 as a fact for the intro flow
+    r = router.route("he's a pilot")
+    if r.intent != "intro_flow":
+        return False, f"intent={r.intent}, expected intro_flow (P2.6 interception failed)"
+    if not r.handled:
+        return False, "not handled — fell through P2.6"
+
+    # Verify fact was stored
+    person = pm.get_person_with_facts("Jake")
+    if not person:
+        return False, "DB: person 'Jake' not found"
+    facts = [f["content"] for f in person.get("facts", [])]
+    if "he's a pilot" not in facts:
+        return False, f"DB: fact not stored, got {facts}"
+
+    return True, "P2.6 intercepts mid-flow utterance, fact stored"
+
+
+def _test_timeout_expiry(router, intro_skill, pm):
+    """Timeout: expired state machine resets to IDLE, command falls through."""
+    # Start intro and advance to pronunciation check
+    router.route("meet my cousin Marcus")
+    router.route("Marcus")
+
+    if intro_skill._state.value != "awaiting_pronunciation_check":
+        return False, f"Setup failed: state={intro_skill._state.value}"
+
+    # Force expiry
+    intro_skill._state_expiry = time.time() - 10
+
+    # "yes" should NOT be handled by intro (expired) — falls through
+    r = router.route("yes", in_conversation=True)
+    if r.intent == "intro_flow":
+        return False, "expired state still handled by intro_flow"
+
+    # State should have reset to IDLE
+    if intro_skill._state.value != "idle":
+        return False, f"state={intro_skill._state.value}, expected idle after expiry"
+
+    return True, "Expired state → IDLE reset, command falls through"
+
+
+def _test_already_known(router, intro_skill, pm):
+    """Already-known person: second intro triggers 'I already know' branch."""
+    # Add person directly
+    pm.add_person("Sarah", "friend")
+
+    # Try to introduce again
+    r = router.route("meet my friend Sarah")
+    if not r.handled:
+        return False, "not handled"
+    if "already know" not in r.text.lower():
+        return False, f"expected 'already know' in response, got: {r.text[:80]}"
+
+    # State should still be IDLE (no flow started)
+    if intro_skill._state.value != "idle":
+        return False, f"state={intro_skill._state.value}, expected idle"
+
+    return True, "'I already know' branch, state remains IDLE"
+
+
+def _test_filler_strip(router, intro_skill, pm):
+    """Filler stripping: 'it's Zara' extracts 'Zara' as the name."""
+    # Start intro
+    router.route("meet my niece Zara")
+    if intro_skill._state.value != "awaiting_name_confirm":
+        return False, f"Setup: state={intro_skill._state.value}"
+
+    # Confirm with filler prefix
+    router.route("it's Zara")
+    if intro_skill._pending_name != "Zara":
+        return False, f"pending_name={intro_skill._pending_name}, expected Zara"
+    if intro_skill._state.value != "awaiting_pronunciation_check":
+        return False, f"state={intro_skill._state.value}, expected awaiting_pronunciation_check"
+
+    return True, "Filler 'it's' stripped, name='Zara'"
+
+
+def _test_multiple_facts(router, intro_skill, pm):
+    """Multiple facts stored before done signal."""
+    # Full flow to facts phase
+    router.route("meet my neighbor Tom")
+    router.route("Tom")
+    router.route("perfect")  # affirm pronunciation
+
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"Setup: state={intro_skill._state.value}"
+
+    # Add two facts
+    r1 = router.route("he has a dog named Biscuit")
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"After fact 1: state={intro_skill._state.value}"
+    r2 = router.route("he works at the bank")
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"After fact 2: state={intro_skill._state.value}"
+
+    # Signal done
+    router.route("that's all")
+    if intro_skill._state.value != "idle":
+        return False, f"After done: state={intro_skill._state.value}"
+
+    # Verify both facts stored
+    person = pm.get_person_with_facts("Tom")
+    if not person:
+        return False, "DB: person 'Tom' not found"
+    facts = [f["content"] for f in person.get("facts", [])]
+    if len(facts) != 2:
+        return False, f"DB: expected 2 facts, got {len(facts)}: {facts}"
+
+    return True, f"2 facts stored, done via 'that's all'"
+
+
+def _test_list_people_states(router, intro_skill, pm):
+    """list_people with 0, 1, and N people."""
+    # 0 people
+    r0 = router.route("who do you know")
+    if not r0.handled:
+        return False, "0 people: not handled"
+    if "don't know anyone" not in r0.text.lower() and "don't know anyone" not in r0.text.lower():
+        return False, f"0 people: expected 'don't know anyone', got: {r0.text[:80]}"
+
+    # 1 person
+    pm.add_person("Alice", "sister")
+    r1 = router.route("who do you know")
+    if not r1.handled:
+        return False, "1 person: not handled"
+    if "alice" not in r1.text.lower():
+        return False, f"1 person: 'Alice' not in response: {r1.text[:80]}"
+
+    # 2 people
+    pm.add_person("Bob", "brother")
+    r2 = router.route("who do you know")
+    if not r2.handled:
+        return False, "2 people: not handled"
+    text_lower = r2.text.lower()
+    if "alice" not in text_lower or "bob" not in text_lower:
+        return False, f"2 people: missing names in response: {r2.text[:80]}"
+
+    return True, "list_people: 0→'don't know', 1→Alice, 2→Alice+Bob"
+
+
+def _test_fix_pronunciation_flow(router, intro_skill, pm):
+    """Ad-hoc pronunciation fix for existing person (outside intro flow).
+
+    Step 1 calls the handler directly (semantic routing already tested in 9A-08).
+    Steps 2-4 go through the router to test P2.6 interception of the correction flow.
+    """
+    # Pre-add person
+    pid = pm.add_person("Liam", "nephew")
+
+    # Step 1: Trigger fix_pronunciation directly (bypasses semantic matching)
+    intro_skill._last_user_text = "you're mispronouncing Liam"
+    response = intro_skill.fix_pronunciation()
+    if not response:
+        return False, "Step 1: fix_pronunciation returned empty"
+    if intro_skill._state.value != "awaiting_pronunciation_correction":
+        return False, f"Step 1: state={intro_skill._state.value}, expected awaiting_pronunciation_correction"
+
+    # Step 2: Provide correction via router (P2.6 interception)
+    r2 = router.route("Lee-am")
+    if r2.intent != "intro_flow":
+        return False, f"Step 2: intent={r2.intent}, expected intro_flow"
+    if intro_skill._state.value != "awaiting_pronunciation_check":
+        return False, f"Step 2: state={intro_skill._state.value}"
+
+    # Step 3: Accept pronunciation
+    r3 = router.route("yes")
+    if intro_skill._state.value != "awaiting_facts":
+        return False, f"Step 3: state={intro_skill._state.value}"
+
+    # Step 4: Done
+    r4 = router.route("done")
+    if intro_skill._state.value != "idle":
+        return False, f"Step 4: state={intro_skill._state.value}"
+
+    # Verify pronunciation in DB
+    person = pm.get_person_by_name("Liam")
+    if not person:
+        return False, "DB: person 'Liam' not found"
+    if person["pronunciation"] != "Lee-am":
+        return False, f"DB: pronunciation={person['pronunciation']}, expected Lee-am"
+
+    return True, "fix_pronunciation: handler→correction→accept→done, DB verified"
+
+
+def _test_done_phrases(router, intro_skill, pm):
+    """Various done phrases all terminate the facts phase."""
+    done_signals = ["no", "nothing", "that's it", "no thanks", "i'm good"]
+    for phrase in done_signals:
+        # Reset state and create a test person
+        intro_skill._reset_state()
+        test_name = f"TestDone{done_signals.index(phrase)}"
+        pid = pm.add_person(test_name, "friend")
+
+        # Directly set state machine to AWAITING_FACTS (skip full flow for speed)
+        # Get IntroState enum from the skill's own _state (which is IDLE after reset)
+        _IntroState = type(intro_skill._state)
+        intro_skill._state = _IntroState.AWAITING_FACTS
+        intro_skill._pending_name = test_name
+        intro_skill._pending_person_id = pid
+        intro_skill._pending_rel = "friend"
+        intro_skill._state_expiry = time.time() + 60
+
+        r = router.route(phrase)
+        if intro_skill._state != _IntroState.IDLE:
+            return False, f"'{phrase}' did not reset to IDLE (state={intro_skill._state.value})"
+
+        # Cleanup for next iteration
+        pm.delete_person(pid)
+
+    return True, f"All done phrases work: {done_signals}"
+
+
+# ===========================================================================
 # Tier 2: Routing test runner
 # ===========================================================================
 
@@ -1617,7 +2014,10 @@ def run_test(case, components, results):
         if not components:
             results.skip(case.id, "Tier 2 components not loaded")
             return
-        passed, detail = run_routing_test(case, components)
+        if case.expect_intro_flow is not None:
+            passed, detail = run_intro_flow_test(case, components)
+        else:
+            passed, detail = run_routing_test(case, components)
     elif case.tier == 4:
         passed, detail = run_llm_test(case)
     else:
@@ -2802,6 +3202,58 @@ TESTS += [
     TestCase("9B-03", "", 1, "9B", "PeopleManager Context Injection",
              expect_self_awareness="people_manager_context",
              notes="People context for LLM injection"),
+]
+
+
+# ---------------------------------------------------------------------------
+# TIER 2: Phase 9C — Social Introductions Multi-Turn State Machine
+# ---------------------------------------------------------------------------
+# Tests the full multi-turn introduction flow through the router.
+# Each test exercises a complete state machine path via sequential route() calls.
+# Uses temp DB isolation — no production data affected.
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("9C-01", "meet my niece Arya",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="happy_path",
+             notes="Full happy path: IDLE→NAME_CONFIRM→PRON_CHECK→FACTS→IDLE"),
+    TestCase("9C-02", "meet my friend Aiko",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="correction_path",
+             notes="Pronunciation correction: deny→correct→accept→done"),
+    TestCase("9C-03", "meet my brother Jake",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="p26_interception",
+             notes="P2.6 intercepts mid-flow commands, facts stored not skill-routed"),
+    TestCase("9C-04", "meet my cousin Marcus",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="timeout_expiry",
+             notes="Expired state resets to IDLE, command falls through"),
+    TestCase("9C-05", "meet my friend Sarah",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="already_known",
+             notes="Already-known person triggers 'I already know' branch"),
+    TestCase("9C-06", "meet my niece Zara",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="filler_strip",
+             notes="Filler 'it's' stripped during name confirmation"),
+    TestCase("9C-07", "meet my neighbor Tom",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="multiple_facts",
+             notes="Multiple facts stored before 'that's all' done signal"),
+    TestCase("9C-08", "who do you know",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="list_people_states",
+             notes="list_people with 0, 1, N people in DB"),
+    TestCase("9C-09", "you're mispronouncing Liam",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="fix_pronunciation_flow",
+             notes="Ad-hoc pronunciation fix for existing person"),
+    TestCase("9C-10", "",
+             2, "9C", "Intro State Machine",
+             expect_intro_flow="done_phrases",
+             notes="All done signals terminate facts phase: no, nothing, that's it, etc."),
 ]
 
 
