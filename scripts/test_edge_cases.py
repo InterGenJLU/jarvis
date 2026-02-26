@@ -603,10 +603,10 @@ def run_self_awareness_test(case):
         state_str = sa.get_compact_state()
         if not isinstance(state_str, str):
             return False, f"compact state not a string: {type(state_str)}"
-        # If non-empty, must start with "State:"
-        if state_str and not state_str.startswith("State:"):
+        # If non-empty, must start with the hardware header
+        if state_str and not state_str.startswith("YOUR HARDWARE"):
             return False, f"compact state bad format: {state_str!r}"
-        return True, f"compact state: {state_str!r} (valid format)"
+        return True, f"compact state: {state_str[:60]!r}... (valid format)"
 
     elif test_type == "system_state_uptime":
         state = sa.get_system_state()
@@ -1622,6 +1622,24 @@ TESTS += [
     TestCase("7B-14", "1,234,567", 1, "7B", "TTS Normalizer",
              expect_normalized="one million two hundred thirty-four thousand five hundred sixty-seven",
              notes="Large number with commas"),
+    TestCase("7B-15", "192.168.1.100", 1, "7B", "TTS Normalizer",
+             expect_normalized="one hundred",
+             notes="IP octet 100 → colloquial 'one hundred'"),
+    TestCase("7B-16", "10.200.0.1", 1, "7B", "TTS Normalizer",
+             expect_normalized="two hundred",
+             notes="IP octet 200 → colloquial 'two hundred'"),
+    TestCase("7B-17", "The API returned an error", 1, "7B", "TTS Normalizer",
+             expect_normalized="eh pee eye",
+             notes="API phonetic spelling for Kokoro"),
+    TestCase("7B-18", "Use HTTPS for security", 1, "7B", "TTS Normalizer",
+             expect_normalized="aitch tee tee pee ess",
+             notes="HTTPS phonetic spelling for Kokoro"),
+    TestCase("7B-19", "I can read news feeds", 1, "7B", "TTS Normalizer",
+             expect_normalized="can reed",
+             notes="Heteronym: 'read' after modal → present tense 'reed'"),
+    TestCase("7B-20", "I read the book yesterday", 1, "7B", "TTS Normalizer",
+             expect_normalized="read",
+             notes="Heteronym: 'read' without modal → unchanged (past tense OK)"),
 ]
 
 # ---------------------------------------------------------------------------

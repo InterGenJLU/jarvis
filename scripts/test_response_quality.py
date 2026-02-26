@@ -259,6 +259,8 @@ def init_components():
     tts = TTSStub()
     conversation = ConversationManager(config)
     conversation.current_user = "user"
+    # Clear stale history so tests start clean (avoids chat_history.jsonl poisoning)
+    conversation.session_history = []
     responses = get_response_library()
     llm = LLMRouter(config)
     sm = SkillManager(config, conversation, tts, responses, llm)
@@ -299,7 +301,7 @@ def init_components():
         web_researcher = WebResearcher(config)
 
     # Self-awareness + task planner
-    sa = SelfAwareness(skill_manager=sm, config=config)
+    sa = SelfAwareness(skill_manager=sm, memory_manager=memory_manager, config=config)
     tp = TaskPlanner(llm=None, skill_manager=sm, self_awareness=sa, event_queue=None)
 
     cs = ConversationState()
@@ -308,6 +310,7 @@ def init_components():
         reminder_manager=reminder_manager, memory_manager=memory_manager,
         context_window=context_window, conv_state=cs, config=config,
         web_researcher=web_researcher, task_planner=tp,
+        self_awareness=sa,
     )
 
     elapsed = time.perf_counter() - t0
@@ -336,6 +339,12 @@ def reset_state(components):
         cs.jarvis_asked_question = False
         cs.turn_count = 0
         cs.research_results = None
+        cs.research_exchange = None
+
+    # Clear conversation history so prior test answers don't contaminate
+    router = components.get("router")
+    if router and hasattr(router, 'conversation'):
+        router.conversation.session_history = []
 
     mm = components.get("memory_manager")
     if mm and hasattr(mm, '_pending_forget'):

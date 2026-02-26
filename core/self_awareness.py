@@ -180,13 +180,17 @@ class SelfAwareness:
         except Exception:
             pass
 
-        # RAM from /proc/meminfo
+        # RAM from /proc/meminfo (rounded to nearest standard size since
+        # kernel reserves some memory, e.g. 62.7 GB reported → 64 GB installed)
         try:
             with open("/proc/meminfo") as f:
                 for line in f:
                     if line.startswith("MemTotal:"):
                         kb = int(line.split()[1])
-                        hw["ram_total_gb"] = round(kb / 1048576, 1)
+                        raw_gb = kb / 1048576
+                        # Round to nearest standard RAM size (what's actually installed)
+                        standards = [1, 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512]
+                        hw["ram_total_gb"] = min(standards, key=lambda s: abs(s - raw_gb))
                         break
         except Exception:
             pass
@@ -349,33 +353,37 @@ class SelfAwareness:
     # ------------------------------------------------------------------
 
     def get_compact_state(self) -> str:
-        """One-line state summary for system prompt injection."""
+        """Prescriptive state block for system prompt injection.
+
+        Uses assertive 'You ARE running X' format so the LLM quotes
+        exact values instead of hallucinating plausible-sounding ones.
+        Prescriptive > permissive for small quantized models.
+        """
         state = self.get_system_state()
-        parts = []
+        lines = ["YOUR HARDWARE — these are EXACT facts. Quote them verbatim when asked:"]
         if state.llm_provider and state.llm_provider != "unknown":
-            llm_label = f"LLM: {state.llm_provider}"
+            llm_label = f"You ARE running {state.llm_provider}"
             if state.llm_quant:
-                llm_label += f" ({state.llm_quant} quant)"
-            parts.append(llm_label)
-        # Hardware identity
+                llm_label += f" with {state.llm_quant} quantization"
+            lines.append(f"- {llm_label}")
         if state.cpu_model:
-            parts.append(f"CPU: {state.cpu_model} ({state.cpu_cores} cores)")
+            lines.append(f"- You have an {state.cpu_model} CPU with {state.cpu_cores} cores")
         if state.ram_total_gb:
-            parts.append(f"{state.ram_total_gb:.0f}GB RAM")
+            lines.append(f"- You have {state.ram_total_gb:.0f}GB RAM")
         if state.gpu_model:
-            gpu_label = f"GPU: {state.gpu_model}"
+            gpu_label = f"You have a {state.gpu_model}"
             if state.gpu_vram_gb:
-                gpu_label += f" ({state.gpu_vram_gb:.0f}GB VRAM)"
-            parts.append(gpu_label)
+                gpu_label += f" GPU with {state.gpu_vram_gb:.0f}GB VRAM"
+            lines.append(f"- {gpu_label}")
         if state.memory_fact_count:
-            parts.append(f"{state.memory_fact_count} remembered facts about the user")
+            lines.append(f"- You remember {state.memory_fact_count} facts about the user")
         if state.context_token_budget:
-            parts.append(f"{state.context_tokens_used}/{state.context_token_budget} ctx tokens")
+            lines.append(f"- Context: {state.context_tokens_used}/{state.context_token_budget} tokens")
         if state.llm_avg_latency_ms:
-            parts.append(f"avg {state.llm_avg_latency_ms:.0f}ms latency")
+            lines.append(f"- Avg latency: {state.llm_avg_latency_ms:.0f}ms")
         if state.commands_processed:
-            parts.append(f"{state.commands_processed} commands")
-        return f"State: {' | '.join(parts)}" if parts else ""
+            lines.append(f"- Commands processed: {state.commands_processed}")
+        return "\n".join(lines) if len(lines) > 1 else ""
 
     # ------------------------------------------------------------------
     # Duration estimation

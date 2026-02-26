@@ -70,11 +70,13 @@ class TTSNormalizer:
         # Register normalizations (order matters!)
         self.normalizations: Dict[str, Callable] = {
             "markdown": self.normalize_markdown,  # Strip markdown formatting FIRST
+            "heteronyms": self.normalize_heteronyms,  # read/lead before TTS sees them
             "pauses": self.normalize_pauses,  # Convert punctuation pauses
             "ips": self.normalize_ips,
             "ports": self.normalize_ports,
             "cpu_gpu_models": self.normalize_cpu_gpu_models,  # Add before years
             "model_nomenclature": self.normalize_model_nomenclature,  # Qwen3.5-35B-A3B before decimals/numbers
+            "quant_strings": self.normalize_quant_strings,  # Q3_K_M, Q4_K_S before technical_terms
             "years": self.normalize_years,
             "file_sizes": self.normalize_file_sizes,
             "timestamps": self.normalize_timestamps,
@@ -142,6 +144,20 @@ class TTSNormalizer:
         text = text.replace(" - ", "... ")
         return text
 
+    # ========== Heteronyms ==========
+    def normalize_heteronyms(self, text: str) -> str:
+        """Fix words that TTS mispronounces due to ambiguous spelling.
+
+        'read' (present tense, /riːd/) vs 'read' (past tense, /rɛd/):
+        After modal verbs or 'to', it's present tense → spell as 'reed'.
+        """
+        # "can read", "will read", "to read", etc. → present tense
+        text = re.sub(
+            r'\b(can|will|could|should|may|might|to)\s+read\b',
+            r'\1 reed', text, flags=re.IGNORECASE,
+        )
+        return text
+
     # ========== IP Addresses ==========
     def normalize_ips(self, text: str) -> str:
         """192.168.1.1 → 'one nine two dot one six eight dot one dot one'"""
@@ -152,9 +168,13 @@ class TTSNormalizer:
             parts = ip.split(".")
             spoken_parts = []
             for part in parts:
-                # Read each digit separately
-                spoken_digits = " ".join(self.digit_words[d] for d in part)
-                spoken_parts.append(spoken_digits)
+                # Colloquial for round hundreds (100, 200)
+                if part in ("100", "200"):
+                    spoken_parts.append(self._number_to_words(int(part)))
+                else:
+                    # Read each digit separately
+                    spoken_digits = " ".join(self.digit_words[d] for d in part)
+                    spoken_parts.append(spoken_digits)
             return " dot ".join(spoken_parts)
         
         return re.sub(ipv4_pattern, ip_to_spoken, text)
@@ -310,6 +330,42 @@ class TTSNormalizer:
             else:
                 spoken.append(part)
         return ' '.join(spoken)
+
+    # ========== Quantization Strings ==========
+    def normalize_quant_strings(self, text: str) -> str:
+        """Normalize GGUF quantization labels for speech.
+
+        Q3_K_M  → Q three K M
+        Q4_K_S  → Q four K S
+        IQ2_XXS → I Q two X X S
+        F16     → F sixteen
+        """
+        def _quant_to_spoken(match):
+            raw = match.group(0)
+            # Split on underscores: ["Q3", "K", "M"] or ["IQ2", "XXS"]
+            parts = raw.split('_')
+            spoken = []
+            for part in parts:
+                if not part:
+                    continue
+                # Split leading letters from trailing digits: "Q3" → "Q", "3"
+                m = re.match(r'^([A-Za-z]+)(\d+)?$', part)
+                if m:
+                    letters = m.group(1)
+                    digits = m.group(2)
+                    # Spell out short uppercase letter groups
+                    if letters.isupper() and len(letters) <= 3:
+                        spoken.append(' '.join(letters))
+                    else:
+                        spoken.append(letters)
+                    if digits:
+                        spoken.append(self._number_to_words(int(digits)))
+                else:
+                    spoken.append(part)
+            return ' '.join(spoken)
+
+        # Match patterns like Q3_K_M, Q4_K_S, IQ2_XXS, BF16, F16, Q5_0, etc.
+        return re.sub(r'\b(?:IQ|BF|[QIF])\d+(?:_[A-Z0-9]+)*\b', _quant_to_spoken, text)
 
     # ========== Ports ==========
     def normalize_ports(self, text: str) -> str:
@@ -716,11 +772,13 @@ class TTSNormalizer:
             r"\bCPU\b": "C P U",
             r"\bGPU\b": "G P U",
             r"\bRAM\b": "ram",
-            r"\bAPI\b": "A P I",
+            r"\bAPI\b": "eh pee eye",
             r"\bUSB\b": "U S B",
             r"\bSSH\b": "S S H",
-            r"\bHTTP\b": "H T T P",
-            r"\bHTTPS\b": "H T T P S",
+            r"\bTCP\b": "T C P",
+            r"\bUDP\b": "U D P",
+            r"\bHTTP\b": "aitch tee tee pee",
+            r"\bHTTPS\b": "aitch tee tee pee ess",
             r"\bFTP\b": "F T P",
             r"\bDNS\b": "D N S",
             r"\bVPN\b": "V P N",

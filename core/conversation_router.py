@@ -202,10 +202,16 @@ class ConversationRouter:
             if result:
                 return result
 
-        # --- Pre-P4b: Self-referential hardware queries bypass skills ---
-        if self._is_self_hardware_query(command):
-            logger.info("Self-referential hardware query — routing to LLM")
-        elif not (doc_buffer and doc_buffer.active):
+        # --- Pre-P4b: Self-referential hardware queries ---
+        # Answer directly from SelfAwareness data — avoids LLM hallucination
+        # of hardware specs (Qwen Q3_K_M overrides context with training priors)
+        is_hw_query = self._is_self_hardware_query(command)
+        if is_hw_query:
+            result = self._handle_hw_self_query(command)
+            if result:
+                return result
+            logger.info("Self-referential hardware query — falling through to LLM")
+        if not is_hw_query and not (doc_buffer and doc_buffer.active):
             # --- Priority 4: Skill routing (skip when doc_buffer active) ---
             result = self._handle_skill_routing(command)
             if result:
@@ -665,6 +671,7 @@ class ConversationRouter:
         "cpu", "gpu", "ram", "memory", "processor", "storage",
         "drive", "drives", "cores", "vram", "hard drive",
         "graphics card", "specs", "hardware",
+        "model", "quantization", "quant",
     }
 
     def _is_self_hardware_query(self, command: str) -> bool:
@@ -679,6 +686,102 @@ class ConversationRouter:
             return False
         # Must contain a hardware keyword
         return any(kw in lower for kw in self._HW_KEYWORDS)
+
+    def _handle_hw_self_query(self, command: str) -> RouteResult | None:
+        """Answer self-referential hardware queries directly from SelfAwareness.
+
+        Builds a natural-language response from known system state rather than
+        letting the LLM hallucinate specs from training data priors.
+        Returns None for unrecognized hardware questions (falls through to LLM).
+        """
+        if not self.self_awareness:
+            return None
+
+        state = self.self_awareness.get_system_state()
+        h = persona.get_honorific()
+        lower = command.lower()
+        words = set(re.findall(r'\b\w+\b', lower))
+
+        # Determine which hardware aspect they're asking about
+        if words & {"model", "llm"} and not words & {"cpu", "gpu", "ram"}:
+            if state.llm_provider and state.llm_provider != "unknown":
+                text = f"I'm running the {state.llm_provider}"
+                if state.llm_quant:
+                    text += f" with {state.llm_quant} quantization"
+                text += f", {h}."
+            else:
+                return None
+
+        elif words & {"quantization", "quant"}:
+            if state.llm_quant:
+                text = f"I'm using {state.llm_quant} quantization"
+                if state.llm_provider and state.llm_provider != "unknown":
+                    text += f" for the {state.llm_provider} model"
+                text += f", {h}."
+            else:
+                return None
+
+        elif words & {"cpu", "processor"}:
+            if state.cpu_model:
+                text = f"I'm running on an {state.cpu_model} with {state.cpu_cores} cores, {h}."
+            else:
+                return None
+
+        elif words & {"gpu", "graphics"}:
+            if state.gpu_model:
+                text = f"I'm running on a {state.gpu_model}"
+                if state.gpu_vram_gb:
+                    text += f" with {state.gpu_vram_gb:.0f}GB of VRAM"
+                text += f", {h}."
+            else:
+                return None
+
+        elif words & {"ram"} and not words & {"cpu", "gpu"}:
+            if state.ram_total_gb:
+                text = f"I have {state.ram_total_gb:.0f}GB of RAM, {h}."
+            else:
+                return None
+
+        elif words & {"vram"}:
+            if state.gpu_vram_gb:
+                text = f"I have {state.gpu_vram_gb:.0f}GB of VRAM"
+                if state.gpu_model:
+                    text += f" on my {state.gpu_model}"
+                text += f", {h}."
+            else:
+                return None
+
+        elif words & {"specs", "hardware"}:
+            # Broad specs question — list everything
+            parts = []
+            if state.cpu_model:
+                parts.append(f"an {state.cpu_model} with {state.cpu_cores} cores")
+            if state.ram_total_gb:
+                parts.append(f"{state.ram_total_gb:.0f}GB of RAM")
+            if state.gpu_model:
+                gpu = state.gpu_model
+                if state.gpu_vram_gb:
+                    gpu += f" with {state.gpu_vram_gb:.0f}GB of VRAM"
+                parts.append(gpu)
+            if state.llm_provider and state.llm_provider != "unknown":
+                llm = state.llm_provider
+                if state.llm_quant:
+                    llm += f" at {state.llm_quant}"
+                parts.append(f"running the {llm} model")
+            if parts:
+                text = f"I'm running on {', '.join(parts)}, {h}."
+            else:
+                return None
+
+        else:
+            # Unrecognized hardware aspect — let LLM handle it
+            return None
+
+        logger.info(f"Hardware self-query answered directly: {text[:60]}...")
+        return RouteResult(
+            text=text, intent="hw_self_query", source="self_awareness",
+            handled=True, open_window=DEFAULT_WINDOW,
+        )
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""
