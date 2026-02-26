@@ -12,6 +12,8 @@ Phase 1 of the Autonomous Task Planner plan.
 import logging
 import os
 import re
+import socket
+import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -46,6 +48,13 @@ class SystemState:
     llm_provider: str = "unknown"
     llm_quant: str = ""
     llm_avg_latency_ms: float = 0.0
+    # Hardware identity
+    cpu_model: str = ""
+    cpu_cores: int = 0
+    ram_total_gb: float = 0.0
+    gpu_model: str = ""
+    gpu_vram_gb: float = 0.0
+    hostname: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +94,9 @@ class SelfAwareness:
         # Cache the manifest — skills don't change at runtime
         self._cached_manifest: Optional[str] = None
         self._cached_capabilities: Optional[list[SkillCapability]] = None
+
+        # Hardware cache — static, read once
+        self._hardware_cache: Optional[dict] = None
 
         logger.info("SelfAwareness initialized")
 
@@ -131,6 +143,101 @@ class SelfAwareness:
 
         self._cached_capabilities = capabilities
         return capabilities
+
+    # ------------------------------------------------------------------
+    # Hardware detection (cached — static values)
+    # ------------------------------------------------------------------
+
+    def _detect_hardware(self) -> dict:
+        """Read hardware info once and cache it."""
+        if self._hardware_cache is not None:
+            return self._hardware_cache
+
+        hw = {
+            "cpu_model": "", "cpu_cores": 0,
+            "ram_total_gb": 0.0,
+            "gpu_model": "", "gpu_vram_gb": 0.0,
+            "hostname": "",
+        }
+
+        # Hostname
+        try:
+            hw["hostname"] = socket.gethostname()
+        except Exception:
+            pass
+
+        # CPU model from /proc/cpuinfo
+        try:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if line.startswith("model name"):
+                        cpu = line.split(":", 1)[1].strip()
+                        # Strip redundant suffix like "12-Core Processor"
+                        cpu = re.sub(r'\s+\d+-Core Processor$', '', cpu)
+                        hw["cpu_model"] = cpu
+                        break
+            hw["cpu_cores"] = os.cpu_count() or 0
+        except Exception:
+            pass
+
+        # RAM from /proc/meminfo
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        kb = int(line.split()[1])
+                        hw["ram_total_gb"] = round(kb / 1048576, 1)
+                        break
+        except Exception:
+            pass
+
+        # GPU model + VRAM from rocm-smi (AMD ROCm)
+        try:
+            result = subprocess.run(
+                ["rocm-smi", "--showproductname"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "Card Series" in line or "Card series" in line:
+                        hw["gpu_model"] = line.split(":")[-1].strip()
+                        break
+
+            # VRAM
+            result = subprocess.run(
+                ["rocm-smi", "--showmeminfo", "vram"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "Total" in line and "Memory" in line:
+                        # Parse "VRAM Total Memory (B): 21474836480"
+                        parts = line.split(":")
+                        if len(parts) >= 2:
+                            try:
+                                vram_bytes = int(parts[-1].strip())
+                                hw["gpu_vram_gb"] = round(vram_bytes / (1024**3), 1)
+                            except ValueError:
+                                pass
+                        break
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # No rocm-smi — try lspci fallback for GPU name
+            try:
+                result = subprocess.run(
+                    ["lspci"], capture_output=True, text=True, timeout=5,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.splitlines():
+                        if "VGA" in line or "Display" in line or "3D" in line:
+                            hw["gpu_model"] = line.split(":", 2)[-1].strip()
+                            break
+            except Exception:
+                pass
+
+        self._hardware_cache = hw
+        logger.info(f"Hardware detected: CPU={hw['cpu_model']}, "
+                     f"RAM={hw['ram_total_gb']}GB, GPU={hw['gpu_model']}")
+        return hw
 
     # ------------------------------------------------------------------
     # System state
@@ -185,6 +292,15 @@ class SelfAwareness:
         if self._metrics:
             summary = self._metrics.get_summary(hours=24)
             state.llm_avg_latency_ms = summary.get("avg_latency_ms", 0.0)
+
+        # Hardware identity (cached — read once)
+        hw = self._detect_hardware()
+        state.cpu_model = hw["cpu_model"]
+        state.cpu_cores = hw["cpu_cores"]
+        state.ram_total_gb = hw["ram_total_gb"]
+        state.gpu_model = hw["gpu_model"]
+        state.gpu_vram_gb = hw["gpu_vram_gb"]
+        state.hostname = hw["hostname"]
 
         return state
 
@@ -241,6 +357,16 @@ class SelfAwareness:
             if state.llm_quant:
                 llm_label += f" ({state.llm_quant} quant)"
             parts.append(llm_label)
+        # Hardware identity
+        if state.cpu_model:
+            parts.append(f"CPU: {state.cpu_model} ({state.cpu_cores} cores)")
+        if state.ram_total_gb:
+            parts.append(f"{state.ram_total_gb:.0f}GB RAM")
+        if state.gpu_model:
+            gpu_label = f"GPU: {state.gpu_model}"
+            if state.gpu_vram_gb:
+                gpu_label += f" ({state.gpu_vram_gb:.0f}GB VRAM)"
+            parts.append(gpu_label)
         if state.memory_fact_count:
             parts.append(f"{state.memory_fact_count} remembered facts about the user")
         if state.context_token_budget:

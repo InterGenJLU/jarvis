@@ -202,8 +202,11 @@ class ConversationRouter:
             if result:
                 return result
 
-        # --- Priority 4: Skill routing (skip when doc_buffer active) ---
-        if not (doc_buffer and doc_buffer.active):
+        # --- Pre-P4b: Self-referential hardware queries bypass skills ---
+        if self._is_self_hardware_query(command):
+            logger.info("Self-referential hardware query — routing to LLM")
+        elif not (doc_buffer and doc_buffer.active):
+            # --- Priority 4: Skill routing (skip when doc_buffer active) ---
             result = self._handle_skill_routing(command)
             if result:
                 return result
@@ -656,6 +659,26 @@ class ConversationRouter:
             handled=True,
             open_window=30.0,
         )
+
+    # Hardware keywords for self-referential detection
+    _HW_KEYWORDS = {
+        "cpu", "gpu", "ram", "memory", "processor", "storage",
+        "drive", "drives", "cores", "vram", "hard drive",
+        "graphics card", "specs", "hardware",
+    }
+
+    def _is_self_hardware_query(self, command: str) -> bool:
+        """Detect 'you/your' hardware queries that should bypass skill routing.
+
+        'What CPU are you running?' → True  (LLM answers in first person)
+        'What CPU do I have?'       → False (system_info skill answers)
+        """
+        lower = command.lower()
+        # Must contain a self-referential pronoun
+        if not re.search(r'\byou(?:r|rs|rself)?\b', lower):
+            return False
+        # Must contain a hardware keyword
+        return any(kw in lower for kw in self._HW_KEYWORDS)
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""
