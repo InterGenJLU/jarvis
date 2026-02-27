@@ -286,11 +286,13 @@ def intro_unknown(name: str) -> str:
 def system_prompt() -> str:
     """Primary system prompt for LLM chat (streaming, tool calling, etc.)."""
     h = get_honorific()
-    today = datetime.now().strftime("%A, %B %d, %Y")
+    now = datetime.now()
+    today = now.strftime("%A, %B %d, %Y")
+    current_time = now.strftime("%I:%M %p").lstrip("0")
     return (
         f"You are JARVIS, a personal AI assistant running locally on the user's computer. "
         f"You are NOT the fictional JARVIS from Marvel movies. "
-        f"Today is {today}. "
+        f"Today is {today}. The current local time is {current_time}. "
         f"RULES YOU MUST FOLLOW:\n"
         f"1. Address the user as '{h}' — work it naturally into your responses.\n"
         f"2. NEVER end a response with 'feel free to ask', 'let me know', 'if you have any questions', or similar filler. Just answer and stop.\n"

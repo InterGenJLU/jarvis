@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Iterator, Union
 from pathlib import Path
 
-from datetime import date
+from datetime import date, datetime
 from core.logger import get_logger
 from core.honorific import get_honorific
 import requests
@@ -1099,7 +1099,9 @@ class LLMRouter:
         tool_names = {t["function"]["name"] for t in tools}
         has_skill_tools = bool(tool_names - {"web_search"})
 
-        today = date.today().strftime("%B %d, %Y")
+        now = datetime.now()
+        today = now.strftime("%B %d, %Y")
+        current_time = now.strftime("%I:%M %p").lstrip("0")
 
         if has_skill_tools:
             # --- Multi-tool prompt (LLM-centric migration) ---
@@ -1107,7 +1109,7 @@ class LLMRouter:
             # call (or whether to answer directly).  The semantic matcher has
             # already pruned the tool list to relevant candidates.
             system_prompt += (
-                f"\n\nToday's date is {today}.\n\n"
+                f"\n\nToday's date is {today}. Current time: {current_time}.\n\n"
                 "You have access to tools that can retrieve local data. "
                 "RULES — follow these EXACTLY:\n"
                 "1. If a tool matches the user's request, ALWAYS call it — "
@@ -1136,7 +1138,7 @@ class LLMRouter:
             # --- Web-search-only prompt (original prescriptive rules) ---
             # Tested 15 runs × 7 queries + 15 edge cases × 3 runs = 0 failures.
             system_prompt += (
-                f"\n\nToday's date is {today}. "
+                f"\n\nToday's date is {today}. Current time: {current_time}. "
                 "Your training data is OUTDATED and UNRELIABLE.\n\n"
                 "RULES — follow these EXACTLY:\n"
                 "1. You MUST call web_search for ANY question that has a verifiable "
@@ -1389,13 +1391,15 @@ class LLMRouter:
         # Don't lead with the honorific since the ack phrase already used it.
         # Anti-hallucination is safe HERE (synthesis) — it only suppresses
         # tool calling when placed in the system prompt for stream_with_tools().
-        today = date.today().strftime("%B %d, %Y")
+        now = datetime.now()
+        today = now.strftime("%B %d, %Y")
+        current_time = now.strftime("%I:%M %p").lstrip("0")
         if tools:
             # Multi-tool mode: allow LLM to call remaining tools before answering
             messages.append({
                 "role": "user",
                 "content": (
-                    f"Today's date is {today}. "
+                    f"Today's date is {today}. Current time: {current_time}. "
                     "You have one tool result above. Check the user's ORIGINAL request — "
                     "if they asked for multiple things (e.g. 'time AND weather'), "
                     "call the next tool NOW. No location is needed for get_weather. "
@@ -1407,7 +1411,7 @@ class LLMRouter:
             messages.append({
                 "role": "user",
                 "content": (
-                    f"Today's date is {today}. "
+                    f"Today's date is {today}. Current time: {current_time}. "
                     "Based on the search results above, give a direct, concise answer. "
                     "Include specific details like scores, dates, and numbers when available. "
                     "Maintain strict political neutrality — present facts objectively without "

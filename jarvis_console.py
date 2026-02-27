@@ -239,11 +239,13 @@ def _do_web_search(query, web_researcher, llm, console):
         call_id="forced_search",
     )
     # Prime the LLM's tool call message history
-    from datetime import date
-    today = date.today().strftime("%B %d, %Y")
+    from datetime import datetime
+    now = datetime.now()
+    today = now.strftime("%B %d, %Y")
+    current_time = now.strftime("%I:%M %p").lstrip("0")
     system_prompt = llm._build_system_prompt()
     system_prompt += (
-        f"\n\nToday's date is {today}. "
+        f"\n\nToday's date is {today}. Current time: {current_time}. "
         "Your training data is OUTDATED. "
         "Answer the user's question using ONLY the search results provided."
     )
