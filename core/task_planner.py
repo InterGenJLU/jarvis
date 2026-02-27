@@ -34,7 +34,6 @@ logger = logging.getLogger("jarvis.task_planner")
 COMPOUND_SIGNALS = [
     "and then",
     "and also",
-    "and what",
     "and remind",
     "and create",
     "and show",
