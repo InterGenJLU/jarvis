@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** February 26, 2026 (session 76 — mobile iOS app promoted to Tier 2)
+**Updated:** February 26, 2026 (session 87 — Phase 1 COMPLETE)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -19,10 +19,31 @@
 
 ---
 
-## Tier 2: High ROI, Medium Effort — Next Wave
+## TOP PRIORITY: LLM-Centric Architecture Migration
+
+*ALL other development is deprioritized behind this. Promoted from Tier 4 (session 82, Feb 26).*
 
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
+| 20 | **LLM-centric architecture migration** — skills become tools, not destinations. Qwen3.5 receives every request, decides which tools to call | 20-40 hours (4 phases) | Eliminates fragile 13-tier routing, unlocks full Qwen3.5 capabilities (coding, vision, reasoning), solves conversation constraints | DEVELOPMENT_VISION.md. Research plan: `memory/research_qwen35_prompt_control.md`. **No longer waiting for smaller model** — Qwen3.5-35B-A3B has coding (SWE-bench 69.2) + vision + tool calling proven. Primary hurdle: prompt engineering for reliable tool selection |
+
+**Blocking research:** COMPLETE. See `memory/research_qwen35_prompt_control.md` (72 sources, Sections A-O).
+
+**Phase sequence (from DEVELOPMENT_VISION.md):**
+1. ~~Phase 1: Low-stakes skills as tools (system_info, filesystem, time)~~ — **COMPLETE Feb 26.** 100% accuracy (600/600 trials), 822ms avg latency, 266/266 existing tests pass. Commit `06dd741`.
+2. Phase 2: API-backed skills as tools (weather, reminders, developer_tools) — **NEXT.** Assess 5-6 tool cliff risk.
+3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision)
+4. Phase 4: Routing layer evaluation (remove semantic matcher, keyword routing, priority layers)
+
+---
+
+## Tier 2: High ROI, Medium Effort — Next Wave
+
+*Deprioritized behind LLM-centric migration. Many items simplify or become obsolete once migration completes.*
+
+| # | Item | Effort | ROI | Notes |
+|---|------|--------|-----|-------|
+| 59 | **Social introductions** — "meet my niece Arya" → name/relationship extraction, optional speaker enrollment, butler-style greeting | 3-4 hours | Pure personality. Makes JARVIS feel *real*. Leverages existing speaker_id, user_profile, honorific, persona. Optional enrollment prompt ("Shall I add Ms. Arya to the household, sir?"). Gender from relationship words (niece→Ms., nephew→Mr.). Edge cases: pets, groups, re-introductions | COMPLETE Feb 25 |
 | 7 | **Inject user facts into web research** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Risk: history poisoning needs careful scoping |
 | 9 | **Email skill (Gmail)** — voice-composed email via Gmail API + OAuth | 6-8 hours | Major productivity — compose, read, reply, search, archive by voice | Same OAuth pattern as Calendar. Full schema in MASTER_DESIGN.md |
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user |
@@ -32,7 +53,7 @@
 | 49 | **Document refinement follow-ups** — cache last structure/research, add `refine_document` intent for iterative revision | 3-4 hours | "Make slide 3 more detailed" / "add more statistics" after doc gen. Currently stumps JARVIS — no pipeline state persistence | Cache structure JSON + research context on skill instance, 10-min expiry, LLM modifies cached structure on follow-up |
 | 50 | **AI image generation (FLUX.1-schnell)** — local image gen for doc gen, hybrid with Pexels | 4-6 hours | Pexels fails for tech/abstract topics. LLM decides per-slide: Pexels (photographic) vs FLUX (conceptual). Pre-load during research phase to hide cold start | Research complete: `memory/research_image_gen_ocr_selfprompt.md`. FLUX FP8 fits 20GB VRAM, ~12-20s/image. SDXL Lightning as faster fallback |
 | 51 | **Vision/OCR skill — Phase 1 Tesseract** — "read this" / "what does this say" via screenshot + OCR | 1-2 days | Immediate daily utility. CPU-only, 95-98% accuracy, 0.5-2s/page. Input via clipboard/screenshot/file | Proposed: `skills/system/vision/`. 4 intents: read_screen, describe_image, read_document, read_chart |
-| 52 | **Vision/OCR skill — Phase 2-3 Qwen3.5** — full image understanding via mmproj vision encoder | 3-5 days | Chart reading, diagram understanding, visual Q&A, slide verification, web UI file upload. mmproj already downloaded (861MB) | Dynamic mmproj loading only for image tasks. Model-swap strategy needed (tight VRAM with Q3_K_M) |
+| 52 | **Vision/OCR skill — Phase 2-3 Qwen3-VL** — full image understanding via mmproj vision encoder | 3-5 days | Chart reading, diagram understanding, visual Q&A, slide verification, web UI file upload. mmproj already downloaded (718MB) | Dynamic mmproj loading (0.6GB) only for image tasks. Supersedes earlier Qwen2.5-VL plans |
 | 55 | **Network awareness skill** — "what's on my network?" / "anything suspicious?" via voice | 4-8 hours | Device discovery (arp-scan/nmap), baseline known vs unknown devices, port/service anomaly detection, traffic analysis summaries, threat alerts | Fits threat hunting background. Natural skill: `skills/system/network/`. Intents: scan_network, list_devices, check_threats, network_status |
 | 60 | **Mobile iOS app — COMING VERY SOON** — native Swift app with always-listening wake word + full chat UI + real-time voice | 5-8 days | JARVIS from anywhere via iPhone. Porcupine "Jarvis" wake word (on-device), WebRTC voice streaming to server (Whisper STT + Kokoro TTS), WKWebView chat UI, Tailscale VPN, Apple Shortcuts integration | Plan: `memory/plan_mobile_ios_app.md`. 6 phases. Requires Apple Developer account ($99/yr) + Mac with Xcode |
 | 61 | **Concurrent multi-user support** — handle two simultaneous mobile users (primary + secondary) | 4-8 hours | REQUIRED before dual-phone deployment. llama-server `--parallel 2`, per-user chat history, STT/TTS request queuing, session isolation, speaker-ID-based context separation | Depends on #60. Current bottlenecks: `--parallel 1`, single chat_history.jsonl, shared context window |
@@ -75,7 +96,7 @@
 
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
-| 20 | **LLM-centric architecture migration** — skills become tools, not destinations | 20-40 hours (4 phases) | Eliminates fragile semantic routing for simple skills. WAIT for Qwen 3.5-9B release | DEVELOPMENT_VISION.md |
+| 20 | ~~**LLM-centric architecture migration**~~ — **PROMOTED to TOP PRIORITY** | — | — | See TOP PRIORITY section above |
 | 21 | **Skill editing system** — "edit the weather skill" leads to LLM code gen, review, apply with backup | 10-15 hours (5 phases) | Voice-controlled code modification. Full design exists at SKILL_EDITING_SYSTEM.md | Note: VS Code + Claude Code is faster in practice |
 | 22 | **Automated skill generation** — Q&A, build, test, review, deploy | 15-20 hours | End-to-end skill creation by voice. Depends on skill editing system (#21) | MASTER_DESIGN.md |
 | 23 | **Backup automation skill** — voice-triggered, SHA256 checksums, manifest, rotation, restore test | 6-8 hours | "Jarvis, backup the system." Automated 2 AM daily, monthly restore tests | MASTER_DESIGN.md |
@@ -101,7 +122,7 @@
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
 | 31 | **Malware analysis framework** — QEMU sandbox, VirusTotal/Any.run, CISA reports, threat intel DB | 30-50 hours | Professional threat hunting. Build when a specific engagement needs it | MASTER_DESIGN.md |
-| 32 | **Video / face recognition** — webcam for people/pets/objects, security cameras | 20-40 hours | Hardware-dependent. Qwen3.5 vision could simplify this | MASTER_DESIGN.md + DEVELOPMENT_VISION.md |
+| 32 | **Video / face recognition** — webcam for people/pets/objects, security cameras | 20-40 hours | Hardware-dependent. Qwen3-VL vision could simplify this | MASTER_DESIGN.md + DEVELOPMENT_VISION.md |
 | 33 | **Tor / dark web research** — Brave Tor mode, VPN verification, session logging, sandboxed | 15-20 hours | Specialized professional use. Safety protocols critical | MASTER_DESIGN.md |
 | 34 | **Emotional context awareness** — voice-based frustration/distress/laugh detection | Research-level | Could enable health monitoring, age verification, adaptive tone | MASTER_DESIGN.md |
 | 35 | **Voice cloning (Paul Bettany)** — Coqui rejected, StyleTTS2 rejected, F5-TTS worth evaluating | 10-20 hours | The dream. Must be <500ms RTF. Revisit when open-source matures | TTS_VOICE_OPTIONS.md |
@@ -140,7 +161,9 @@
 - #41: Web UI session sidebar — all 5 phases complete (Feb 20)
 - #42: Document generation — PPTX/DOCX/PDF with web research + Pexels images (Feb 22)
 - #45: Qwen3-VL-8B model upgrade — ROCm rebuild, self-quantized Q5_K_M, 80.2 tok/s (Feb 22)
-- #45b: Qwen3.5-35B-A3B upgrade — MoE Q3_K_M (unsloth), 48-63 tok/s, IFEval 91.9 (Feb 24)
+
+### TOP PRIORITY
+- #20 Phase 1: LLM-centric tool calling — 3 skills (time, system, filesystem) as tools, tool_executor, P4-LLM routing, 100% accuracy (600/600), 822ms avg (Feb 26)
 
 ### Other Completed (non-roadmap enhancements)
 - Smart ack suppression — skip acknowledgements for fast/conversational queries (Feb 22)
@@ -153,7 +176,6 @@
 - WebUI health check brief mismatch — spoken vs on-screen now consistent (Feb 23)
 - Task Planner — 4 phases: self-awareness, compound detection + LLM planning + execution, guardrails, advanced features (Feb 24-25)
 - Task Planner bug fixes — pause/resume guards, eval timeout, skip-that, 12 new tests (Feb 25)
-- #59: Social introductions — PeopleManager + multi-turn intro skill + P2.6 router + persona pools + 14 tests (Feb 25)
 
 ### Tier 3
 - #40: News headline trimming — 25 per category (Feb 20)
@@ -181,4 +203,4 @@
 
 ---
 
-**Total: 61 development ideas + 11 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
+**Total: 61 development ideas + 10 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**

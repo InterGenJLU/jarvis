@@ -83,10 +83,12 @@
 **Concept:** Playlist learning, volume via PulseAudio. Apple Music web interface is finicky.
 **Design:** `.archive/docs/MASTER_DESIGN.md` has playlist DB schema.
 
-### 11. LLM-Centric Architecture Migration
-**Priority:** MEDIUM (wait for Qwen 3.5 release)
+### 11. LLM-Centric Architecture Migration — Phase 1 COMPLETE
+**Priority:** TOP (active migration)
 **Design:** `docs/DEVELOPMENT_VISION.md`
 **Concept:** Skills become tools, not destinations. Incremental migration.
+**Phase 1 (Feb 26):** 3 skills migrated (time_info, system_info, filesystem). 100% accuracy (600/600 trials), 822ms avg latency. Commit `06dd741`.
+**Next:** Phase 2 — migrate weather, reminders, developer_tools. Assess 5-6 tool cliff risk.
 
 ### 12. Docker Container (Web UI Mode)
 **Priority:** MEDIUM
@@ -140,6 +142,7 @@ None!
 
 ## Pending Live Tests
 
+- **LLM-centric tool calling (Phase 1)** — restart JARVIS, test "what time is it?", "how much RAM do I have?", "find my config files" via voice/console/web. Verify tool-calling path fires instead of legacy skill routing
 - **Social introductions** — restart JARVIS, test "Meet my niece Arya" end-to-end via voice, verify TTS pronunciation overrides
 - **Task planner compound requests** — verify predictive timing announcement, LLM step evaluation, pause/resume ("wait" → "continue") end-to-end via voice
 - **Batch extraction (Phase 4)** — needs 25+ messages in one session to trigger
@@ -174,6 +177,7 @@ None!
 | Task Planner bug fixes — pause/resume guards, eval timeout, skip-that | Feb 25 |
 | Social introductions — PeopleManager, multi-turn intro skill, P2.6 router, 270 tests | Feb 25 |
 | Phase 9C: Intro state machine tests — 10 multi-turn tests (happy path, correction, P2.6, timeout, etc.), 294 total tests | Feb 26 |
+| LLM-centric Phase 1 — 3 skills as tools (time, system, filesystem), tool_executor, P4-LLM routing, 100% accuracy (600/600) | Feb 26 |
 | TTS pronunciation fixes (6 items), RAM reporting, llama-server boot race fix | Feb 25 |
 | Document Generation (PPTX/DOCX/PDF with web research + Pexels) | Feb 22 |
 | Smart Ack Suppression | Feb 22 |

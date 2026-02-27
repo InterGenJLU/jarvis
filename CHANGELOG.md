@@ -1,5 +1,24 @@
 # JARVIS Changelog
 
+## [2026-02-26] - LLM-Centric Tool Calling Phase 1
+
+### Major Feature
+- **Native LLM Tool Calling** — 3 skills (time_info, system_info, filesystem) migrated from hard-coded routing to Qwen3.5 native tool calling
+  - Tool schemas in llm_router.py (coarse: 1 tool per domain with enum params)
+  - Tool executor (`core/tool_executor.py`) for pure data dispatch
+  - New P4-LLM priority in ConversationRouter between task planner and skill routing
+  - Semantic pruning selects relevant tools; LLM decides which to call (or none)
+  - Non-migrated skill guard prevents over-capture of legacy skills
+  - All 3 frontends updated (voice pipeline, console, web UI)
+  - **100% accuracy (600/600 trials), ~822ms average latency**
+
+### Test Infrastructure
+- Tool-calling test harness (`scripts/test_tool_calling.py`) — 60 queries, 7-category taxonomy, `--sweep` mode for sampling matrix
+- Sweep results: pp=1.5 doubles latency with no accuracy gain; pp=0.0 recommended
+- 266/266 existing edge case tests pass (zero regressions)
+
+---
+
 ## [2026-02-25] - Social Introductions + People Manager + TTS Pronunciation
 
 ### Major Features

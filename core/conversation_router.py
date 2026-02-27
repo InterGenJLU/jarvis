@@ -6,17 +6,19 @@ Each frontend (voice, console, web) creates a router with the same
 components and calls route() to process commands.
 
 Phase 3 of the Conversational Flow Refactor.
+Phase 1 of LLM-centric migration: adds tool-calling path (P4-LLM).
 
 Design principles:
     - Router handles decision logic and command execution (skill calls,
       memory ops, etc.) but NOT delivery (TTS, WebSocket, terminal printing).
     - Frontends call route() and handle RouteResult for their delivery.
     - One router, three frontends: voice/console/web all use the same code.
+    - Semantic matcher PRUNES tools; LLM DECIDES which tool to call.
 """
 
 import re
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from core import persona
@@ -52,6 +54,12 @@ class RouteResult:
     memory_context: str | None = None
     context_messages: list | None = None
     llm_max_tokens: int | None = None
+
+    # Tool-calling context (Phase 1 LLM-centric migration)
+    # When set, frontends should pass these to stream_with_tools().
+    use_tools: list | None = None           # List of tool schema dicts
+    tool_temperature: float | None = None   # Override temp for tool selection
+    tool_presence_penalty: float | None = None  # Qwen3.5 recommends 1.5
 
 
 # Conversation window duration defaults (match ContinuousListener config)
@@ -219,8 +227,19 @@ class ConversationRouter:
             if result:
                 return result
             logger.info("Self-referential hardware query — falling through to LLM")
+
+        # --- P4-LLM: Tool-calling path (LLM-centric migration Phase 1) ---
+        # If the command appears relevant to a tool-enabled skill, route
+        # through the LLM with dynamically pruned tools.  The LLM decides
+        # whether to call a tool, ask for clarification, or answer directly.
+        if not (doc_buffer and doc_buffer.active):
+            result = self._handle_tool_calling(command, in_conversation)
+            if result:
+                return result
+
         if not is_hw_query and not (doc_buffer and doc_buffer.active):
             # --- Priority 4: Skill routing (skip when doc_buffer active) ---
+            # Non-migrated skills still route through the old matching pipeline.
             result = self._handle_skill_routing(command)
             if result:
                 return result
@@ -827,6 +846,145 @@ class ConversationRouter:
             text=text, intent="hw_self_query", source="self_awareness",
             handled=True, open_window=DEFAULT_WINDOW,
         )
+
+    # -------------------------------------------------------------------
+    # P4-LLM: Tool-calling path (LLM-centric migration Phase 1)
+    # -------------------------------------------------------------------
+
+    # Map skill names → tool names for semantic matching.
+    # Only skills that have been migrated to tool schemas appear here.
+    _TOOL_SKILL_MAP = {
+        "time_info": "get_time",
+        "system_info": "get_system_info",
+        "filesystem": "find_files",
+    }
+
+    # Relaxed threshold for tool pruning — we want to INCLUDE tools
+    # generously because the LLM makes the final decision.  This should
+    # be below any individual skill's intent threshold.
+    _TOOL_PRUNE_THRESHOLD = 0.35
+
+    def _handle_tool_calling(self, command: str,
+                             in_conversation: bool = False) -> RouteResult | None:
+        """P4-LLM: Route through LLM with dynamically selected tools.
+
+        If the command appears relevant to any tool-enabled skill, prepare
+        LLM context with pruned tools.  Returns a RouteResult with
+        handled=False and use_tools set, signaling the frontend to call
+        stream_with_tools() with the specified tools.
+
+        Returns None if no tool-enabled skills are relevant (falls through
+        to P4 legacy skill routing).
+        """
+        tools = self._select_tools_for_command(command)
+        if not tools:
+            return None
+
+        # Prepare the same LLM context as _prepare_llm_context()
+        result = self._prepare_llm_context(
+            command,
+            in_conversation=in_conversation,
+        )
+        # Augment with tool-calling fields
+        result.use_tools = tools
+        result.tool_temperature = 0.0    # Deterministic — sweep showed 0.0 is fastest, same accuracy
+        result.tool_presence_penalty = 0.0  # Sweep: pp=1.5 doubled latency with zero accuracy gain
+        result.intent = "tool_calling"
+
+        tool_names = [t["function"]["name"] for t in tools]
+        logger.info(
+            f"P4-LLM: routing via tool-calling with {len(tools)} tools: "
+            f"{', '.join(tool_names)}"
+        )
+        return result
+
+    def _select_tools_for_command(self, command: str) -> list | None:
+        """Select relevant tool schemas for a command via semantic matching.
+
+        Uses the skill_manager's pre-computed embedding cache to score the
+        command against tool-enabled skills' intents.  Returns a list of
+        tool schema dicts (always includes web_search) or None if no
+        skill tools are relevant.
+
+        Critical guard: also scores non-migrated skills.  If a non-migrated
+        skill has a higher semantic score than the best migrated skill, we
+        return None to let P4 (legacy skill routing) handle it.  This
+        prevents over-capture of queries meant for weather, reminders,
+        developer_tools, etc.
+
+        Phase 1: with only 3 tool-enabled skills (4 tools total including
+        web_search), we're well under the 5-6 tool cliff.  When more skills
+        are migrated, this function will prune to top 4-5.
+        """
+        sm = self.skill_manager
+        if not hasattr(sm, '_embedding_model') or not sm._embedding_model:
+            return None
+
+        # Lazy import to avoid circular dependency at module load
+        from core.llm_router import WEB_SEARCH_TOOL, SKILL_TOOLS
+
+        try:
+            from sentence_transformers import util as st_util
+        except ImportError:
+            return None
+
+        user_embedding = sm._embedding_model.encode(
+            command, convert_to_tensor=True, show_progress_bar=False
+        )
+
+        # Score ALL skills (migrated and non-migrated) to find the best match
+        best_migrated_score = 0.0
+        best_non_migrated_score = 0.0
+        matched_tools = []
+
+        for skill_name, skill in sm.skills.items():
+            if not hasattr(skill, 'semantic_intents'):
+                continue
+
+            # Best score across all intents for this skill
+            skill_best = 0.0
+            for intent_id, data in skill.semantic_intents.items():
+                cache_key = (skill_name, intent_id)
+                example_embeddings = sm._semantic_embedding_cache.get(cache_key)
+                if example_embeddings is None:
+                    continue
+                similarities = st_util.cos_sim(user_embedding, example_embeddings)
+                max_sim = float(similarities.max())
+                if max_sim > skill_best:
+                    skill_best = max_sim
+
+            if skill_name in self._TOOL_SKILL_MAP:
+                # Migrated skill — track for tool selection
+                if skill_best > best_migrated_score:
+                    best_migrated_score = skill_best
+                if skill_best >= self._TOOL_PRUNE_THRESHOLD:
+                    tool_name = self._TOOL_SKILL_MAP[skill_name]
+                    tool_schema = SKILL_TOOLS.get(tool_name)
+                    if tool_schema:
+                        matched_tools.append(tool_schema)
+                        logger.debug(
+                            f"Tool pruning: {tool_name} matched "
+                            f"(score={skill_best:.2f})"
+                        )
+            else:
+                # Non-migrated skill — track best score for guard check
+                if skill_best > best_non_migrated_score:
+                    best_non_migrated_score = skill_best
+
+        if not matched_tools:
+            return None
+
+        # Guard: if a non-migrated skill scores higher, defer to P4
+        if best_non_migrated_score > best_migrated_score:
+            logger.debug(
+                f"Tool pruning: non-migrated skill scored higher "
+                f"({best_non_migrated_score:.2f} > {best_migrated_score:.2f}), "
+                f"deferring to P4"
+            )
+            return None
+
+        # Always include web_search as a core tool
+        return [WEB_SEARCH_TOOL] + matched_tools
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""

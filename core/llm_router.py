@@ -35,7 +35,13 @@ class ToolCallRequest:
     call_id: str = ""
 
 
-# OpenAI-compatible tool schema for web search
+# ---------------------------------------------------------------------------
+# OpenAI-compatible tool schemas
+# ---------------------------------------------------------------------------
+# Keep descriptions terse (~50 tokens each) — token budget is tight at
+# ctx-size 7168.  One coarse tool per skill domain to stay under the 5-6
+# tool cliff (Goose #6883, RAG-MCP stress test).
+
 WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
@@ -57,6 +63,96 @@ WEB_SEARCH_TOOL = {
         }
     }
 }
+
+GET_TIME_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_time",
+        "description": (
+            "Get the current local time and/or date. Call this for any question "
+            "about what time it is, today's date, the current day of the week, "
+            "or the current year."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "include_date": {
+                    "type": "boolean",
+                    "description": "If true, include the full date (day, month, year). Default false."
+                }
+            },
+            "required": []
+        }
+    }
+}
+
+GET_SYSTEM_INFO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_system_info",
+        "description": (
+            "Get information about THIS computer's hardware or OS. "
+            "Use for questions about the local machine's CPU, RAM, GPU, "
+            "disk space, drives, uptime, hostname, or username."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "enum": ["cpu", "memory", "disk", "gpu", "uptime",
+                             "hostname", "username", "all_drives"],
+                    "description": "Which system info to retrieve"
+                }
+            },
+            "required": ["category"]
+        }
+    }
+}
+
+FIND_FILES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "find_files",
+        "description": (
+            "Search for files on the local filesystem by name or pattern. "
+            "Also counts files in a directory, or counts lines of code."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["search", "count_files", "count_code"],
+                    "description": (
+                        "search: find files matching a name pattern. "
+                        "count_files: count files in a directory. "
+                        "count_code: count lines of code in the codebase."
+                    )
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Filename or glob pattern to search for (for 'search' action)"
+                },
+                "directory": {
+                    "type": "string",
+                    "description": "Directory name to search in (e.g. 'documents', 'downloads', 'home')"
+                }
+            },
+            "required": ["action"]
+        }
+    }
+}
+
+# Registry: all available skill tools (keyed by name for lookup)
+SKILL_TOOLS = {
+    "get_time": GET_TIME_TOOL,
+    "get_system_info": GET_SYSTEM_INFO_TOOL,
+    "find_files": FIND_FILES_TOOL,
+}
+
+# Web search is always included (core tool, not skill-gated)
+ALL_TOOLS = {"web_search": WEB_SEARCH_TOOL, **SKILL_TOOLS}
 
 
 class LLMRouter:
@@ -860,6 +956,9 @@ class LLMRouter:
                           max_tokens: int = None, memory_context: str = None,
                           conversation_messages: list = None,
                           raw_command: str = None,
+                          tools: list = None,
+                          tool_temperature: float = None,
+                          tool_presence_penalty: float = None,
                           ) -> Iterator[Union[str, ToolCallRequest]]:
         """Stream tokens from the local LLM with tool calling support.
 
@@ -868,8 +967,14 @@ class LLMRouter:
         The caller should then execute the tool and call continue_after_tool_call().
 
         Args:
-            raw_command: Reserved (previously used for tool_choice pattern
-                         matching, now unused since tool_choice=auto).
+            tools: List of OpenAI-compatible tool dicts. Defaults to [WEB_SEARCH_TOOL].
+                   When skill tools are included, system prompt adapts automatically.
+            tool_temperature: Override temperature for tool selection phase.
+                              Use lower values (0.0-0.3) for more deterministic
+                              tool selection. Defaults to self.temperature.
+            tool_presence_penalty: Presence penalty for tool-calling requests.
+                                   Qwen3.5 recommends 1.5 for tool calling.
+            raw_command: Reserved (unused since tool_choice=auto).
 
         Yields:
             str tokens for regular text, or a single ToolCallRequest.
@@ -879,39 +984,78 @@ class LLMRouter:
                                    max_tokens, memory_context, conversation_messages)
             return
 
+        # Default to web search only (backward compatible)
+        if tools is None:
+            tools = [WEB_SEARCH_TOOL]
+
+        # Sampling parameters for tool selection phase
+        temp = tool_temperature if tool_temperature is not None else self.temperature
+        pp = tool_presence_penalty  # None means omit from payload
+
         if max_tokens is None:
             max_tokens = self._estimate_max_tokens(user_message)
         system_prompt = self._build_system_prompt()
-        # Prescriptive tool-use prompt: tell Qwen exactly when to search and
-        # when NOT to.  Qwen with tool_choice=auto ignores vague guidance
-        # ("when in doubt, search") but reliably follows explicit rules.
-        # Tested 15 runs × 7 queries + 15 edge cases × 3 runs = 0 failures.
+
+        # Determine which tool names are present to customize the prompt
+        tool_names = {t["function"]["name"] for t in tools}
+        has_skill_tools = bool(tool_names - {"web_search"})
+
         today = date.today().strftime("%B %d, %Y")
-        system_prompt += (
-            f"\n\nToday's date is {today}. "
-            "Your training data is OUTDATED and UNRELIABLE.\n\n"
-            "RULES — follow these EXACTLY:\n"
-            "1. You MUST call web_search for ANY question that has a verifiable "
-            "answer. This includes: people, events, dates, releases, versions, "
-            "products, prices, scores, statistics, organizations, places, distances, "
-            "travel, weather, news, technology, software, science, politics — "
-            "ANYTHING that could be looked up.\n"
-            "2. NEVER answer from memory if the answer could change or be wrong.\n"
-            "3. NEVER say 'I don't have information', 'check official sources', "
-            "'you might want to check', or tell the user to look it up themselves. "
-            "If you don't know, SEARCH.\n"
-            "4. When in doubt: SEARCH. An unnecessary search is harmless. "
-            "A wrong answer is unacceptable.\n\n"
-            "ONLY skip the search for:\n"
-            "- Greetings ('hello', 'how are you', 'thanks')\n"
-            "- Creative requests (jokes, stories, poems)\n"
-            "- Following instructions ('repeat that', 'say it again')\n"
-            "- Follow-up requests about YOUR previous answer ('elaborate', "
-            "'expand on that', 'tell me more', 'go deeper', 'explain further', "
-            "'break it down more') — just give a more detailed answer using "
-            "the context provided\n"
-            "- Pure opinions with no factual component"
-        )
+
+        if has_skill_tools:
+            # --- Multi-tool prompt (LLM-centric migration) ---
+            # When skill tools are available, the LLM decides which tool to
+            # call (or whether to answer directly).  The semantic matcher has
+            # already pruned the tool list to relevant candidates.
+            system_prompt += (
+                f"\n\nToday's date is {today}.\n\n"
+                "You have access to tools that can retrieve local data. "
+                "RULES — follow these EXACTLY:\n"
+                "1. If a tool matches the user's request, ALWAYS call it — "
+                "even if you think you already know the answer. Tools return "
+                "live data; your knowledge may be stale.\n"
+                "2. For ANY question about time, date, day, or year, call "
+                "get_time. NEVER answer time/date questions from the prompt.\n"
+                "3. For factual questions about the OUTSIDE WORLD (people, "
+                "events, news, scores, prices, etc.), call web_search.\n"
+                "4. For questions about THIS COMPUTER (CPU, RAM, GPU, disk, "
+                "uptime, files), call the appropriate local tool.\n"
+                "5. If the question is ambiguous and you need clarification, "
+                "reply with a brief text question — do NOT guess which tool.\n"
+                "6. For greetings, creative requests, opinions, and follow-up "
+                "elaborations, answer directly without any tool.\n"
+                "7. NEVER fabricate system info, file paths, or hardware specs. "
+                "If unsure, call the tool."
+            )
+        else:
+            # --- Web-search-only prompt (original prescriptive rules) ---
+            # Tested 15 runs × 7 queries + 15 edge cases × 3 runs = 0 failures.
+            system_prompt += (
+                f"\n\nToday's date is {today}. "
+                "Your training data is OUTDATED and UNRELIABLE.\n\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. You MUST call web_search for ANY question that has a verifiable "
+                "answer. This includes: people, events, dates, releases, versions, "
+                "products, prices, scores, statistics, organizations, places, distances, "
+                "travel, weather, news, technology, software, science, politics — "
+                "ANYTHING that could be looked up.\n"
+                "2. NEVER answer from memory if the answer could change or be wrong.\n"
+                "3. NEVER say 'I don't have information', 'check official sources', "
+                "'you might want to check', or tell the user to look it up themselves. "
+                "If you don't know, SEARCH.\n"
+                "4. When in doubt: SEARCH. An unnecessary search is harmless. "
+                "A wrong answer is unacceptable.\n\n"
+                "ONLY skip the search for:\n"
+                "- Greetings ('hello', 'how are you', 'thanks')\n"
+                "- Creative requests (jokes, stories, poems)\n"
+                "- Following instructions ('repeat that', 'say it again')\n"
+                "- Follow-up requests about YOUR previous answer ('elaborate', "
+                "'expand on that', 'tell me more', 'go deeper', 'explain further', "
+                "'break it down more') — just give a more detailed answer using "
+                "the context provided\n"
+                "- Pure opinions with no factual component"
+            )
+
         if memory_context:
             system_prompt += f"\n\n{memory_context}"
         messages = [{"role": "system", "content": system_prompt}]
@@ -925,15 +1069,40 @@ class LLMRouter:
         if not messages or messages[-1].get("content") != user_message:
             messages.append({"role": "user", "content": user_message})
 
+        # 2-message constraint: enforce structurally, not by convention.
+        # History in messages causes "pattern addiction" (JetBrains Koog).
+        # Context is injected via XML tags in user_message by the router.
+        assert len(messages) == 2, (
+            f"Tool-calling messages must be exactly [system, user], got {len(messages)}"
+        )
+
         # Store messages for continue_after_tool_call()
         self._tool_call_messages = messages
+        # Also store tools for continue_after_tool_call() context overflow retry
+        self._tool_call_tools = tools
 
-        # Let Qwen decide when to search via the prescriptive system prompt.
-        # The prompt explicitly lists when to search vs answer directly.
-        # Tested: 15 runs × 7 queries = 105/105 correct, 15 edge cases × 3 = 45/45.
+        # Let Qwen decide when to use tools via the prescriptive system prompt.
+        # tool_choice=auto always — never "required" (causes infinite loops).
         tool_choice = "auto"
 
-        self.logger.info(f"stream_with_tools: {len(messages)} messages, tool_choice={tool_choice}")
+        self.logger.info(
+            f"stream_with_tools: {len(messages)} msgs, {len(tools)} tools "
+            f"({', '.join(tool_names)}), temp={temp}, pp={pp}"
+        )
+
+        # Build the request payload
+        payload = {
+            "messages": messages,
+            "temperature": temp,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "max_tokens": max_tokens,
+            "stream": True,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        if pp is not None:
+            payload["presence_penalty"] = pp
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()
@@ -943,16 +1112,7 @@ class LLMRouter:
         try:
             response = requests.post(
                 "http://127.0.0.1:8080/v1/chat/completions",
-                json={
-                    "messages": messages,
-                    "temperature": self.temperature,
-                    "top_p": self.top_p,
-                    "top_k": self.top_k,
-                    "max_tokens": max_tokens,
-                    "stream": True,
-                    "tools": [WEB_SEARCH_TOOL],
-                    "tool_choice": tool_choice,
-                },
+                json=payload,
                 timeout=30,
                 stream=True,
             )
@@ -971,18 +1131,10 @@ class LLMRouter:
                     if len(messages) > 7:
                         messages = [messages[0]] + messages[-6:]
                         self._tool_call_messages = messages
+                    payload["messages"] = messages
                     response = requests.post(
                         "http://127.0.0.1:8080/v1/chat/completions",
-                        json={
-                            "messages": messages,
-                            "temperature": self.temperature,
-                            "top_p": self.top_p,
-                            "top_k": self.top_k,
-                            "max_tokens": max_tokens,
-                            "stream": True,
-                            "tools": [WEB_SEARCH_TOOL],
-                            "tool_choice": tool_choice,
-                        },
+                        json=payload,
                         timeout=30,
                         stream=True,
                     )

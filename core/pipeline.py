@@ -797,6 +797,9 @@ class Coordinator:
                 conversation_messages=result.context_messages,
                 raw_command=command,
                 in_conversation=in_conversation,
+                use_tools=result.use_tools,
+                tool_temperature=result.tool_temperature,
+                tool_presence_penalty=result.tool_presence_penalty,
             )
             if not response:
                 response = "I'm sorry, I'm having trouble processing that right now."
@@ -918,22 +921,29 @@ class Coordinator:
                               memory_context: str = None,
                               conversation_messages: list = None,
                               raw_command: str = None,
-                              in_conversation: bool = False) -> str:
+                              in_conversation: bool = False,
+                              use_tools: list = None,
+                              tool_temperature: float = None,
+                              tool_presence_penalty: float = None) -> str:
         """Stream LLM response with first-chunk quality gating and tool calling.
 
         Streams tokens from Qwen, accumulates into sentence chunks,
         and speaks each chunk via a persistent aplay process for
         gapless multi-sentence playback.
 
-        When tool calling is enabled, the LLM may request a web_search
-        tool call instead of generating text. The pipeline will execute
-        the search, feed results back, and stream the synthesized answer.
+        When tool calling is enabled, the LLM may request a tool call
+        instead of generating text. The pipeline will execute the tool,
+        feed results back, and stream the synthesized answer.
 
         Args:
             command: The (possibly augmented) text to send to the LLM.
             raw_command: The original user query before context augmentation.
                          Used for tool_choice regex and research exchange storage.
                          Falls back to command if not provided.
+            use_tools: When set by the router's P4-LLM path, list of tool
+                       schema dicts to pass to stream_with_tools().
+            tool_temperature: Override temperature for tool selection phase.
+            tool_presence_penalty: Presence penalty for tool-calling requests.
         """
         if raw_command is None:
             raw_command = command
@@ -967,7 +977,7 @@ class Coordinator:
         audio_pipeline = None
 
         # Choose tool-aware or plain streaming
-        use_tools = self.llm.tool_calling and self.web_researcher
+        _enable_tools = self.llm.tool_calling and (self.web_researcher or use_tools)
 
         try:
             pending_chunk = None
@@ -981,7 +991,10 @@ class Coordinator:
                     memory_context=memory_context,
                     conversation_messages=conversation_messages,
                     raw_command=raw_command,
-                ) if use_tools else
+                    tools=use_tools,
+                    tool_temperature=tool_temperature,
+                    tool_presence_penalty=tool_presence_penalty,
+                ) if _enable_tools else
                 self.llm.stream(
                     user_message=command,
                     conversation_history=history,
@@ -1024,16 +1037,16 @@ class Coordinator:
             # --- Phase B: handle tool call if requested ---
             if tool_call_request:
                 self.logger.info(
-                    f"🔍 Web search requested: {tool_call_request.arguments}"
+                    f"🔧 Tool call: {tool_call_request.name}({tool_call_request.arguments})"
                 )
-                print(f"🔍 Searching: {tool_call_request.arguments.get('query', '')}")
 
                 # No interim ack here — the 0.3s ack timer already fires
                 # one of the curated phrases before the tool call arrives.
 
-                # Execute the search
+                # Execute the tool
                 if tool_call_request.name == "web_search":
                     query = tool_call_request.arguments.get("query", command)
+                    print(f"🔍 Searching: {query}")
                     results = self.web_researcher.search(query)
                     self.conv_state.research_results = results
 
@@ -1049,7 +1062,13 @@ class Coordinator:
                     tool_result = format_search_results(results) + page_content
                     print(f"📋 Found {len(results)} results")
                 else:
-                    tool_result = f"Unknown tool: {tool_call_request.name}"
+                    # Skill tool — dispatch via tool_executor
+                    from core.tool_executor import execute_tool
+                    print(f"🔧 Running: {tool_call_request.name}")
+                    tool_result = execute_tool(
+                        tool_call_request.name, tool_call_request.arguments
+                    )
+                    self.logger.info(f"Tool result: {tool_result[:100]}")
 
                 # Stream synthesized answer from tool results
                 for token in self.llm.continue_after_tool_call(

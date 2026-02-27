@@ -1,7 +1,7 @@
 # JARVIS - Personal AI Assistant
 
-**Version:** 2.9.0 (Production Ready)
-**Last Updated:** February 25, 2026
+**Version:** 2.10.0 (Production Ready)
+**Last Updated:** February 26, 2026
 **Status:** ✅ Stable, Feature-Rich, Voice-Controlled
 
 ---
@@ -43,6 +43,7 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Conversational Flow Engine** - Persona module (24 response pools, ~90 templates), ConversationState (turn tracking), ConversationRouter (shared priority chain)
 - **Text-to-Speech** - Kokoro 82M (primary, CPU, fable+george blend) + Piper ONNX fallback
 - **LLM Intelligence** - Qwen3.5-35B-A3B (Q3_K_M, MoE, 3B active params) via llama.cpp + Claude API fallback with quality gating
+- **LLM-Centric Tool Calling (Phase 1)** - 3 skills (time, system, filesystem) migrated to native Qwen3.5 tool calling. Semantic pruning selects tools; LLM decides. 100% accuracy (600/600 trials), ~822ms avg
 - **Web Research** - Qwen3.5 native tool calling + DuckDuckGo + trafilatura, multi-source synthesis
 - **Event-Driven Pipeline** - Coordinator with STT/TTS workers, streaming LLM, contextual ack cache (10 tagged phrases)
 - **Gapless TTS Streaming** - StreamingAudioPipeline with single persistent aplay, background Kokoro generation
@@ -397,6 +398,15 @@ User: Hears response
 - ✅ **Persona expansion** — 7 new response pools (~25 templates) for introduction flows
 - ✅ **Router P2.6** — Introduction state machine intercept in ConversationRouter priority chain
 - ✅ **Edge case tests expanded** — 270 tests (112 unit + 130 routing + 28 LLM), 100% pass rate
+
+### Phase 20: LLM-Centric Tool Calling — Phase 1 (Feb 26) 🚀
+- ✅ **Native tool calling** — 3 skills (time_info, system_info, filesystem) migrated from hard-coded routing to Qwen3.5 native tool calling
+- ✅ **Tool executor** — `core/tool_executor.py`: Pure data dispatch, no TTS/skill dependencies
+- ✅ **P4-LLM routing** — Semantic pruning selects relevant tools; LLM decides which to call. Non-migrated skill guard prevents over-capture
+- ✅ **All 3 frontends updated** — Voice pipeline, console, web UI all handle tool-calling path
+- ✅ **100% accuracy** — 600/600 trials across 60 queries × 10 runs, ~822ms average latency
+- ✅ **Test harness** — `scripts/test_tool_calling.py`: 60 queries, 7-category taxonomy, `--sweep` for sampling matrix
+- ✅ **266/266 existing tests pass** — Zero regressions from migration
 
 ---
 

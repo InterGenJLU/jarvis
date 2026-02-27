@@ -306,6 +306,9 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 memory_context=result.memory_context,
                 conversation_messages=result.context_messages,
                 max_tokens=result.llm_max_tokens,
+                use_tools_list=result.use_tools,
+                tool_temperature=result.tool_temperature,
+                tool_presence_penalty=result.tool_presence_penalty,
             )
         else:
             response = await _llm_fallback(
@@ -371,14 +374,16 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
 
 async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           memory_context=None, conversation_messages=None,
-                          max_tokens=None) -> tuple:
+                          max_tokens=None, use_tools_list=None,
+                          tool_temperature=None,
+                          tool_presence_penalty=None) -> tuple:
     """Stream LLM response over WebSocket with quality gate and tool calling.
 
     Returns (response_text, streamed_bool).
     When streamed_bool is True, stream_start/stream_end were sent over ws.
     When False, caller should send a normal 'response' message.
     """
-    use_tools = llm.tool_calling and web_researcher
+    _enable_tools = llm.tool_calling and (web_researcher or use_tools_list)
     queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
 
@@ -391,7 +396,10 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     conversation_history=history,
                     memory_context=memory_context,
                     conversation_messages=conversation_messages,
-                ) if use_tools else
+                    tools=use_tools_list,
+                    tool_temperature=tool_temperature,
+                    tool_presence_penalty=tool_presence_penalty,
+                ) if _enable_tools else
                 llm.stream(
                     user_message=command,
                     conversation_history=history,
@@ -466,15 +474,14 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             else:
                 await ws.send_json({'type': 'stream_token', 'token': token})
 
-    # --- Handle tool call (web search) ---
+    # --- Handle tool call ---
     if tool_call_request:
-        query = tool_call_request.arguments.get('query', command)
-        await ws.send_json({
-            'type': 'info',
-            'content': f'Searching: {query}',
-        })
-
         if tool_call_request.name == 'web_search':
+            query = tool_call_request.arguments.get('query', command)
+            await ws.send_json({
+                'type': 'info',
+                'content': f'Searching: {query}',
+            })
             results = await asyncio.to_thread(web_researcher.search, query)
             page_sections = await asyncio.to_thread(
                 web_researcher.fetch_pages_parallel, results
@@ -489,7 +496,15 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 'content': f'Found {len(results)} results',
             })
         else:
-            tool_result = f"Unknown tool: {tool_call_request.name}"
+            # Skill tool — dispatch via tool_executor
+            from core.tool_executor import execute_tool
+            await ws.send_json({
+                'type': 'info',
+                'content': f'Running: {tool_call_request.name}',
+            })
+            tool_result = await asyncio.to_thread(
+                execute_tool, tool_call_request.name, tool_call_request.arguments
+            )
 
         # Stream synthesis response
         synthesis_queue = asyncio.Queue()
@@ -601,11 +616,10 @@ async def _llm_fallback(llm, command, history, web_researcher,
 
         await asyncio.to_thread(_run_stream)
 
-        # Handle tool call (web search)
+        # Handle tool call
         if tool_call_request:
-            query = tool_call_request.arguments.get("query", command)
-
             if tool_call_request.name == "web_search":
+                query = tool_call_request.arguments.get("query", command)
                 results = await asyncio.to_thread(web_researcher.search, query)
                 page_sections = await asyncio.to_thread(
                     web_researcher.fetch_pages_parallel, results
@@ -616,7 +630,11 @@ async def _llm_fallback(llm, command, history, web_researcher,
                         "\n\n---\n\n".join(page_sections)
                 tool_result = format_search_results(results) + page_content
             else:
-                tool_result = f"Unknown tool: {tool_call_request.name}"
+                # Skill tool — dispatch via tool_executor
+                from core.tool_executor import execute_tool
+                tool_result = await asyncio.to_thread(
+                    execute_tool, tool_call_request.name, tool_call_request.arguments
+                )
 
             # Collect synthesis response
             synthesis = ""

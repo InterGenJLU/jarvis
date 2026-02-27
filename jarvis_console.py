@@ -265,7 +265,9 @@ def _do_web_search(query, web_researcher, llm, console):
 
 def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         memory_context=None, conversation_messages=None,
-                        max_tokens=None, web_researcher=None):
+                        max_tokens=None, web_researcher=None,
+                        use_tools_list=None, tool_temperature=None,
+                        tool_presence_penalty=None):
     """Stream LLM response with typewriter output, web research, and quality gate.
 
     Returns the full accumulated response text, or empty string on failure.
@@ -273,7 +275,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
     chunker = SpeechChunker()
     full_response = ""
     first_chunk_checked = False
-    use_tools = llm.tool_calling and web_researcher
+    _enable_tools = llm.tool_calling and (web_researcher or use_tools_list)
 
     # Print prefix for typewriter output
     console.print("[bold cyan]J.A.R.V.I.S.:[/bold cyan] ", end="")
@@ -286,7 +288,10 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 conversation_history=history,
                 memory_context=memory_context,
                 conversation_messages=conversation_messages,
-            ) if use_tools else
+                tools=use_tools_list,
+                tool_temperature=tool_temperature,
+                tool_presence_penalty=tool_presence_penalty,
+            ) if _enable_tools else
             llm.stream(
                 user_message=command,
                 conversation_history=history,
@@ -325,12 +330,11 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                     )
                     return response
 
-        # --- Web search phase (tool call) ---
+        # --- Tool call phase ---
         if tool_call_request:
-            query = tool_call_request.arguments.get("query", command)
-            console.print(f"\n[dim]Searching: {query}[/dim]")
-
             if tool_call_request.name == "web_search":
+                query = tool_call_request.arguments.get("query", command)
+                console.print(f"\n[dim]Searching: {query}[/dim]")
                 results = web_researcher.search(query)
 
                 # Fetch top 3 page contents concurrently for richer synthesis
@@ -344,7 +348,12 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 tool_result = format_search_results(results) + page_content
                 console.print(f"[dim]Found {len(results)} results[/dim]")
             else:
-                tool_result = f"Unknown tool: {tool_call_request.name}"
+                # Skill tool — dispatch via tool_executor
+                from core.tool_executor import execute_tool
+                console.print(f"\n[dim]Running: {tool_call_request.name}[/dim]")
+                tool_result = execute_tool(
+                    tool_call_request.name, tool_call_request.arguments
+                )
 
             # Stream synthesized answer
             console.print("[bold cyan]J.A.R.V.I.S.:[/bold cyan] ", end="")
@@ -949,6 +958,9 @@ def run_console(config, mode):
                     conversation_messages=result.context_messages,
                     max_tokens=result.llm_max_tokens,
                     web_researcher=web_researcher,
+                    use_tools_list=result.use_tools,
+                    tool_temperature=result.tool_temperature,
+                    tool_presence_penalty=result.tool_presence_penalty,
                 )
                 if not response:
                     response = "I'm sorry, I'm having trouble processing that right now."
