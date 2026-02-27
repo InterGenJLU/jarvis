@@ -558,7 +558,10 @@ class JarvisContinuous:
     def _play_ack_if_still_thinking(self, style_hint: str = None):
         """Called by timer — plays a quick ack phrase if LLM hasn't responded yet."""
         if not self._llm_responded:
-            self.tts.speak_ack(style_hint=style_hint)
+            self.tts.speak_ack(
+                style_hint=style_hint,
+                cancel_check=lambda: self._llm_responded,
+            )
 
     def _strip_ack_opener(self, text: str) -> str:
         """Strip leading ack phrase from LLM text if ack was already spoken."""

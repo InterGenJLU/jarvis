@@ -246,12 +246,15 @@ class TextToSpeech:
 
         return buf.getvalue()
 
-    def speak_ack(self, style_hint: str = None) -> bool:
+    def speak_ack(self, style_hint: str = None, cancel_check=None) -> bool:
         """Play a random pre-cached acknowledgment phrase instantly.
 
         Args:
             style_hint: Preferred style tag ("checking", "working", "research").
                         Falls back to "neutral" if no match, then any phrase.
+            cancel_check: Optional callable returning True to abort after
+                          acquiring the TTS lock (prevents stale acks when
+                          the response arrived while waiting for the lock).
 
         Returns True if played, False if cache empty or playback failed.
         Call this when the LLM is slow to respond to fill the silence.
@@ -260,6 +263,12 @@ class TextToSpeech:
             return False
 
         with self._tts_lock:
+            # Recheck after acquiring lock — response may have arrived
+            # while we were blocked waiting for the lock (race fix).
+            if cancel_check and cancel_check():
+                self.logger.debug("Ack cancelled after lock acquisition")
+                return False
+
             # Filter candidates by style hint (with neutral fallback)
             if style_hint:
                 candidates = [p for p, (_, s) in self._ack_cache.items()

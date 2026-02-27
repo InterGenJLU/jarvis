@@ -35,6 +35,9 @@ class ReminderSkill(BaseSkill):
                 "remind me to water the plants in 2 hours",
                 "urgent reminder to call the doctor tomorrow at 8 AM",
                 "reminder to call someone tomorrow morning",
+                "remind me to check the mail in 5 minutes",
+                "remind me to stretch in 20 minutes",
+                "remind me to start the laundry in an hour",
             ],
             handler=self.set_reminder,
             threshold=0.58

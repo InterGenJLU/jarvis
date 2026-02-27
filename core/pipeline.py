@@ -1301,7 +1301,13 @@ class Coordinator:
             # (ack phrase picked up as a new user command).  The main response
             # flow calls listener.resume_listening() when fully done.
             self.listener.pause_listening()
-            self.tts.speak_ack(style_hint=style_hint)
+            # Pass cancel_check so speak_ack rechecks after acquiring the
+            # TTS lock — prevents stale acks when the response arrived
+            # while this thread was blocked waiting for the lock.
+            self.tts.speak_ack(
+                style_hint=style_hint,
+                cancel_check=lambda: self._llm_responded,
+            )
 
     def _strip_ack_opener(self, text: str) -> str:
         """Strip leading ack phrase from LLM text if ack was already spoken."""
