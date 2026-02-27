@@ -138,6 +138,7 @@
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
 | B2 | Batch extraction (Phase 4) untested | Low | Needs 25+ messages in one session to trigger |
+| B7 | Google Calendar sync overwrites local reminder_time | Low | When JARVIS pushes a reminder to GCal, sync picks it back up with `useDefault` offset (10-15min), overwrites `reminder_time` to before event → fires immediately. Fix: set `reminders: {"useDefault": false}` on push, or compare event start_time instead of offset reminder_time in `_on_google_new_event`. Pre-existing, not Phase 1 related |
 
 ---
 

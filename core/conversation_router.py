@@ -1091,11 +1091,13 @@ class ConversationRouter:
                 f"message: {subjects}. Briefly acknowledge you'll remember this.]"
             )
 
-        # Follow-up context injection: when user asks to elaborate/expand,
-        # inject the prior exchange so the LLM knows what to elaborate on.
-        # This works with stream_with_tools() which excludes history from
-        # the messages array (to avoid triggering unnecessary web searches).
-        if in_conversation and self._is_followup_request(command):
+        # Conversation-window context preservation: when we're in a
+        # conversation window, ALWAYS inject the prior exchange so the LLM
+        # has context for implicit follow-ups ("What about in London?" after
+        # a date query).  The conversation window IS the relatedness signal —
+        # false positive cost is zero (LLM ignores irrelevant context).
+        # _is_followup_request() is kept for skip-search in web research only.
+        if in_conversation:
             # Prefer research exchange if available, else use conv_state
             if self.conv_state.research_exchange:
                 prev_q = self.conv_state.research_exchange['query']

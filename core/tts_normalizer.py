@@ -71,6 +71,7 @@ class TTSNormalizer:
         self.normalizations: Dict[str, Callable] = {
             "markdown": self.normalize_markdown,  # Strip markdown formatting FIRST
             "heteronyms": self.normalize_heteronyms,  # read/lead before TTS sees them
+            "kokoro_overrides": self.normalize_kokoro_overrides,  # Fix Kokoro mispronunciations
             "pauses": self.normalize_pauses,  # Convert punctuation pauses
             "ips": self.normalize_ips,
             "ports": self.normalize_ports,
@@ -156,6 +157,22 @@ class TTSNormalizer:
             r'\b(can|will|could|should|may|might|to)\s+read\b',
             r'\1 reed', text, flags=re.IGNORECASE,
         )
+        return text
+
+    # ========== Kokoro Pronunciation Overrides ==========
+
+    # Words Kokoro consistently mispronounces — map to phonetic respellings.
+    _KOKORO_OVERRIDES = {
+        "rundown": "run-down",
+    }
+
+    def normalize_kokoro_overrides(self, text: str) -> str:
+        """Replace words Kokoro mispronounces with phonetic respellings."""
+        for word, replacement in self._KOKORO_OVERRIDES.items():
+            text = re.sub(
+                rf'\b{re.escape(word)}\b', replacement,
+                text, flags=re.IGNORECASE,
+            )
         return text
 
     # ========== IP Addresses ==========
@@ -578,6 +595,8 @@ class TTSNormalizer:
 
         if minute == 0:
             return f"{self._two_digit_words(display_hour)} {period}"
+        elif minute < 10:
+            return f"{self._two_digit_words(display_hour)} oh {self.ones[minute]} {period}"
         else:
             return f"{self._two_digit_words(display_hour)} {self._two_digit_words(minute)} {period}"
     

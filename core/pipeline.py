@@ -712,8 +712,10 @@ class Coordinator:
         # Pause listening while we process
         self.listener.pause_listening()
 
-        # Beep only for fresh wake-word activation
+        # Beep to acknowledge: wake-word activation OR conversation-window follow-up
         if not in_conversation and self.wake_word in full_text.lower():
+            self._play_beep()
+        elif in_conversation:
             self._play_beep()
 
         if not command:
