@@ -859,10 +859,14 @@ class ConversationRouter:
         "filesystem": "find_files",
     }
 
-    # Relaxed threshold for tool pruning — we want to INCLUDE tools
-    # generously because the LLM makes the final decision.  This should
-    # be below any individual skill's intent threshold.
-    _TOOL_PRUNE_THRESHOLD = 0.35
+    # Threshold for tool pruning.  Tuned via sweep across 56 queries at
+    # thresholds 0.30-0.60 (scripts/test_intent_overlap.py).  0.40 is the
+    # only value with zero cliff-risk AND zero false negatives.
+    _TOOL_PRUNE_THRESHOLD = 0.40
+
+    # Hard cap on domain tools per request (web_search is added on top).
+    # Prevents exceeding the 5-6 tool cliff even if threshold is too loose.
+    _MAX_DOMAIN_TOOLS = 4
 
     def _handle_tool_calling(self, command: str,
                              in_conversation: bool = False) -> RouteResult | None:
@@ -909,12 +913,10 @@ class ConversationRouter:
         Critical guard: also scores non-migrated skills.  If a non-migrated
         skill has a higher semantic score than the best migrated skill, we
         return None to let P4 (legacy skill routing) handle it.  This
-        prevents over-capture of queries meant for weather, reminders,
-        developer_tools, etc.
+        prevents over-capture of queries meant for non-tool skills.
 
-        Phase 1: with only 3 tool-enabled skills (4 tools total including
-        web_search), we're well under the 5-6 tool cliff.  When more skills
-        are migrated, this function will prune to top 4-5.
+        Hard cap: even if many skills pass the threshold, only the top
+        _MAX_DOMAIN_TOOLS (4) are kept, preventing the 5-6 tool cliff.
         """
         sm = self.skill_manager
         if not hasattr(sm, '_embedding_model') or not sm._embedding_model:
@@ -935,7 +937,7 @@ class ConversationRouter:
         # Score ALL skills (migrated and non-migrated) to find the best match
         best_migrated_score = 0.0
         best_non_migrated_score = 0.0
-        matched_tools = []
+        matched_tools = []  # [(score, tool_schema), ...]
 
         for skill_name, skill in sm.skills.items():
             if not hasattr(skill, 'semantic_intents'):
@@ -961,7 +963,7 @@ class ConversationRouter:
                     tool_name = self._TOOL_SKILL_MAP[skill_name]
                     tool_schema = SKILL_TOOLS.get(tool_name)
                     if tool_schema:
-                        matched_tools.append(tool_schema)
+                        matched_tools.append((skill_best, tool_schema))
                         logger.debug(
                             f"Tool pruning: {tool_name} matched "
                             f"(score={skill_best:.2f})"
@@ -983,8 +985,18 @@ class ConversationRouter:
             )
             return None
 
+        # Hard cap: keep only the top-scoring domain tools
+        matched_tools.sort(key=lambda x: x[0], reverse=True)
+        if len(matched_tools) > self._MAX_DOMAIN_TOOLS:
+            dropped = matched_tools[self._MAX_DOMAIN_TOOLS:]
+            dropped_names = [t[1]["function"]["name"] for t in dropped]
+            logger.info(
+                f"Tool pruning: hard cap applied, dropped {dropped_names}"
+            )
+            matched_tools = matched_tools[:self._MAX_DOMAIN_TOOLS]
+
         # Always include web_search as a core tool
-        return [WEB_SEARCH_TOOL] + matched_tools
+        return [WEB_SEARCH_TOOL] + [t[1] for t in matched_tools]
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""
