@@ -704,6 +704,9 @@ def run_console(config, mode):
                 console.print(f"[yellow]Calendar init failed: {e}[/yellow]")
 
         reminder_manager.start()
+        # Wire reminder manager for tool-calling dispatch
+        from core.tool_executor import set_reminder_manager
+        set_reminder_manager(reminder_manager)
 
     # News system
     news_manager = None

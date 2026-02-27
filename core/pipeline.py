@@ -414,6 +414,10 @@ class Coordinator:
         self.skill_manager = skill_manager
         self.conversation = conversation
         self.reminder_manager = reminder_manager
+        # Wire reminder manager for tool-calling dispatch
+        if reminder_manager:
+            from core.tool_executor import set_reminder_manager
+            set_reminder_manager(reminder_manager)
         self.news_manager = news_manager
         self.calendar_manager = calendar_manager
         self.profile_manager = profile_manager

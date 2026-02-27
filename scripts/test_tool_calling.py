@@ -42,7 +42,7 @@ from core.config import Config
 from core.llm_router import (
     LLMRouter, ToolCallRequest,
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL,
-    GET_WEATHER_TOOL,
+    GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL,
 )
 
 
@@ -59,7 +59,7 @@ class TestQuery:
     description: str = ""
 
 
-# 15 queries per skill × 4 + 10 no-tool + 4 web-search + 1 weather-location = 75 total
+# 15 queries per skill × 5 + 10 no-tool + 5 web-search = 90 total
 TEST_QUERIES = [
     # --- TIME (15 queries, expect get_time) ---
     TestQuery("what time is it", "get_time", "time"),
@@ -141,6 +141,23 @@ TEST_QUERIES = [
     TestQuery("do I need an umbrella", "get_weather", "weather"),
     TestQuery("what are the conditions outside", "get_weather", "weather"),
 
+    # --- REMINDERS (15 queries, expect manage_reminders) ---
+    TestQuery("set a reminder to call mom tomorrow at 6 PM", "manage_reminders", "reminder"),
+    TestQuery("remind me to take out the trash in 30 minutes", "manage_reminders", "reminder"),
+    TestQuery("remind me to check the oven in 10 minutes", "manage_reminders", "reminder"),
+    TestQuery("set a reminder for the dentist appointment next Tuesday", "manage_reminders", "reminder"),
+    TestQuery("remind me to buy groceries this evening", "manage_reminders", "reminder"),
+    TestQuery("set an urgent reminder to take my medication at 8 PM", "manage_reminders", "reminder"),
+    TestQuery("what reminders do I have", "manage_reminders", "reminder"),
+    TestQuery("show me my reminders", "manage_reminders", "reminder"),
+    TestQuery("list my upcoming reminders", "manage_reminders", "reminder"),
+    TestQuery("do I have any reminders today", "manage_reminders", "reminder"),
+    TestQuery("cancel the reminder about the dentist", "manage_reminders", "reminder"),
+    TestQuery("remove my grocery reminder", "manage_reminders", "reminder"),
+    TestQuery("snooze that for 10 minutes", "manage_reminders", "reminder"),
+    TestQuery("snooze the reminder", "manage_reminders", "reminder"),
+    TestQuery("I did it", "manage_reminders", "reminder"),
+
     # --- WEB SEARCH expected (5 queries) ---
     TestQuery("who won the super bowl", "web_search", "web"),
     TestQuery("latest news about SpaceX", "web_search", "web"),
@@ -169,7 +186,7 @@ ALL_OUTCOMES = [
 ]
 
 # Tool names we provide to the LLM
-VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather"}
+VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather", "manage_reminders"}
 
 
 @dataclass
@@ -263,14 +280,14 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
                    temperature: float = 0.3, presence_penalty: float = 1.5,
                    verbose: bool = False, skill_filter: str = None) -> dict:
     """Run the full test suite and return results summary."""
-    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL]
+    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL]
 
     if skill_filter:
         queries = [q for q in queries if q.category == skill_filter]
 
     total_trials = len(queries) * runs
     print(f"\n{'='*60}")
-    print(f"LLM Tool-Calling Test Harness (Phase 1)")
+    print(f"LLM Tool-Calling Test Harness")
     print(f"{'='*60}")
     print(f"Queries: {len(queries)} | Runs: {runs} | Total trials: {total_trials}")
     print(f"Tools: {len(tools)} ({', '.join(t['function']['name'] for t in tools)})")
@@ -331,7 +348,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
 
     # Per-category breakdown
     print("\nPer-category accuracy:")
-    for cat in ["time", "system", "filesystem", "no_tool", "web"]:
+    for cat in ["time", "system", "filesystem", "weather", "reminder", "no_tool", "web"]:
         cat_outcomes = per_category.get(cat, {})
         cat_total = sum(cat_outcomes.values())
         cat_correct = (cat_outcomes.get(OUTCOME_CORRECT_TOOL, 0)
@@ -406,7 +423,7 @@ def run_sweep(llm: LLMRouter, queries: list[TestQuery], runs: int = 3,
 def main():
     parser = argparse.ArgumentParser(description="LLM Tool-Calling Test Harness")
     parser.add_argument("--runs", type=int, default=10, help="Runs per query (default: 10)")
-    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "no_tool", "web"],
+    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "reminder", "no_tool", "web"],
                        help="Test only one category")
     parser.add_argument("--sweep", action="store_true", help="Run temperature/penalty sweep")
     parser.add_argument("--temp", type=float, default=0.3, help="Temperature (default: 0.3)")

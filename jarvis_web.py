@@ -141,6 +141,9 @@ def init_components(config, tts_proxy):
         # handles proactive reminders/rundowns.  The RM is still available for
         # explicit commands ("daily rundown", "remind me...").
         components['reminder_manager'] = rm
+        # Wire reminder manager for tool-calling dispatch
+        from core.tool_executor import set_reminder_manager
+        set_reminder_manager(rm)
 
     # News
     components['news_manager'] = None

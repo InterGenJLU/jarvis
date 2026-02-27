@@ -179,12 +179,75 @@ GET_WEATHER_TOOL = {
     }
 }
 
+MANAGE_REMINDERS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "manage_reminders",
+        "description": (
+            "Manage reminders: set new ones, list existing, cancel, "
+            "acknowledge, or snooze. Use for ANY request about reminders."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "list", "cancel", "acknowledge", "snooze"],
+                    "description": (
+                        "add: set a new reminder. "
+                        "list: show upcoming reminders. "
+                        "cancel: remove a reminder by name. "
+                        "acknowledge: mark the last-fired reminder as done. "
+                        "snooze: delay the last-fired reminder."
+                    )
+                },
+                "title": {
+                    "type": "string",
+                    "description": (
+                        "What to be reminded about (e.g. 'call mom', "
+                        "'take out the trash'). Required for 'add'."
+                    )
+                },
+                "time_text": {
+                    "type": "string",
+                    "description": (
+                        "When to remind, in natural language "
+                        "(e.g. 'tomorrow at 6 PM', 'in 30 minutes', "
+                        "'next Tuesday'). Required for 'add'."
+                    )
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["urgent", "high", "normal"],
+                    "description": (
+                        "Importance level. Default: normal. "
+                        "Urgent/high require acknowledgment when fired."
+                    )
+                },
+                "snooze_minutes": {
+                    "type": "integer",
+                    "description": "Minutes to snooze. Default: 15."
+                },
+                "cancel_fragment": {
+                    "type": "string",
+                    "description": (
+                        "Part of the reminder title to match for cancellation "
+                        "(e.g. 'dentist'). Required for 'cancel'."
+                    )
+                }
+            },
+            "required": ["action"]
+        }
+    }
+}
+
 # Registry: all available skill tools (keyed by name for lookup)
 SKILL_TOOLS = {
     "get_time": GET_TIME_TOOL,
     "get_system_info": GET_SYSTEM_INFO_TOOL,
     "find_files": FIND_FILES_TOOL,
     "get_weather": GET_WEATHER_TOOL,
+    "manage_reminders": MANAGE_REMINDERS_TOOL,
 }
 
 # Web search is always included (core tool, not skill-gated)
@@ -1055,15 +1118,18 @@ class LLMRouter:
                 "3. For ANY question about weather, temperature, forecast, or "
                 "rain, call get_weather. No location needed — it defaults to "
                 "the user's home location.\n"
-                "4. For factual questions about the OUTSIDE WORLD (people, "
+                "4. For reminder requests (set, list, cancel, snooze, "
+                "acknowledge), call manage_reminders. Extract the title and "
+                "time from the user's words.\n"
+                "5. For factual questions about the OUTSIDE WORLD (people, "
                 "events, news, scores, prices, etc.), call web_search.\n"
-                "5. For questions about THIS COMPUTER (CPU, RAM, GPU, disk, "
+                "6. For questions about THIS COMPUTER (CPU, RAM, GPU, disk, "
                 "uptime, files), call the appropriate local tool.\n"
-                "6. If the user asks for MULTIPLE things (e.g. 'time and weather'), "
+                "7. If the user asks for MULTIPLE things (e.g. 'time and weather'), "
                 "call ALL relevant tools — one at a time.\n"
-                "7. For greetings, creative requests, opinions, and follow-up "
+                "8. For greetings, creative requests, opinions, and follow-up "
                 "elaborations, answer directly without any tool.\n"
-                "8. NEVER fabricate system info, file paths, or hardware specs. "
+                "9. NEVER fabricate system info, file paths, or hardware specs. "
                 "If unsure, call the tool."
             )
         else:
