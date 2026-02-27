@@ -474,74 +474,96 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             else:
                 await ws.send_json({'type': 'stream_token', 'token': token})
 
-    # --- Handle tool call ---
-    # TODO: Add multi-tool loop (like pipeline.py) for compound queries
+    # --- Handle tool call (multi-tool loop) ---
+    _MAX_TOOL_CHAIN = 3
+    tool_chain_count = 0
+
     if tool_call_request:
-        if tool_call_request.name == 'web_search':
-            query = tool_call_request.arguments.get('query', command)
-            await ws.send_json({
-                'type': 'info',
-                'content': f'Searching: {query}',
-            })
-            results = await asyncio.to_thread(web_researcher.search, query)
-            page_sections = await asyncio.to_thread(
-                web_researcher.fetch_pages_parallel, results
-            )
-            page_content = ""
-            if page_sections:
-                page_content = ("\n\nFull article content:\n\n"
-                                + "\n\n---\n\n".join(page_sections))
-            tool_result = format_search_results(results) + page_content
-            await ws.send_json({
-                'type': 'info',
-                'content': f'Found {len(results)} results',
-            })
-        else:
-            # Skill tool — dispatch via tool_executor
-            from core.tool_executor import execute_tool
-            await ws.send_json({
-                'type': 'info',
-                'content': f'Running: {tool_call_request.name}',
-            })
-            tool_result = await asyncio.to_thread(
-                execute_tool, tool_call_request.name, tool_call_request.arguments
-            )
-
-        # Stream synthesis response
-        synthesis_queue = asyncio.Queue()
-
-        def _synthesis_producer():
-            try:
-                for token in llm.continue_after_tool_call(
-                    tool_call_request, tool_result
-                ):
-                    asyncio.run_coroutine_threadsafe(
-                        synthesis_queue.put(('item', token)), loop
-                    )
-            except Exception as e:
-                logger.error("Synthesis streaming error: %s", e)
-            finally:
-                asyncio.run_coroutine_threadsafe(
-                    synthesis_queue.put(('done', None)), loop
-                )
-
-        syn_thread = threading.Thread(target=_synthesis_producer, daemon=True)
-        syn_thread.start()
-
         await ws.send_json({'type': 'stream_start'})
         synthesis = ""
-        while True:
-            try:
-                tag, value = await asyncio.wait_for(
-                    synthesis_queue.get(), timeout=60
+
+        while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
+            tool_chain_count += 1
+
+            if tool_call_request.name == 'web_search':
+                query = tool_call_request.arguments.get('query', command)
+                await ws.send_json({
+                    'type': 'info',
+                    'content': f'Searching: {query}',
+                })
+                results = await asyncio.to_thread(web_researcher.search, query)
+                page_sections = await asyncio.to_thread(
+                    web_researcher.fetch_pages_parallel, results
                 )
-            except asyncio.TimeoutError:
-                break
-            if tag == 'done':
-                break
-            if tag == 'item':
-                synthesis += value
-                await ws.send_json({'type': 'stream_token', 'token': value})
+                page_content = ""
+                if page_sections:
+                    page_content = ("\n\nFull article content:\n\n"
+                                    + "\n\n---\n\n".join(page_sections))
+                tool_result = format_search_results(results) + page_content
+                await ws.send_json({
+                    'type': 'info',
+                    'content': f'Found {len(results)} results',
+                })
+            else:
+                # Skill tool — dispatch via tool_executor
+                from core.tool_executor import execute_tool
+                await ws.send_json({
+                    'type': 'info',
+                    'content': f'Running: {tool_call_request.name}',
+                })
+                tool_result = await asyncio.to_thread(
+                    execute_tool, tool_call_request.name,
+                    tool_call_request.arguments,
+                )
+
+            # Stream synthesis — may yield text tokens or another ToolCallRequest
+            synthesis_queue = asyncio.Queue()
+            _current_tcr = tool_call_request
+            _current_tr = tool_result
+
+            def _synthesis_producer(tcr=_current_tcr, tr=_current_tr):
+                try:
+                    for token in llm.continue_after_tool_call(
+                        tcr, tr,
+                        tools=use_tools_list,
+                    ):
+                        asyncio.run_coroutine_threadsafe(
+                            synthesis_queue.put(('item', token)), loop
+                        )
+                except Exception as e:
+                    logger.error("Synthesis streaming error: %s", e)
+                finally:
+                    asyncio.run_coroutine_threadsafe(
+                        synthesis_queue.put(('done', None)), loop
+                    )
+
+            syn_thread = threading.Thread(
+                target=_synthesis_producer, daemon=True,
+            )
+            syn_thread.start()
+
+            next_tool_call = None
+            while True:
+                try:
+                    tag, value = await asyncio.wait_for(
+                        synthesis_queue.get(), timeout=60
+                    )
+                except asyncio.TimeoutError:
+                    break
+                if tag == 'done':
+                    break
+                if tag == 'item':
+                    if isinstance(value, ToolCallRequest):
+                        next_tool_call = value
+                        # Drain remaining queue items
+                        syn_thread.join(timeout=5)
+                        break
+                    synthesis += value
+                    await ws.send_json({
+                        'type': 'stream_token', 'token': value,
+                    })
+
+            tool_call_request = next_tool_call
 
         cleaned = llm.strip_filler(synthesis) if synthesis else ""
         await ws.send_json({
@@ -642,8 +664,11 @@ async def _llm_fallback(llm, command, history, web_researcher,
             def _run_synthesis():
                 nonlocal synthesis
                 for token in llm.continue_after_tool_call(
-                    tool_call_request, tool_result
+                    tool_call_request, tool_result,
+                    tools=None,  # fallback path — web search only, no chaining
                 ):
+                    if isinstance(token, ToolCallRequest):
+                        break
                     synthesis += token
 
             await asyncio.to_thread(_run_synthesis)
