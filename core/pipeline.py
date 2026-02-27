@@ -1037,13 +1037,17 @@ class Coordinator:
                         return pending_chunk  # contains fallback response
 
             # --- Phase B: handle tool call if requested ---
-            if tool_call_request:
+            # Multi-tool loop: execute tool, synthesize, repeat if LLM
+            # requests another tool (e.g. "time and weather" → get_time then get_weather).
+            # Cap at 3 to prevent runaway loops.
+            _MAX_TOOL_CHAIN = 3
+            tool_chain_count = 0
+
+            while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
+                tool_chain_count += 1
                 self.logger.info(
                     f"🔧 Tool call: {tool_call_request.name}({tool_call_request.arguments})"
                 )
-
-                # No interim ack here — the 0.3s ack timer already fires
-                # one of the curated phrases before the tool call arrives.
 
                 # Execute the tool
                 if tool_call_request.name == "web_search":
@@ -1052,10 +1056,7 @@ class Coordinator:
                     results = self.web_researcher.search(query)
                     self.conv_state.research_results = results
 
-                    # Fetch page content from top 3 results concurrently.
-                    # Multiple sources let the LLM cross-reference and pick the best info.
                     page_sections = self.web_researcher.fetch_pages_parallel(results)
-
                     page_content = ""
                     if page_sections:
                         page_content = "\n\nFull article content:\n\n" + \
@@ -1064,7 +1065,6 @@ class Coordinator:
                     tool_result = format_search_results(results) + page_content
                     print(f"📋 Found {len(results)} results")
                 else:
-                    # Skill tool — dispatch via tool_executor
                     from core.tool_executor import execute_tool
                     print(f"🔧 Running: {tool_call_request.name}")
                     tool_result = execute_tool(
@@ -1072,10 +1072,17 @@ class Coordinator:
                     )
                     self.logger.info(f"Tool result: {tool_result[:100]}")
 
-                # Stream synthesized answer from tool results
-                for token in self.llm.continue_after_tool_call(
-                    tool_call_request, tool_result
+                # Stream synthesis — may yield text tokens or another ToolCallRequest
+                next_tool_call = None
+                for item in self.llm.continue_after_tool_call(
+                    tool_call_request, tool_result,
+                    tools=use_tools,
                 ):
+                    if isinstance(item, ToolCallRequest):
+                        next_tool_call = item
+                        break
+
+                    token = item
                     if not self._llm_responded:
                         self._llm_responded = True
 
@@ -1092,6 +1099,8 @@ class Coordinator:
                             )
                         if chunks_spoken == -1:
                             return pending_chunk
+
+                tool_call_request = next_tool_call
 
             # Combine buffered last chunk + flush remnant, strip filler, then speak
             remaining = chunker.flush()

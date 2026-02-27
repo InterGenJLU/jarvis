@@ -69,16 +69,16 @@ GET_TIME_TOOL = {
     "function": {
         "name": "get_time",
         "description": (
-            "Get the current local time and/or date. Call this for any question "
-            "about what time it is, today's date, the current day of the week, "
-            "or the current year."
+            "Get the current local time. Also handles date questions. "
+            "Call this for any question about what time it is, today's date, "
+            "the current day of the week, or the current year."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "include_date": {
                     "type": "boolean",
-                    "description": "If true, include the full date (day, month, year). Default false."
+                    "description": "Set true ONLY when the user explicitly asks for the date. Default false — omit for time-only questions."
                 }
             },
             "required": []
@@ -144,11 +144,47 @@ FIND_FILES_TOOL = {
     }
 }
 
+GET_WEATHER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": (
+            "Get current weather, forecast, or rain check. "
+            "Use for ANY question about weather, temperature, conditions, "
+            "rain, or forecast. Covers current conditions and future forecasts."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query_type": {
+                    "type": "string",
+                    "enum": ["current", "forecast", "tomorrow", "rain_check"],
+                    "description": (
+                        "current: current weather conditions. "
+                        "forecast: 3-day forecast. "
+                        "tomorrow: tomorrow's weather. "
+                        "rain_check: will it rain tomorrow."
+                    )
+                },
+                "location": {
+                    "type": "string",
+                    "description": (
+                        "City or location name (e.g. 'Paris', 'London', 'New York'). "
+                        "Omit for the user's default location."
+                    )
+                }
+            },
+            "required": ["query_type"]
+        }
+    }
+}
+
 # Registry: all available skill tools (keyed by name for lookup)
 SKILL_TOOLS = {
     "get_time": GET_TIME_TOOL,
     "get_system_info": GET_SYSTEM_INFO_TOOL,
     "find_files": FIND_FILES_TOOL,
+    "get_weather": GET_WEATHER_TOOL,
 }
 
 # Web search is always included (core tool, not skill-gated)
@@ -1016,15 +1052,18 @@ class LLMRouter:
                 "live data; your knowledge may be stale.\n"
                 "2. For ANY question about time, date, day, or year, call "
                 "get_time. NEVER answer time/date questions from the prompt.\n"
-                "3. For factual questions about the OUTSIDE WORLD (people, "
+                "3. For ANY question about weather, temperature, forecast, or "
+                "rain, call get_weather. No location needed — it defaults to "
+                "the user's home location.\n"
+                "4. For factual questions about the OUTSIDE WORLD (people, "
                 "events, news, scores, prices, etc.), call web_search.\n"
-                "4. For questions about THIS COMPUTER (CPU, RAM, GPU, disk, "
+                "5. For questions about THIS COMPUTER (CPU, RAM, GPU, disk, "
                 "uptime, files), call the appropriate local tool.\n"
-                "5. If the question is ambiguous and you need clarification, "
-                "reply with a brief text question — do NOT guess which tool.\n"
-                "6. For greetings, creative requests, opinions, and follow-up "
+                "6. If the user asks for MULTIPLE things (e.g. 'time and weather'), "
+                "call ALL relevant tools — one at a time.\n"
+                "7. For greetings, creative requests, opinions, and follow-up "
                 "elaborations, answer directly without any tool.\n"
-                "7. NEVER fabricate system info, file paths, or hardware specs. "
+                "8. NEVER fabricate system info, file paths, or hardware specs. "
                 "If unsure, call the tool."
             )
         else:
@@ -1240,18 +1279,22 @@ class LLMRouter:
 
     def continue_after_tool_call(self, tool_call: ToolCallRequest,
                                   tool_result: str,
-                                  max_tokens: int = 400) -> Iterator[str]:
+                                  max_tokens: int = 400,
+                                  tools: list | None = None) -> Iterator[str]:
         """Continue LLM generation after a tool call completes.
 
         Sends the tool result back to the LLM and streams its synthesized answer.
+        If tools are provided and the LLM requests another tool call, yields a
+        ToolCallRequest instead of text tokens.
 
         Args:
             tool_call: The ToolCallRequest that was executed
             tool_result: Formatted string of tool results
             max_tokens: Max tokens for the synthesized response
+            tools: Optional tool schemas — if provided, LLM can call another tool
 
         Yields:
-            Text tokens of the synthesized answer
+            Text tokens of the synthesized answer, or a ToolCallRequest
         """
         messages = list(getattr(self, '_tool_call_messages', []))
 
@@ -1281,41 +1324,67 @@ class LLMRouter:
         # Anti-hallucination is safe HERE (synthesis) — it only suppresses
         # tool calling when placed in the system prompt for stream_with_tools().
         today = date.today().strftime("%B %d, %Y")
-        messages.append({
-            "role": "user",
-            "content": (
-                f"Today's date is {today}. "
-                "Based on the search results above, give a direct, concise answer. "
-                "Include specific details like scores, dates, and numbers when available. "
-                "Maintain strict political neutrality — present facts objectively without "
-                "editorial bias, emphasis on controversies, or opinionated framing. "
-                "CRITICAL: Compare any event dates in the results against today's date. "
-                "If an event is scheduled for a FUTURE date, clearly state it hasn't "
-                "happened yet — do NOT report predictions, odds, or speculation as fact. "
-                "If the results do NOT contain a clear answer, say so honestly. "
-                "NEVER fabricate or guess. "
-                "Do NOT start with 'Sir' — jump straight into the answer. "
-                "NEVER tell the user to check another website or look elsewhere. "
-                "You ARE their source of information."
-            ),
-        })
+        if tools:
+            # Multi-tool mode: allow LLM to call remaining tools before answering
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"Today's date is {today}. "
+                    "You have one tool result above. Check the user's ORIGINAL request — "
+                    "if they asked for multiple things (e.g. 'time AND weather'), "
+                    "call the next tool NOW. No location is needed for get_weather. "
+                    "Only give a final answer when you have ALL requested information. "
+                    "Do NOT start with 'Sir' — jump straight into the answer."
+                ),
+            })
+        else:
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"Today's date is {today}. "
+                    "Based on the search results above, give a direct, concise answer. "
+                    "Include specific details like scores, dates, and numbers when available. "
+                    "Maintain strict political neutrality — present facts objectively without "
+                    "editorial bias, emphasis on controversies, or opinionated framing. "
+                    "CRITICAL: Compare any event dates in the results against today's date. "
+                    "If an event is scheduled for a FUTURE date, clearly state it hasn't "
+                    "happened yet — do NOT report predictions, odds, or speculation as fact. "
+                    "If the results do NOT contain a clear answer, say so honestly. "
+                    "NEVER fabricate or guess. "
+                    "Do NOT start with 'Sir' — jump straight into the answer. "
+                    "NEVER tell the user to check another website or look elsewhere. "
+                    "You ARE their source of information."
+                ),
+            })
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()
         first_token_time = None
         total_chars = 0
         stream_error = None
+
+        payload = {
+            "messages": messages,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        # Track tool call fragments (same logic as stream_with_tools)
+        is_tool_call = False
+        tc_name = ""
+        tc_args = ""
+        tc_id = None
+
         try:
             response = requests.post(
                 "http://127.0.0.1:8080/v1/chat/completions",
-                json={
-                    "messages": messages,
-                    "temperature": self.temperature,
-                    "top_p": self.top_p,
-                    "top_k": self.top_k,
-                    "max_tokens": max_tokens,
-                    "stream": True,
-                },
+                json=payload,
                 timeout=30,
                 stream=True,
             )
@@ -1332,7 +1401,35 @@ class LLMRouter:
                     break
                 try:
                     chunk = json.loads(data)
-                    delta = chunk["choices"][0].get("delta", {})
+                    choice = chunk["choices"][0]
+                    delta = choice.get("delta", {})
+                    finish = choice.get("finish_reason")
+
+                    # Check for tool call fragments
+                    if "tool_calls" in delta:
+                        is_tool_call = True
+                        tc_delta = delta["tool_calls"][0]
+                        fn = tc_delta.get("function", {})
+                        if fn.get("name"):
+                            tc_name = fn["name"]
+                        if fn.get("arguments"):
+                            tc_args += fn["arguments"]
+                        if tc_delta.get("id"):
+                            tc_id = tc_delta["id"]
+
+                    if finish == "tool_calls" and tc_name:
+                        try:
+                            args = json.loads(tc_args) if tc_args else {}
+                        except json.JSONDecodeError:
+                            args = {"query": tc_args}
+                        self.logger.info(
+                            f"Chained tool call: {tc_name}({args})")
+                        # Save messages for potential further chaining
+                        self._tool_call_messages = messages
+                        yield ToolCallRequest(
+                            name=tc_name, arguments=args, call_id=tc_id)
+                        return
+
                     token = delta.get("content", "")
                     if token:
                         if first_token_time is None:
@@ -1341,6 +1438,18 @@ class LLMRouter:
                         yield token
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
+
+            # Handle accumulated tool call without finish_reason
+            if is_tool_call and tc_name:
+                try:
+                    args = json.loads(tc_args) if tc_args else {}
+                except json.JSONDecodeError:
+                    args = {"query": tc_args}
+                self.logger.info(
+                    f"Chained tool call (no finish): {tc_name}({args})")
+                self._tool_call_messages = messages
+                yield ToolCallRequest(
+                    name=tc_name, arguments=args, call_id=tc_id)
 
         except Exception as e:
             stream_error = str(e)

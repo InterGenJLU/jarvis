@@ -475,6 +475,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 await ws.send_json({'type': 'stream_token', 'token': token})
 
     # --- Handle tool call ---
+    # TODO: Add multi-tool loop (like pipeline.py) for compound queries
     if tool_call_request:
         if tool_call_request.name == 'web_search':
             query = tool_call_request.arguments.get('query', command)

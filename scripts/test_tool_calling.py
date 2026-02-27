@@ -42,6 +42,7 @@ from core.config import Config
 from core.llm_router import (
     LLMRouter, ToolCallRequest,
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL,
+    GET_WEATHER_TOOL,
 )
 
 
@@ -58,7 +59,7 @@ class TestQuery:
     description: str = ""
 
 
-# 15 queries per skill + 10 no-tool + 5 web-search = 55 total
+# 15 queries per skill × 4 + 10 no-tool + 4 web-search + 1 weather-location = 75 total
 TEST_QUERIES = [
     # --- TIME (15 queries, expect get_time) ---
     TestQuery("what time is it", "get_time", "time"),
@@ -123,12 +124,29 @@ TEST_QUERIES = [
     TestQuery("you're welcome", None, "no_tool", "social"),
     TestQuery("say something nice", None, "no_tool", "creative"),
 
+    # --- WEATHER (15 queries, expect get_weather) ---
+    TestQuery("what's the weather", "get_weather", "weather"),
+    TestQuery("how's the weather today", "get_weather", "weather"),
+    TestQuery("current temperature", "get_weather", "weather"),
+    TestQuery("is it hot outside", "get_weather", "weather"),
+    TestQuery("weather in Paris", "get_weather", "weather"),
+    TestQuery("what's the temperature in London", "get_weather", "weather"),
+    TestQuery("what's the forecast", "get_weather", "weather"),
+    TestQuery("forecast for this week", "get_weather", "weather"),
+    TestQuery("will it rain tomorrow", "get_weather", "weather"),
+    TestQuery("is it going to rain", "get_weather", "weather"),
+    TestQuery("what's the weather tomorrow", "get_weather", "weather"),
+    TestQuery("tomorrow's forecast", "get_weather", "weather"),
+    TestQuery("how cold is it", "get_weather", "weather"),
+    TestQuery("do I need an umbrella", "get_weather", "weather"),
+    TestQuery("what are the conditions outside", "get_weather", "weather"),
+
     # --- WEB SEARCH expected (5 queries) ---
-    TestQuery("what's the weather in Tokyo right now", "web_search", "web"),
     TestQuery("who won the super bowl", "web_search", "web"),
     TestQuery("latest news about SpaceX", "web_search", "web"),
     TestQuery("how far is it from New York to London", "web_search", "web"),
     TestQuery("what is the current price of bitcoin", "web_search", "web"),
+    TestQuery("what's the weather in Tokyo right now", "get_weather", "weather"),
 ]
 
 
@@ -151,7 +169,7 @@ ALL_OUTCOMES = [
 ]
 
 # Tool names we provide to the LLM
-VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files"}
+VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather"}
 
 
 @dataclass
@@ -245,7 +263,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
                    temperature: float = 0.3, presence_penalty: float = 1.5,
                    verbose: bool = False, skill_filter: str = None) -> dict:
     """Run the full test suite and return results summary."""
-    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL]
+    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL]
 
     if skill_filter:
         queries = [q for q in queries if q.category == skill_filter]
@@ -388,7 +406,7 @@ def run_sweep(llm: LLMRouter, queries: list[TestQuery], runs: int = 3,
 def main():
     parser = argparse.ArgumentParser(description="LLM Tool-Calling Test Harness")
     parser.add_argument("--runs", type=int, default=10, help="Runs per query (default: 10)")
-    parser.add_argument("--skill", choices=["time", "system", "filesystem", "no_tool", "web"],
+    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "no_tool", "web"],
                        help="Test only one category")
     parser.add_argument("--sweep", action="store_true", help="Run temperature/penalty sweep")
     parser.add_argument("--temp", type=float, default=0.3, help="Temperature (default: 0.3)")

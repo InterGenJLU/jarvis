@@ -330,16 +330,20 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                     )
                     return response
 
-        # --- Tool call phase ---
-        if tool_call_request:
+        # --- Tool call phase (multi-tool loop) ---
+        _MAX_TOOL_CHAIN = 3
+        tool_chain_count = 0
+        header_printed = False
+
+        while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
+            tool_chain_count += 1
+
             if tool_call_request.name == "web_search":
                 query = tool_call_request.arguments.get("query", command)
                 console.print(f"\n[dim]Searching: {query}[/dim]")
                 results = web_researcher.search(query)
 
-                # Fetch top 3 page contents concurrently for richer synthesis
                 page_sections = web_researcher.fetch_pages_parallel(results)
-
                 page_content = ""
                 if page_sections:
                     page_content = "\n\nFull article content:\n\n" + \
@@ -348,22 +352,32 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 tool_result = format_search_results(results) + page_content
                 console.print(f"[dim]Found {len(results)} results[/dim]")
             else:
-                # Skill tool — dispatch via tool_executor
                 from core.tool_executor import execute_tool
                 console.print(f"\n[dim]Running: {tool_call_request.name}[/dim]")
                 tool_result = execute_tool(
                     tool_call_request.name, tool_call_request.arguments
                 )
 
-            # Stream synthesized answer
-            console.print("[bold cyan]J.A.R.V.I.S.:[/bold cyan] ", end="")
-            for token in llm.continue_after_tool_call(
-                tool_call_request, tool_result
+            # Stream synthesis — may yield text or another ToolCallRequest
+            if not header_printed:
+                console.print("[bold cyan]J.A.R.V.I.S.:[/bold cyan] ", end="")
+                header_printed = True
+
+            next_tool_call = None
+            for item in llm.continue_after_tool_call(
+                tool_call_request, tool_result,
+                tools=use_tools_list,
             ):
-                full_response += token
-                sys.stdout.write(token)
+                if isinstance(item, ToolCallRequest):
+                    next_tool_call = item
+                    break
+                full_response += item
+                sys.stdout.write(item)
                 sys.stdout.flush()
 
+            tool_call_request = next_tool_call
+
+        if header_printed:
             sys.stdout.write("\n")
             return full_response
 

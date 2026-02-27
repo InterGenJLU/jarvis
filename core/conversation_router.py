@@ -857,6 +857,7 @@ class ConversationRouter:
         "time_info": "get_time",
         "system_info": "get_system_info",
         "filesystem": "find_files",
+        "weather": "get_weather",
     }
 
     # Threshold for tool pruning.  Tuned via sweep across 56 queries at
