@@ -59,7 +59,7 @@ class TestQuery:
     description: str = ""
 
 
-# 15 queries per skill × 5 + 10 no-tool + 5 web-search = 90 total
+# 15 queries per skill × 5 + 10 no-tool + 55 conversation + 5 web-search = 145 total
 TEST_QUERIES = [
     # --- TIME (15 queries, expect get_time) ---
     TestQuery("what time is it", "get_time", "time"),
@@ -123,6 +123,82 @@ TEST_QUERIES = [
     TestQuery("what can you help me with", None, "no_tool", "capabilities"),
     TestQuery("you're welcome", None, "no_tool", "social"),
     TestQuery("say something nice", None, "no_tool", "creative"),
+
+    # --- CONVERSATION (56 queries, expect no tool — LLM handles natively) ---
+    # Comprehensive coverage of all conversational intents
+
+    # Greeting (6)
+    TestQuery("hi there", None, "conversation", "greeting"),
+    TestQuery("good morning", None, "conversation", "greeting"),
+    TestQuery("good evening", None, "conversation", "greeting"),
+    TestQuery("good to see you", None, "conversation", "greeting"),
+    TestQuery("hey hey", None, "conversation", "greeting"),
+    TestQuery("good afternoon", None, "conversation", "greeting"),
+
+    # How are you (6)
+    TestQuery("how are you", None, "conversation", "how_are_you"),
+    TestQuery("how's it going", None, "conversation", "how_are_you"),
+    TestQuery("how's it hangin", None, "conversation", "how_are_you"),
+    TestQuery("everything ok", None, "conversation", "how_are_you"),
+    TestQuery("everything alright", None, "conversation", "how_are_you"),
+    TestQuery("all good", None, "conversation", "how_are_you"),
+
+    # Thank you (7)
+    TestQuery("thanks a lot", None, "conversation", "thank_you"),
+    TestQuery("appreciate it", None, "conversation", "thank_you"),
+    TestQuery("outstanding thank you", None, "conversation", "thank_you"),
+    TestQuery("splendid thanks", None, "conversation", "thank_you"),
+    TestQuery("wonderful thank you", None, "conversation", "thank_you"),
+    TestQuery("greatly appreciated thank you", None, "conversation", "thank_you"),
+    TestQuery("excellent thank you", None, "conversation", "thank_you"),
+
+    # Acknowledgment (7)
+    TestQuery("sounds good", None, "conversation", "acknowledgment"),
+    TestQuery("very good", None, "conversation", "acknowledgment"),
+    TestQuery("very well", None, "conversation", "acknowledgment"),
+    TestQuery("perfect", None, "conversation", "acknowledgment"),
+    TestQuery("right away", None, "conversation", "acknowledgment"),
+    TestQuery("great", None, "conversation", "acknowledgment"),
+    TestQuery("alright", None, "conversation", "acknowledgment"),
+
+    # Goodbye (5)
+    TestQuery("goodbye", None, "conversation", "goodbye"),
+    TestQuery("see you later", None, "conversation", "goodbye"),
+    TestQuery("auf wiedersehen", None, "conversation", "goodbye"),
+    TestQuery("be good", None, "conversation", "goodbye"),
+    TestQuery("goodnight", None, "conversation", "goodbye"),
+
+    # User is good (6)
+    TestQuery("i'm doing well", None, "conversation", "user_is_good"),
+    TestQuery("not bad", None, "conversation", "user_is_good"),
+    TestQuery("i'm excellent", None, "conversation", "user_is_good"),
+    TestQuery("i'm good", None, "conversation", "user_is_good"),
+    TestQuery("i'm alright", None, "conversation", "user_is_good"),
+    TestQuery("i'm wonderful", None, "conversation", "user_is_good"),
+
+    # User asks how JARVIS is (6)
+    TestQuery("what about you", None, "conversation", "user_asks_how_jarvis_is"),
+    TestQuery("how about yourself", "get_system_info", "conversation", "user_asks_how_jarvis_is"),
+    TestQuery("how you doing", None, "conversation", "user_asks_how_jarvis_is"),
+    TestQuery("you doing alright", None, "conversation", "user_asks_how_jarvis_is"),
+    TestQuery("you ok", None, "conversation", "user_asks_how_jarvis_is"),
+    TestQuery("you good", None, "conversation", "user_asks_how_jarvis_is"),
+
+    # No help needed (7)
+    TestQuery("no thanks i'm all set", None, "conversation", "no_help_needed"),
+    TestQuery("not at the moment thank you", None, "conversation", "no_help_needed"),
+    TestQuery("not right now thank you", None, "conversation", "no_help_needed"),
+    TestQuery("not right now no", None, "conversation", "no_help_needed"),
+    TestQuery("i'm good for now thanks", None, "conversation", "no_help_needed"),
+    TestQuery("that's it thank you", None, "conversation", "no_help_needed"),
+    TestQuery("i'm all set thanks", None, "conversation", "no_help_needed"),
+
+    # What's up (5)
+    TestQuery("what's going on", None, "conversation", "whats_up"),
+    TestQuery("what's the haps", None, "conversation", "whats_up"),
+    TestQuery("what's happening", None, "conversation", "whats_up"),
+    TestQuery("what's good", None, "conversation", "whats_up"),
+    TestQuery("what ya know good", None, "conversation", "whats_up"),
 
     # --- WEATHER (15 queries, expect get_weather) ---
     TestQuery("what's the weather", "get_weather", "weather"),
@@ -348,7 +424,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
 
     # Per-category breakdown
     print("\nPer-category accuracy:")
-    for cat in ["time", "system", "filesystem", "weather", "reminder", "no_tool", "web"]:
+    for cat in ["time", "system", "filesystem", "weather", "reminder", "no_tool", "conversation", "web"]:
         cat_outcomes = per_category.get(cat, {})
         cat_total = sum(cat_outcomes.values())
         cat_correct = (cat_outcomes.get(OUTCOME_CORRECT_TOOL, 0)
@@ -423,7 +499,7 @@ def run_sweep(llm: LLMRouter, queries: list[TestQuery], runs: int = 3,
 def main():
     parser = argparse.ArgumentParser(description="LLM Tool-Calling Test Harness")
     parser.add_argument("--runs", type=int, default=10, help="Runs per query (default: 10)")
-    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "reminder", "no_tool", "web"],
+    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "reminder", "no_tool", "conversation", "web"],
                        help="Test only one category")
     parser.add_argument("--sweep", action="store_true", help="Run temperature/penalty sweep")
     parser.add_argument("--temp", type=float, default=0.3, help="Temperature (default: 0.3)")

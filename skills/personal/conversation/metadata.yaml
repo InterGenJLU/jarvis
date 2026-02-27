@@ -3,7 +3,7 @@ version: 1.0.0
 description: Natural conversation - greetings, acknowledgments, small talk
 category: personal
 author: Jarvis Team
-enabled: true
+enabled: false  # Phase 2.2: LLM handles conversation natively (Feb 27, 2026)
 priority: 10  # High priority - check before other skills
 
 intents:

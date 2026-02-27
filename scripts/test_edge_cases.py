@@ -2632,7 +2632,7 @@ TESTS += [
 
 TESTS += [
     TestCase("1D-01", "what's up", 2, "1D", "Layer Transitions",
-             expect_skill="conversation", expect_handled=True),
+             expect_handled=False, notes="LLM fallback — conversation handled natively"),
     TestCase("1D-02", "could you perhaps look into the current meteorological conditions", 2, "1D", "Layer Transitions",
              expect_skill="weather", expect_handled=True,
              notes="Semantic match for elaborate weather query"),
@@ -2856,18 +2856,18 @@ TESTS += [
              expect_skill="app_launcher", expect_handled=True),
 ]
 
-# 5G: Conversation
+# 5G: Conversation (LLM-native since Phase 2.2 — no skill, LLM handles directly)
 TESTS += [
     TestCase("5G-R1", "hello", 2, "5G", "Conversation Routing",
-             expect_handled=True, notes="Greeting"),
+             expect_handled=False, notes="LLM handles greeting natively"),
     TestCase("5G-R2", "good morning", 2, "5G", "Conversation Routing",
-             expect_skill="conversation", expect_handled=True),
+             expect_handled=False, notes="LLM handles greeting natively"),
     TestCase("5G-R3", "how are you", 2, "5G", "Conversation Routing",
-             expect_skill="conversation", expect_handled=True),
+             expect_handled=False, notes="LLM handles social query natively"),
     TestCase("5G-R4", "thank you", 2, "5G", "Conversation Routing",
-             expect_skill="conversation", expect_handled=True),
+             expect_handled=False, notes="LLM handles gratitude natively"),
     TestCase("5G-R5", "goodbye", 2, "5G", "Conversation Routing",
-             expect_skill="conversation", expect_handled=True),
+             expect_handled=False, notes="LLM handles farewell natively"),
 ]
 
 # 5H: News
