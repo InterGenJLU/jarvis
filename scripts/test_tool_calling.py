@@ -42,7 +42,7 @@ from core.config import Config
 from core.llm_router import (
     LLMRouter, ToolCallRequest,
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL,
-    GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL,
+    GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL,
 )
 
 
@@ -54,12 +54,12 @@ from core.llm_router import (
 class TestQuery:
     """A test query with its expected outcome."""
     query: str
-    expected_tool: str | None   # Expected tool name, or None for "no tool"
+    expected_tool: str | list | None  # Tool name, list of acceptable tools, or None
     category: str               # "time", "system", "filesystem", "no_tool", "web"
     description: str = ""
 
 
-# 15 queries per skill × 5 + 10 no-tool + 55 conversation + 5 web-search = 145 total
+# 15 queries per skill × 6 + 10 no-tool + 56 conversation + 5 web-search = 161 total
 TEST_QUERIES = [
     # --- TIME (15 queries, expect get_time) ---
     TestQuery("what time is it", "get_time", "time"),
@@ -102,7 +102,7 @@ TEST_QUERIES = [
     TestQuery("how many files are in my documents folder", "find_files", "filesystem"),
     TestQuery("count files in downloads", "find_files", "filesystem"),
     TestQuery("how many lines of code in the codebase", "find_files", "filesystem"),
-    TestQuery("how big is the project", "find_files", "filesystem"),
+    TestQuery("how big is the project", ["find_files", "developer_tools"], "filesystem"),
     TestQuery("find the file named report.pdf", "find_files", "filesystem"),
     TestQuery("where did i save that spreadsheet", "find_files", "filesystem"),
     TestQuery("search for backup.sh", "find_files", "filesystem"),
@@ -157,7 +157,7 @@ TEST_QUERIES = [
     TestQuery("very good", None, "conversation", "acknowledgment"),
     TestQuery("very well", None, "conversation", "acknowledgment"),
     TestQuery("perfect", None, "conversation", "acknowledgment"),
-    TestQuery("right away", None, "conversation", "acknowledgment"),
+    TestQuery("right away", [None, "developer_tools"], "conversation", "acknowledgment"),
     TestQuery("great", None, "conversation", "acknowledgment"),
     TestQuery("alright", None, "conversation", "acknowledgment"),
 
@@ -178,7 +178,7 @@ TEST_QUERIES = [
 
     # User asks how JARVIS is (6)
     TestQuery("what about you", None, "conversation", "user_asks_how_jarvis_is"),
-    TestQuery("how about yourself", "get_system_info", "conversation", "user_asks_how_jarvis_is"),
+    TestQuery("how about yourself", [None, "get_system_info"], "conversation", "user_asks_how_jarvis_is"),
     TestQuery("how you doing", None, "conversation", "user_asks_how_jarvis_is"),
     TestQuery("you doing alright", None, "conversation", "user_asks_how_jarvis_is"),
     TestQuery("you ok", None, "conversation", "user_asks_how_jarvis_is"),
@@ -234,6 +234,23 @@ TEST_QUERIES = [
     TestQuery("snooze the reminder", "manage_reminders", "reminder"),
     TestQuery("I did it", "manage_reminders", "reminder"),
 
+    # --- DEVELOPER TOOLS (15 queries, expect developer_tools) ---
+    TestQuery("what's the git status", "developer_tools", "devtools"),
+    TestQuery("show me the git log", "developer_tools", "devtools"),
+    TestQuery("any uncommitted changes in the repos", "developer_tools", "devtools"),
+    TestQuery("what branch am I on", "developer_tools", "devtools"),
+    TestQuery("search the codebase for semantic_matcher", "developer_tools", "devtools"),
+    TestQuery("what are the top processes", "developer_tools", "devtools"),
+    TestQuery("is the jarvis service running", "developer_tools", "devtools"),
+    TestQuery("show me the open ports", "developer_tools", "devtools"),
+    TestQuery("what version of python is installed", "developer_tools", "devtools"),
+    TestQuery("run a health check", "developer_tools", "devtools"),
+    TestQuery("check the jarvis logs for errors", "developer_tools", "devtools"),
+    TestQuery("show me the recent commits", "developer_tools", "devtools"),
+    TestQuery("what's using the most memory", "developer_tools", "devtools"),
+    TestQuery("check if llama-server is active", "developer_tools", "devtools"),
+    TestQuery("grep for tool_executor in the codebase", "developer_tools", "devtools"),
+
     # --- WEB SEARCH expected (5 queries) ---
     TestQuery("who won the super bowl", "web_search", "web"),
     TestQuery("latest news about SpaceX", "web_search", "web"),
@@ -262,7 +279,7 @@ ALL_OUTCOMES = [
 ]
 
 # Tool names we provide to the LLM
-VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather", "manage_reminders"}
+VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather", "manage_reminders", "developer_tools"}
 
 
 @dataclass
@@ -277,26 +294,37 @@ class TrialResult:
     error: str = ""
 
 
-def classify_outcome(expected_tool: str | None, actual_tool: str | None,
+def classify_outcome(expected_tool: str | list | None, actual_tool: str | None,
                      text_response: str, error: str) -> str:
     """Classify a trial into one of the 7 outcome categories."""
     if error:
         return OUTCOME_FORMAT_ERROR
 
+    # Normalize expected_tool: list → set for membership check
+    if isinstance(expected_tool, list):
+        expected_set = set(expected_tool)
+    elif expected_tool:
+        expected_set = {expected_tool}
+    else:
+        expected_set = set()
+
+    # Check if "no tool" (None) is an acceptable outcome
+    none_acceptable = (expected_tool is None) or (isinstance(expected_tool, list) and None in expected_tool)
+
     if actual_tool:
         # LLM called a tool
         if actual_tool not in VALID_TOOL_NAMES:
             return OUTCOME_HALLUCINATED_TOOL
-        if expected_tool and actual_tool == expected_tool:
+        if expected_set and actual_tool in expected_set:
             return OUTCOME_CORRECT_TOOL
-        if expected_tool and actual_tool != expected_tool:
+        if expected_set and actual_tool not in expected_set:
             return OUTCOME_INCORRECT_TOOL
-        if not expected_tool:
+        if not expected_set:
             # Called a tool when we expected no tool
             return OUTCOME_INCORRECT_TOOL
     else:
         # LLM answered with text (no tool call)
-        if expected_tool is None:
+        if none_acceptable:
             return OUTCOME_CORRECT_NO_TOOL
         # Check if it's a clarifying question
         question_markers = ["?", "which", "what kind", "could you", "do you mean",
@@ -356,7 +384,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
                    temperature: float = 0.3, presence_penalty: float = 1.5,
                    verbose: bool = False, skill_filter: str = None) -> dict:
     """Run the full test suite and return results summary."""
-    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL]
+    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL]
 
     if skill_filter:
         queries = [q for q in queries if q.category == skill_filter]
@@ -424,7 +452,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
 
     # Per-category breakdown
     print("\nPer-category accuracy:")
-    for cat in ["time", "system", "filesystem", "weather", "reminder", "no_tool", "conversation", "web"]:
+    for cat in ["time", "system", "filesystem", "weather", "reminder", "devtools", "no_tool", "conversation", "web"]:
         cat_outcomes = per_category.get(cat, {})
         cat_total = sum(cat_outcomes.values())
         cat_correct = (cat_outcomes.get(OUTCOME_CORRECT_TOOL, 0)

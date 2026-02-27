@@ -174,27 +174,8 @@ class DeveloperToolsSkill(BaseSkill):
             threshold=0.55,
         )
 
-        self.register_semantic_intent(
-            examples=[
-                "backup config.yaml",
-                "rename this file",
-                "copy the config file",
-                "create a backup of the config",
-            ],
-            handler=self.file_operations,
-            threshold=0.50,
-        )
-
-        self.register_semantic_intent(
-            examples=[
-                "delete the temp file",
-                "remove old logs",
-                "clean up temporary files",
-                "delete that backup",
-            ],
-            handler=self.file_delete,
-            threshold=0.55,
-        )
+        # NOTE: file_operations and file_delete intents removed — they overlap
+        # with file_editor and are covered by run_command in the tool schema.
 
         self.register_semantic_intent(
             examples=[

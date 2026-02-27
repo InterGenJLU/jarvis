@@ -241,6 +241,100 @@ MANAGE_REMINDERS_TOOL = {
     }
 }
 
+DEVELOPER_TOOLS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "developer_tools",
+        "description": (
+            "Developer and system administration operations: git status/log/diff/branch "
+            "across repos, codebase search, process info, service status, network info, "
+            "package info, system health check, service logs, or run a shell command. "
+            "Only use when the user explicitly asks about git, code, processes, services, "
+            "network, packages, logs, or shell commands. NOT for casual conversation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "git_status", "git_log", "git_diff", "git_branch",
+                        "codebase_search", "process_info", "service_status",
+                        "network_info", "package_info", "system_health",
+                        "check_logs", "run_command", "confirm_pending",
+                    ],
+                    "description": (
+                        "git_status: show git status across repos. "
+                        "git_log: show recent commits. "
+                        "git_diff: show uncommitted changes. "
+                        "git_branch: list branches. "
+                        "codebase_search: grep for a pattern in core/ and skills/. "
+                        "process_info: top processes by CPU or memory. "
+                        "service_status: check a systemd service or list JARVIS services. "
+                        "network_info: IP addresses, open ports, ping, or interfaces. "
+                        "package_info: check installed package version. "
+                        "system_health: run full 5-layer health diagnostic. "
+                        "check_logs: view recent JARVIS service logs. "
+                        "run_command: execute a shell command (safety-classified). "
+                        "confirm_pending: execute a previously suggested command that "
+                        "required confirmation. Use when the user says 'yes', 'go ahead', "
+                        "'proceed' after being asked to confirm."
+                    )
+                },
+                "repo": {
+                    "type": "string",
+                    "enum": ["main", "skills", "models", "all"],
+                    "description": "Which git repo (for git_* actions). Default: all."
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of log entries (for git_log). Default: 10, max 50."
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Search pattern (for codebase_search)."
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["cpu", "memory"],
+                    "description": "Sort order for process_info. Default: cpu."
+                },
+                "service_name": {
+                    "type": "string",
+                    "description": "Service name (for service_status). Omit to list JARVIS services."
+                },
+                "info_type": {
+                    "type": "string",
+                    "enum": ["addresses", "ports", "ping", "interfaces"],
+                    "description": "Type of network info. Default: addresses."
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Hostname or IP to ping (for network_info with info_type=ping)."
+                },
+                "package_name": {
+                    "type": "string",
+                    "description": "Package name to look up (for package_info)."
+                },
+                "filter": {
+                    "type": "string",
+                    "enum": ["recent", "errors", "warnings"],
+                    "description": "Log filter (for check_logs). Default: recent."
+                },
+                "minutes": {
+                    "type": "integer",
+                    "description": "How many minutes of logs to show (for check_logs). Default: 15."
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute (for run_command)."
+                }
+            },
+            "required": ["action"]
+        }
+    }
+}
+
 # Registry: all available skill tools (keyed by name for lookup)
 SKILL_TOOLS = {
     "get_time": GET_TIME_TOOL,
@@ -248,6 +342,7 @@ SKILL_TOOLS = {
     "find_files": FIND_FILES_TOOL,
     "get_weather": GET_WEATHER_TOOL,
     "manage_reminders": MANAGE_REMINDERS_TOOL,
+    "developer_tools": DEVELOPER_TOOLS_TOOL,
 }
 
 # Web search is always included (core tool, not skill-gated)
@@ -1127,11 +1222,17 @@ class LLMRouter:
                 "events, news, scores, prices, etc.), call web_search.\n"
                 "6. For questions about THIS COMPUTER (CPU, RAM, GPU, disk, "
                 "uptime, files), call the appropriate local tool.\n"
-                "7. If the user asks for MULTIPLE things (e.g. 'time and weather'), "
+                "7. For developer operations (git, codebase search, processes, "
+                "services, network info, packages, logs, or shell commands), call "
+                "developer_tools. For codebase_search, extract the pattern. For "
+                "run_command, provide the exact shell command.\n"
+                "8. If the user asks for MULTIPLE things (e.g. 'time and weather'), "
                 "call ALL relevant tools — one at a time.\n"
-                "8. For greetings, creative requests, opinions, and follow-up "
-                "elaborations, answer directly without any tool.\n"
-                "9. NEVER fabricate system info, file paths, or hardware specs. "
+                "9. For greetings, small talk, casual questions (e.g. 'everything ok', "
+                "'what's going on', 'what's happening', 'how are you'), creative "
+                "requests, opinions, and follow-up elaborations, answer directly "
+                "without any tool.\n"
+                "10. NEVER fabricate system info, file paths, or hardware specs. "
                 "If unsure, call the tool."
             )
         else:

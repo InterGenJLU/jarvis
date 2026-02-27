@@ -31,7 +31,7 @@
 
 **Phase sequence (from DEVELOPMENT_VISION.md):**
 1. ~~Phase 1: Low-stakes skills as tools (system_info, filesystem, time)~~ — **COMPLETE Feb 26.** 100% accuracy (600/600 trials), 822ms avg latency, 266/266 existing tests pass. Commit `06dd741`.
-2. Phase 2: API-backed skills as tools (weather, reminders, developer_tools) — **NEXT.** Assess 5-6 tool cliff risk.
+2. Phase 2: API-backed skills as tools — **IN PROGRESS.** 2.1 weather COMPLETE (`1be0cb1`). 2.1 reminders COMPLETE (`49eca5c`). 2.2 conversation skill DISABLED, LLM handles natively (`aa2f524`). 5-6 tool cliff DEBUNKED (870 trials, 100%). **NEXT: 2.3 developer_tools.**
 3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision)
 4. Phase 4: Routing layer evaluation (remove semantic matcher, keyword routing, priority layers)
 

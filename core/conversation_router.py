@@ -228,6 +228,13 @@ class ConversationRouter:
                 return result
             logger.info("Self-referential hardware query — falling through to LLM")
 
+        # --- Pre-P4-LLM: Pending skill confirmations ---
+        # Non-migrated skills with pending confirmation state get priority
+        # over tool-calling to avoid capturing "yes"/"no" responses.
+        result = self._handle_skill_pending_confirmation(command)
+        if result:
+            return result
+
         # --- P4-LLM: Tool-calling path (LLM-centric migration Phase 1) ---
         # If the command appears relevant to a tool-enabled skill, route
         # through the LLM with dynamically pruned tools.  The LLM decides
@@ -671,6 +678,47 @@ class ConversationRouter:
 
         return None
 
+    def _handle_skill_pending_confirmation(self, command: str) -> RouteResult | None:
+        """Pre-P4-LLM: Route yes/no responses to skills with pending confirmations.
+
+        Non-migrated skills (e.g. file_editor) use _pending_confirmation state
+        for destructive operations.  If such state exists and the command looks
+        like a confirmation or denial, route to the skill directly instead of
+        letting tool-calling capture it.
+        """
+        text_lower = command.strip().lower()
+        confirm_words = {"yes", "yeah", "yep", "go ahead", "proceed", "do it",
+                         "confirmed", "affirmative", "sure",
+                         "no", "nope", "cancel", "abort", "never mind", "stop", "don't"}
+        words = set(re.findall(r'\b\w+\b', text_lower))
+        if not (words & confirm_words):
+            return None
+
+        sm = self.skill_manager
+        for skill_name, skill in sm.skills.items():
+            pending = getattr(skill, '_pending_confirmation', None)
+            if not pending:
+                continue
+            # Valid pending: 3-tuple (action, detail, expiry)
+            if not (isinstance(pending, (tuple, list)) and len(pending) == 3):
+                continue
+            # Route directly to the skill's confirm_action handler
+            # (the skill handles expiry checks internally)
+            try:
+                response = skill.confirm_action({'original_text': command})
+                if response:
+                    return RouteResult(
+                        text=response,
+                        intent="skill",
+                        source="pending_confirmation",
+                        handled=True,
+                        match_info={"skill": skill_name},
+                    )
+            except (AttributeError, TypeError):
+                continue
+
+        return None
+
     def _handle_task_planning(self, command: str) -> RouteResult | None:
         """Pre-P4: Multi-step task planning for compound requests.
 
@@ -859,6 +907,7 @@ class ConversationRouter:
         "filesystem": "find_files",
         "weather": "get_weather",
         "reminders": "manage_reminders",
+        "developer_tools": "developer_tools",
     }
 
     # Threshold for tool pruning.  Tuned via sweep across 56 queries at

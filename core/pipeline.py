@@ -28,6 +28,57 @@ from core.honorific import set_honorific
 from core import persona
 from core.conversation_state import ConversationState
 from core.conversation_router import ConversationRouter, RouteResult
+
+
+# ---------------------------------------------------------------------------
+# "Show me" display hook for developer_tools (lazy-loaded)
+# ---------------------------------------------------------------------------
+
+_display_router_cache = None
+
+_DEVTOOLS_DISPLAY_MAP = {
+    "git_status": ("git_status", "Git Status"),
+    "git_log": ("git_log", "Git Log"),
+    "git_diff": ("git_diff", "Git Diff"),
+    "git_branch": ("git_branch", "Git Branches"),
+    "codebase_search": ("codebase_search", "Codebase Search"),
+    "process_info": ("process_list", "Top Processes"),
+    "service_status": ("service_status", "Service Status"),
+    "network_info": ("network_info", "Network Info"),
+    "package_info": ("package_list", "Package Info"),
+    "system_health": ("health_check", "System Health"),
+    "check_logs": ("log_output", "Service Logs"),
+    "run_command": ("general", "Shell Output"),
+    "confirm_pending": ("general", "Confirmed Output"),
+}
+
+
+def _get_display_router(config):
+    """Lazy-load DisplayRouter from developer_tools skill."""
+    global _display_router_cache
+    if _display_router_cache is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            '_display',
+            '/mnt/storage/jarvis/skills/system/developer_tools/_display.py',
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _display_router_cache = mod.DisplayRouter(config)
+    return _display_router_cache
+
+
+def _detect_show_me(text):
+    """Check for 'show me' trigger — replicates DisplayRouter.detect_show_me() logic."""
+    lower = text.lower().strip()
+    if 'in terminal' in lower or 'in the terminal' in lower:
+        return 'terminal'
+    if 'in code' in lower or 'in vs code' in lower or 'in vscode' in lower:
+        return 'vscode'
+    for prefix in ['show me', 'let me see', 'display', 'pull up', 'open up']:
+        if lower.startswith(prefix):
+            return 'auto'
+    return None
 from core.llm_router import ToolCallRequest
 from core.web_research import WebResearcher, format_search_results
 from core.self_awareness import SelfAwareness
@@ -414,10 +465,12 @@ class Coordinator:
         self.skill_manager = skill_manager
         self.conversation = conversation
         self.reminder_manager = reminder_manager
-        # Wire reminder manager for tool-calling dispatch
+        # Wire reminder manager and config for tool-calling dispatch
         if reminder_manager:
             from core.tool_executor import set_reminder_manager
             set_reminder_manager(reminder_manager)
+        from core.tool_executor import set_config as set_tool_config
+        set_tool_config(config)
         self.news_manager = news_manager
         self.calendar_manager = calendar_manager
         self.profile_manager = profile_manager
@@ -1075,6 +1128,22 @@ class Coordinator:
                         tool_call_request.name, tool_call_request.arguments
                     )
                     self.logger.info(f"Tool result: {tool_result[:100]}")
+
+                    # "Show me" display hook for developer_tools
+                    if tool_call_request.name == "developer_tools":
+                        show_me = _detect_show_me(command)
+                        if (show_me and tool_result
+                                and not tool_result.startswith(("BLOCKED", "CONFIRMATION REQUIRED", "Error"))):
+                            action = tool_call_request.arguments.get("action", "")
+                            ct, title = _DEVTOOLS_DISPLAY_MAP.get(action, ("general", "Output"))
+                            backend = show_me if show_me in ("terminal", "vscode") else None
+                            try:
+                                _get_display_router(self.config).show(
+                                    tool_result, content_type=ct, title=title,
+                                    force_backend=backend,
+                                )
+                            except Exception as e:
+                                self.logger.warning(f"Display hook error: {e}")
 
                 # Stream synthesis — may yield text tokens or another ToolCallRequest
                 next_tool_call = None

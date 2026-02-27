@@ -1740,7 +1740,7 @@ def run_routing_test(case, components):
     # Skills migrated to LLM tool-calling route via P4-LLM (handled=False,
     # intent="tool_calling", use_tools set).  Accept this as valid routing
     # for migrated skills.
-    _MIGRATED_SKILLS = {"time_info", "system_info", "filesystem", "weather", "reminders"}
+    _MIGRATED_SKILLS = {"time_info", "system_info", "filesystem", "weather", "reminders", "developer_tools"}
     is_tool_calling = r.intent == "tool_calling" and r.use_tools is not None
 
     if case.expect_handled is not None and r.handled != case.expect_handled:
@@ -2786,8 +2786,8 @@ TESTS += [
              notes="Simulates step 2 of 'delete file' → 'yes' sequence"),
     TestCase("2F-06", "yes", 2, "2F", "File Editor Confirm — expired",
              setup={"pending_confirmation": ("delete", {"filename": "test.txt"}, time.time() - 5)},
-             expect_handled=False,
-             notes="Expired confirmation — 3-tuple but time > expiry, falls to LLM"),
+             expect_handled=True,
+             notes="Expired confirmation — skill returns expiry message"),
 ]
 
 # ---------------------------------------------------------------------------

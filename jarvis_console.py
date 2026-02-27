@@ -707,8 +707,9 @@ def run_console(config, mode):
 
         reminder_manager.start()
         # Wire reminder manager for tool-calling dispatch
-        from core.tool_executor import set_reminder_manager
+        from core.tool_executor import set_reminder_manager, set_config as set_tool_config
         set_reminder_manager(reminder_manager)
+        set_tool_config(config)
 
     # News system
     news_manager = None
