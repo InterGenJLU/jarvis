@@ -1024,6 +1024,24 @@ def _devtools_confirm_pending(args: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# get_news
+# ---------------------------------------------------------------------------
+
+def _handle_get_news(args: dict) -> str:
+    """Read or count RSS news headlines from the local feed monitor."""
+    from core.news_manager import get_news_manager
+    mgr = get_news_manager()
+    if not mgr:
+        return "News system is not available."
+    action = args.get("action", "read")
+    category = args.get("category")
+    max_priority = args.get("max_priority")
+    if action == "count":
+        return mgr.get_headline_count_response()
+    return mgr.read_headlines(category=category, limit=5, max_priority=max_priority)
+
+
+# ---------------------------------------------------------------------------
 # Handler registry
 # ---------------------------------------------------------------------------
 
@@ -1034,4 +1052,5 @@ _TOOL_HANDLERS = {
     "get_weather": _handle_get_weather,
     "manage_reminders": _handle_manage_reminders,
     "developer_tools": _handle_developer_tools,
+    "get_news": _handle_get_news,
 }

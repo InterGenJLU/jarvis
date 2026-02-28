@@ -43,6 +43,7 @@ from core.llm_router import (
     LLMRouter, ToolCallRequest,
     WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL,
     GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL,
+    GET_NEWS_TOOL,
 )
 
 
@@ -59,7 +60,7 @@ class TestQuery:
     description: str = ""
 
 
-# 15 queries per skill × 6 + 10 no-tool + 56 conversation + 5 web-search = 161 total
+# 15 queries per skill × 7 + 10 no-tool + 56 conversation + 5 web-search = 176 total
 TEST_QUERIES = [
     # --- TIME (15 queries, expect get_time) ---
     TestQuery("what time is it", "get_time", "time"),
@@ -195,7 +196,7 @@ TEST_QUERIES = [
 
     # What's up (5)
     TestQuery("what's going on", None, "conversation", "whats_up"),
-    TestQuery("what's the haps", None, "conversation", "whats_up"),
+    TestQuery("what's the haps", [None, "get_news", "get_time"], "conversation", "whats_up"),
     TestQuery("what's happening", None, "conversation", "whats_up"),
     TestQuery("what's good", None, "conversation", "whats_up"),
     TestQuery("what ya know good", None, "conversation", "whats_up"),
@@ -251,6 +252,23 @@ TEST_QUERIES = [
     TestQuery("check if llama-server is active", "developer_tools", "devtools"),
     TestQuery("grep for tool_executor in the codebase", "developer_tools", "devtools"),
 
+    # --- NEWS (15 queries, expect get_news) ---
+    TestQuery("what's the news", "get_news", "news"),
+    TestQuery("any headlines", "get_news", "news"),
+    TestQuery("read me the news", "get_news", "news"),
+    TestQuery("give me the headlines", "get_news", "news"),
+    TestQuery("any breaking news", "get_news", "news"),
+    TestQuery("news update", "get_news", "news"),
+    TestQuery("any cybersecurity news", "get_news", "news"),
+    TestQuery("read me the tech headlines", "get_news", "news"),
+    TestQuery("any political news today", "get_news", "news"),
+    TestQuery("local news headlines", "get_news", "news"),
+    TestQuery("how many headlines do I have", "get_news", "news"),
+    TestQuery("any new articles", "get_news", "news"),
+    TestQuery("do I have any news", "get_news", "news"),
+    TestQuery("catch me up on the news", "get_news", "news"),
+    TestQuery("read critical headlines", "get_news", "news"),
+
     # --- WEB SEARCH expected (5 queries) ---
     TestQuery("who won the super bowl", "web_search", "web"),
     TestQuery("latest news about SpaceX", "web_search", "web"),
@@ -279,7 +297,7 @@ ALL_OUTCOMES = [
 ]
 
 # Tool names we provide to the LLM
-VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather", "manage_reminders", "developer_tools"}
+VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather", "manage_reminders", "developer_tools", "get_news"}
 
 
 @dataclass
@@ -384,7 +402,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
                    temperature: float = 0.3, presence_penalty: float = 1.5,
                    verbose: bool = False, skill_filter: str = None) -> dict:
     """Run the full test suite and return results summary."""
-    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL]
+    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL, GET_NEWS_TOOL]
 
     if skill_filter:
         queries = [q for q in queries if q.category == skill_filter]
@@ -452,7 +470,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
 
     # Per-category breakdown
     print("\nPer-category accuracy:")
-    for cat in ["time", "system", "filesystem", "weather", "reminder", "devtools", "no_tool", "conversation", "web"]:
+    for cat in ["time", "system", "filesystem", "weather", "reminder", "devtools", "news", "no_tool", "conversation", "web"]:
         cat_outcomes = per_category.get(cat, {})
         cat_total = sum(cat_outcomes.values())
         cat_correct = (cat_outcomes.get(OUTCOME_CORRECT_TOOL, 0)
@@ -527,7 +545,7 @@ def run_sweep(llm: LLMRouter, queries: list[TestQuery], runs: int = 3,
 def main():
     parser = argparse.ArgumentParser(description="LLM Tool-Calling Test Harness")
     parser.add_argument("--runs", type=int, default=10, help="Runs per query (default: 10)")
-    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "reminder", "no_tool", "conversation", "web"],
+    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "reminder", "devtools", "news", "no_tool", "conversation", "web"],
                        help="Test only one category")
     parser.add_argument("--sweep", action="store_true", help="Run temperature/penalty sweep")
     parser.add_argument("--temp", type=float, default=0.3, help="Temperature (default: 0.3)")

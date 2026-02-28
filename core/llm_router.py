@@ -335,6 +335,45 @@ DEVELOPER_TOOLS_TOOL = {
     }
 }
 
+GET_NEWS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_news",
+        "description": (
+            "Read RSS news headlines already collected by the local feed monitor. "
+            "Use for requests about news headlines, news updates, or headline counts. "
+            "NOT for searching the web for specific news topics — use web_search for that."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "count"],
+                    "description": (
+                        "read: read top unread headlines (optionally filtered). "
+                        "count: count unread headlines by category."
+                    )
+                },
+                "category": {
+                    "type": "string",
+                    "enum": ["tech", "cyber", "politics", "general", "local"],
+                    "description": "Filter to a specific news category. Omit for all categories."
+                },
+                "max_priority": {
+                    "type": "integer",
+                    "enum": [1, 2, 3],
+                    "description": (
+                        "Filter by urgency: 1=critical only, 2=critical+high, "
+                        "3=critical+high+normal. Omit for all priorities."
+                    )
+                }
+            },
+            "required": ["action"]
+        }
+    }
+}
+
 # Registry: all available skill tools (keyed by name for lookup)
 SKILL_TOOLS = {
     "get_time": GET_TIME_TOOL,
@@ -343,6 +382,7 @@ SKILL_TOOLS = {
     "get_weather": GET_WEATHER_TOOL,
     "manage_reminders": MANAGE_REMINDERS_TOOL,
     "developer_tools": DEVELOPER_TOOLS_TOOL,
+    "get_news": GET_NEWS_TOOL,
 }
 
 # Web search is always included (core tool, not skill-gated)
@@ -1219,20 +1259,25 @@ class LLMRouter:
                 "acknowledge), call manage_reminders. Extract the title and "
                 "time from the user's words.\n"
                 "5. For factual questions about the OUTSIDE WORLD (people, "
-                "events, news, scores, prices, etc.), call web_search.\n"
+                "events, specific news topics, scores, prices, etc.), call web_search.\n"
                 "6. For questions about THIS COMPUTER (CPU, RAM, GPU, disk, "
                 "uptime, files), call the appropriate local tool.\n"
                 "7. For developer operations (git, codebase search, processes, "
                 "services, network info, packages, logs, or shell commands), call "
                 "developer_tools. For codebase_search, extract the pattern. For "
                 "run_command, provide the exact shell command.\n"
-                "8. If the user asks for MULTIPLE things (e.g. 'time and weather'), "
+                "8. For news headline requests (read headlines, news updates, "
+                "headline counts), call get_news. This retrieves LOCAL RSS feed "
+                "headlines — NOT web search results. If the user asks about a "
+                "SPECIFIC news topic (e.g. 'latest news about SpaceX'), use "
+                "web_search instead.\n"
+                "9. If the user asks for MULTIPLE things (e.g. 'time and weather'), "
                 "call ALL relevant tools — one at a time.\n"
-                "9. For greetings, small talk, casual questions (e.g. 'everything ok', "
+                "10. For greetings, small talk, casual questions (e.g. 'everything ok', "
                 "'what's going on', 'what's happening', 'how are you'), creative "
                 "requests, opinions, and follow-up elaborations, answer directly "
                 "without any tool.\n"
-                "10. NEVER fabricate system info, file paths, or hardware specs. "
+                "11. NEVER fabricate system info, file paths, or hardware specs. "
                 "If unsure, call the tool."
             )
         else:

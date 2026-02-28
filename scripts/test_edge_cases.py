@@ -1740,7 +1740,7 @@ def run_routing_test(case, components):
     # Skills migrated to LLM tool-calling route via P4-LLM (handled=False,
     # intent="tool_calling", use_tools set).  Accept this as valid routing
     # for migrated skills.
-    _MIGRATED_SKILLS = {"time_info", "system_info", "filesystem", "weather", "reminders", "developer_tools"}
+    _MIGRATED_SKILLS = {"time_info", "system_info", "filesystem", "weather", "reminders", "developer_tools", "news"}
     is_tool_calling = r.intent == "tool_calling" and r.use_tools is not None
 
     if case.expect_handled is not None and r.handled != case.expect_handled:
@@ -2517,19 +2517,17 @@ TESTS += [
              expect_source="planner",
              notes="'wait' with active plan + event queue → paused"),
 
-    # Pause WITHOUT event queue (console/web) → falls through P1.5, handled by other skill
+    # Pause WITHOUT event queue (console/web) → falls through P1.5, routes via tool-calling
     TestCase("8D-R04", "pause", 2, "8D", "Plan Pause/Resume Routing",
              in_conversation=True,
              setup={"active_plan_running": True},
-             expect_handled=True, expect_source="skill",
-             notes="'pause' without event queue → falls through to skill routing"),
+             notes="'pause' without event queue → falls through to tool-calling (news migrated)"),
 
-    # "continue" during active non-paused plan → falls through P1.5, not swallowed as resume
+    # "continue" during active non-paused plan → falls through P1.5, routes via tool-calling
     TestCase("8D-R05", "continue", 2, "8D", "Plan Pause/Resume Routing",
              in_conversation=True,
              setup={"active_plan_running": True},
-             expect_handled=True, expect_source="skill",
-             notes="'continue' during non-paused active plan → falls through to skill routing"),
+             notes="'continue' during non-paused active plan → falls through to tool-calling (news migrated)"),
 
     # "continue" during paused plan → resume
     TestCase("8D-R06", "continue", 2, "8D", "Plan Pause/Resume Routing",
@@ -2602,7 +2600,7 @@ TESTS += [
              expect_not_skill="reminders",
              notes="Should NOT trigger reminder acknowledgment"),
     TestCase("1B-08", "what time does the news come on", 2, "1B", "Substring Traps",
-             expect_handled=True, notes="Should route to time or skill, not crash"),
+             notes="Routes via tool-calling after news migration; LLM decides get_time or web_search"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -2873,9 +2871,9 @@ TESTS += [
 # 5H: News
 TESTS += [
     TestCase("5H-R1", "read me the headlines", 2, "5H", "News Routing",
-             expect_handled=True, notes="Should route to news or LLM"),
+             expect_skill="news", expect_handled=True, notes="News via tool-calling"),
     TestCase("5H-R2", "any cybersecurity news", 2, "5H", "News Routing",
-             expect_handled=True, notes="News category filter"),
+             expect_skill="news", expect_handled=True, notes="News category filter via tool-calling"),
 ]
 
 # 5I: System Info

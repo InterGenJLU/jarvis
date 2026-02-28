@@ -908,6 +908,7 @@ class ConversationRouter:
         "weather": "get_weather",
         "reminders": "manage_reminders",
         "developer_tools": "developer_tools",
+        "news": "get_news",
     }
 
     # Threshold for tool pruning.  Tuned via sweep across 56 queries at
