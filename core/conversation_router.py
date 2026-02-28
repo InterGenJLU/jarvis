@@ -900,16 +900,8 @@ class ConversationRouter:
     # -------------------------------------------------------------------
 
     # Map skill names → tool names for semantic matching.
-    # Only skills that have been migrated to tool schemas appear here.
-    _TOOL_SKILL_MAP = {
-        "time_info": "get_time",
-        "system_info": "get_system_info",
-        "filesystem": "find_files",
-        "weather": "get_weather",
-        "reminders": "manage_reminders",
-        "developer_tools": "developer_tools",
-        "news": "get_news",
-    }
+    # Auto-built from core/tools/*.py definitions via tool_registry.
+    from core.tool_registry import TOOL_SKILL_MAP as _TOOL_SKILL_MAP
 
     # Threshold for tool pruning.  Tuned via sweep across 56 queries at
     # thresholds 0.30-0.60 (scripts/test_intent_overlap.py).  0.40 is the

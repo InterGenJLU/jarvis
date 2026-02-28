@@ -67,19 +67,28 @@ class BaseSkill(ABC):
         """
         pass
     
-    @abstractmethod
     def handle_intent(self, intent: str, entities: Dict[str, Any]) -> str:
-        """
-        Handle a matched intent
-        
+        """Handle a matched intent via semantic dispatch.
+
+        Default implementation dispatches to the handler registered via
+        register_semantic_intent().  Skills with custom dispatch logic
+        (e.g. file_editor, social_introductions) can override this.
+
         Args:
-            intent: Intent name
+            intent: Intent ID (e.g. 'SkillName_handler_name')
             entities: Extracted entities from user input
-            
+
         Returns:
-            Response text
+            Response text, or None if intent not recognised
         """
-        pass
+        if intent in self.semantic_intents:
+            handler_fn = self.semantic_intents[intent]['handler']
+            import inspect
+            sig = inspect.signature(handler_fn)
+            if 'entities' in sig.parameters:
+                return handler_fn(entities=entities or {})
+            return handler_fn()
+        return None
     
     def register_intent(self, pattern: str, handler: Callable, priority: int = 5):
         """

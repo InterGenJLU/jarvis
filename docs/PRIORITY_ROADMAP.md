@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** February 26, 2026 (session 87 — Phase 1 COMPLETE)
+**Updated:** February 27, 2026 (session 104 — Phase 2 COMPLETE + tool-connector plugin system)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -31,8 +31,8 @@
 
 **Phase sequence (from DEVELOPMENT_VISION.md):**
 1. ~~Phase 1: Low-stakes skills as tools (system_info, filesystem, time)~~ — **COMPLETE Feb 26.** 100% accuracy (600/600 trials), 822ms avg latency, 266/266 existing tests pass. Commit `06dd741`.
-2. Phase 2: API-backed skills as tools — **IN PROGRESS.** 2.1 weather COMPLETE (`1be0cb1`). 2.1 reminders COMPLETE (`49eca5c`). 2.2 conversation skill DISABLED, LLM handles natively (`aa2f524`). 5-6 tool cliff DEBUNKED (870 trials, 100%). **NEXT: 2.3 developer_tools.**
-3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision)
+2. ~~Phase 2: API-backed + complex skills as tools~~ — **COMPLETE Feb 27.** 8 tools total (7 domain + web_search). 1,200+ trials, 100% on domain categories, 99.6% overall (523/525). Tool-connector plugin system built (`ba80e5a`). Sub-phases: 2.1a weather (`1be0cb1`), 2.1b reminders (`49eca5c`), 2.2 conversation disabled (`aa2f524`), 2.3 developer_tools (`a6ae616`), 2.4 news (`578e3c9`).
+3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision) — **NEXT.** RX 7600 display offload (arrives Feb 28) enables VRAM headroom for mmproj.
 4. Phase 4: Routing layer evaluation (remove semantic matcher, keyword routing, priority layers)
 
 ---
@@ -165,8 +165,11 @@
 
 ### TOP PRIORITY
 - #20 Phase 1: LLM-centric tool calling — 3 skills (time, system, filesystem) as tools, tool_executor, P4-LLM routing, 100% accuracy (600/600), 822ms avg (Feb 26)
+- #20 Phase 2: API-backed + complex skills — weather, reminders, conversation (disabled), developer_tools, news. 8 tools total, 1,200+ trials, 99.6% overall. 5-6 tool cliff DEBUNKED (Feb 26-27)
+- #20 Tool-connector plugin system — one-file tool definitions in `core/tools/`, auto-discovery registry, dependency injection. `tool_executor.py` 1,057→27 lines. Adding a new tool = create one file (Feb 27)
 
 ### Other Completed (non-roadmap enhancements)
+- Time injection into LLM system prompts — all 5 prompt injection points, correct time-of-day greetings (Feb 27)
 - Smart ack suppression — skip acknowledgements for fast/conversational queries (Feb 22)
 - Doc gen prompt overhaul — prescriptive depth, publish.sh README protection (Feb 22)
 - Edge case tests expanded — Phase 1E: 144 tests (Feb 22), then 236 tests (Feb 25)
@@ -204,4 +207,4 @@
 
 ---
 
-**Total: 61 development ideas + 10 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
+**Total: 61 development ideas + 11 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
