@@ -43,7 +43,6 @@
 
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
-| 59 | **Social introductions** — "meet my niece Arya" → name/relationship extraction, optional speaker enrollment, butler-style greeting | 3-4 hours | Pure personality. Makes JARVIS feel *real*. Leverages existing speaker_id, user_profile, honorific, persona. Optional enrollment prompt ("Shall I add Ms. Arya to the household, sir?"). Gender from relationship words (niece→Ms., nephew→Mr.). Edge cases: pets, groups, re-introductions | COMPLETE Feb 25 |
 | 7 | **Inject user facts into web research** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Risk: history poisoning needs careful scoping |
 | 9 | **Email skill (Gmail)** — voice-composed email via Gmail API + OAuth | 6-8 hours | Major productivity — compose, read, reply, search, archive by voice | Same OAuth pattern as Calendar. Full schema in MASTER_DESIGN.md |
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility — "add milk to the grocery list" | Shared access w/ secondary user |
@@ -162,6 +161,7 @@
 - #41: Web UI session sidebar — all 5 phases complete (Feb 20)
 - #42: Document generation — PPTX/DOCX/PDF with web research + Pexels images (Feb 22)
 - #45: Qwen3-VL-8B model upgrade — ROCm rebuild, self-quantized Q5_K_M, 80.2 tok/s (Feb 22)
+- #59: Social introductions — butler-style greeting, PeopleManager + SQLite contacts, TTS pronunciation overrides (Feb 25)
 
 ### TOP PRIORITY
 - #20 Phase 1: LLM-centric tool calling — 3 skills (time, system, filesystem) as tools, tool_executor, P4-LLM routing, 100% accuracy (600/600), 822ms avg (Feb 26)
