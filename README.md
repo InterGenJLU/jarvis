@@ -9,14 +9,13 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 ## Highlights
 
 - **0.1-0.2s speech recognition** — Fine-tuned Whisper v2 (198 phrases, 94%+ accuracy) on AMD GPU via CTranslate2 + ROCm
-- **Local LLM intelligence** — Qwen3.5-35B-A3B (Q3_K_M, MoE, 3B active params) via llama.cpp with native tool calling
+- **LLM-centric tool calling** — Qwen3.5-35B-A3B (MoE, 3B active params) decides which of 8 tools to call per query, 100% accuracy across 1,200+ trials. Adding a new tool = create one Python file
 - **Natural blended voice** — Kokoro TTS with custom voice blend (fable + george), gapless streaming playback
 - **Conversational flow engine** — Persona module (24 response pools, ~90 templates), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
 - **Self-awareness + task planning** — capability manifest, system state injection, compound request detection, LLM plan generation, sequential execution with per-step evaluation, pause/resume/cancel
 - **Social introductions** — "Meet my niece Arya" triggers butler-style multi-turn introduction flow with name confirmation, pronunciation checks, and persistent people database
-- **Semantic understanding** — ML-based intent matching using sentence-transformers, not brittle regex patterns
 - **Always-on listening** — Porcupine wake word + WebRTC VAD + ambient wake word filter + multi-turn conversation windows
-- **12 production skills** — time, weather, system info, filesystem, file editor, developer tools, desktop control, conversation, reminders, web research, news, social introductions
+- **11 skills + 8 LLM tools** — time, weather, system info, filesystem, developer tools, reminders, news, web search (LLM tools) + file editor, desktop control, social introductions (skill-only)
 - **Three frontends** — voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
 - **Privacy by design** — everything runs locally; Claude API is a last-resort quality fallback only
 
@@ -97,25 +96,24 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
                   ┌──────────────────▼───────────────────┐
                   │      ConversationRouter               │
                   │  Shared priority chain:               │
-                  │  1. Confirmation interception         │
-                  │  2. Dismissal / conversation close    │
-                  │  3. Memory / context / news pull-up   │
-                  │  3.5 Task planner (compound detect)   │
-                  │  4. Exact match (time, date)          │
-                  │  5. Keyword + semantic verify         │
-                  │  6. Pure semantic matching            │
-                  │  7. LLM fallback (Qwen3.5-35B-A3B)   │
+                  │  1. Confirmations / dismissals        │
+                  │  2. Memory / introductions            │
+                  │  3. Task planner (compound detect)    │
+                  │  ★ P4-LLM: Tool calling (8 tools)    │
+                  │     semantic pruner → Qwen3.5 decides │
+                  │  4. Skill routing (stateful skills)    │
+                  │  5. LLM fallback (Qwen → Claude)     │
                   └──────┬──────────────┬────────────────┘
                          │              │
               ┌──────────▼───┐   ┌──────▼──────────┐
               │  Skill       │   │  LLM Router     │
               │  Handler     │   │  Qwen → Claude  │
-              │  (direct)    │   │  + Web Research  │
+              │  (3 skills)  │   │  + 8 LLM Tools  │
               └──────────┬───┘   └──────┬──────────┘
                          │              │
                   ┌──────▼──────────────▼────────┐
                   │   Persona + Contextual Acks   │
-                  │   (17 pools, style-tagged)     │
+                  │   (10 pools, style-tagged)     │
                   └──────────────┬────────────────┘
                                 │
                   ┌──────────────▼────────────────┐
@@ -132,14 +130,30 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 
 The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS workers. The LLM response streams token-by-token, is chunked into sentences, and each sentence is synthesized and played as it arrives — so the user hears the first sentence while the LLM is still generating the rest.
 
+### Tools vs Skills
+
+JARVIS has two extension mechanisms. The distinction matters:
+
+| | **LLM Tools** | **Skills** |
+|---|---|---|
+| **What they are** | Stateless query→response functions the LLM calls | Stateful modules with multi-turn flows, confirmations, or desktop control |
+| **Who decides** | Qwen3.5 selects which tool to call based on the user's query | Priority chain routes to the skill before the LLM sees the query |
+| **How to add one** | Create one `.py` file in `core/tools/` — auto-discovered | Create a skill directory with `skill.py` + `metadata.yaml` |
+| **Examples** | get_time, get_weather, find_files, developer_tools | app_launcher (desktop verbs), file_editor (doc gen + confirmation), social_introductions (multi-turn) |
+| **Count** | 8 tools (7 domain + web_search) | 3 skill-only + 7 with companion tools |
+
+Most functionality lives in **tools** now. Skills remain for things that need deterministic state machines, desktop integration, or nested LLM pipelines — things where "let the LLM decide" isn't reliable enough.
+
 ### Key Subsystems
 
 | Subsystem | What It Does |
 |-----------|-------------|
 | **Conversation Router** | Shared priority chain for voice/console/web — one router, three frontends |
+| **Tool Registry** | Auto-discovers `core/tools/*.py`, builds schemas, injects dependencies — adding a tool = one file |
 | **Self-Awareness** | Capability manifest + system state injected into LLM context — JARVIS knows what it can do |
 | **Task Planner** | Compound request detection (22 signals), LLM plan generation, sequential execution with per-step LLM evaluation, pause/resume/cancel/skip voice interrupts, predictive timing, error-aware planning |
-| **Persona Engine** | 17 response pools (~65 templates), system prompts, honorific injection, style-tagged ack selection |
+| **Persona Engine** | 24 response pools (~90 templates), system prompts, honorific injection, style-tagged ack selection |
+| **People Manager** | SQLite-backed contacts database with relationship tracking, TTS pronunciation overrides, LLM context injection for known people |
 | **Conversation State** | Turn counting, intent history, question detection, research context tracking |
 | **Ambient Filter** | Multi-signal wake word validation: position, copula, threshold (0.80), length — blocks ambient mentions |
 | **Conversation Windows** | Adaptive follow-up windows (4-7s), extends with conversation depth, timeout cleanup |
@@ -147,29 +161,38 @@ The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS
 | **Conversational Memory** | SQLite fact store + FAISS semantic search — remembers facts across sessions, surfaces them proactively |
 | **Context Window** | Topic-segmented working memory with relevance-scored assembly across sessions |
 | **Streaming TTS** | `StreamingAudioPipeline` — single persistent aplay process, background Kokoro generation, gapless playback |
-| **Document Generation** | Two-stage LLM pipeline: parse request → research (optional) → structured outline → PPTX/DOCX/PDF with Pexels stock images |
 | **Speaker ID** | Resemblyzer d-vector enrollment — identifies who's speaking and adjusts honorifics dynamically |
 
 ---
 
 ## Skills & Capabilities
 
-### Core Skills
+### LLM Tools (Qwen3.5 decides when to call)
+
+These are stateless query→response functions. The LLM receives the user's query, selects the right tool, calls it, and synthesizes a natural language answer from the result.
+
+| Tool | Examples | What It Does |
+|------|---------|-------------|
+| **get_time** | "What time is it?" / "What day is it?" | Current time and date |
+| **get_weather** | "What's the weather?" / "Will it rain?" | OpenWeatherMap API — current conditions, forecast, rain check |
+| **get_system_info** | "What CPU do I have?" / "How much RAM?" | 8 sub-handlers: cpu, memory, disk, gpu, network, processes, uptime, all |
+| **find_files** | "Find my config file" / "Count lines in main.py" | File search, line counting, directory listing |
+| **developer_tools** | "Search codebase for TODO" / "Git status" / "Show me the network" | 13 actions: codebase search, git multi-repo, system admin, general shell, visual output, 3-tier safety |
+| **manage_reminders** | "Remind me at 3pm" / "What's on my schedule?" | 5 actions: add, list, cancel, acknowledge, snooze. Priority tones, nag behavior |
+| **get_news** | "Read me the headlines" / "Any cybersecurity news?" | 16 RSS feeds, urgency classification, semantic dedup, category/priority filtering |
+| **web_search** | "Who won the Super Bowl?" / "How far is NYC from London?" | DuckDuckGo + trafilatura → multi-source synthesis (always available) |
+
+### Skills (Deterministic routing — state machines and desktop control)
+
+These handle things that need multi-turn flows, confirmations, or direct desktop integration.
 
 | Skill | Examples | How It Works |
 |-------|---------|-------------|
-| **Time & Date** | "What time is it?" / "What day is it?" | Direct system call, instant response |
-| **Weather** | "What's the weather?" / "Will it rain?" | OpenWeatherMap API with natural language formatting |
-| **System Info** | "What CPU do I have?" / "How much RAM?" | System queries with human-readable output |
-| **Filesystem** | "Find my config file" / "Count lines in main.py" | File search, line counting, script analysis |
-| **File Editor** | "Write a script that..." / "Create a presentation about..." / "Write a report on..." | File operations (write, edit, read, delete, list) + document generation (PPTX/DOCX/PDF). Two-stage LLM pipeline with optional web research and Pexels stock imagery |
-| **Developer Tools** | "Search the codebase for TODO" / "Git status" / "Show me the network" | 13 intents: codebase search, git multi-repo, system admin, general shell, visual output, 3-tier safety |
+| **File Editor** | "Write a script that..." / "Edit my config file" / "Delete temp.txt" | 5 intents: write, edit, read, delete + list. Two-stage LLM content generation, confirmation flow for destructive ops |
 | **Desktop Control** | "Open Chrome" / "Volume up" / "Switch to workspace 2" | 16 intents: app launch/close, window management, volume, workspaces, focus, clipboard via GNOME Shell extension D-Bus bridge |
-| **Conversation** | "Good morning" / "Thank you" / "How are you?" | Natural greetings, small talk, dismissal detection |
 | **Social Introductions** | "Meet my niece Arya" / "Who is Arya?" / "Forget Arya" | Multi-turn butler-style introduction flow: name confirmation, pronunciation check, fact gathering, persistent people database with TTS pronunciation overrides |
-| **Reminders** | "Remind me at 3pm" / "What's on my schedule?" | Priority tones, nag behavior, acknowledgment tracking |
-| **Web Research** | "How far is New York from London?" / "Who won the Super Bowl?" | Qwen3.5 native tool calling → DuckDuckGo → multi-source synthesis |
-| **News** | "Read me the headlines" / "Any cybersecurity news?" | 16 RSS feeds, urgency classification, semantic dedup, category filtering |
+
+**Conversation** (greetings, small talk, "how are you?") is handled directly by the LLM — no dedicated skill needed.
 
 ### Additional Systems
 
@@ -534,12 +557,23 @@ jarvis/
 │   ├── stt.py                    # Speech-to-text (faster-whisper + CTranslate2)
 │   ├── tts.py                    # Text-to-speech (Kokoro + Piper)
 │   ├── llm_router.py             # LLM routing (Qwen → quality gate → Claude fallback)
-│   ├── web_research.py           # Web search tool calling (DuckDuckGo + trafilatura)
+│   ├── tool_registry.py          # Auto-discovery registry for tool definitions
+│   ├── tool_executor.py          # Tool dispatch (backward-compat shim)
+│   ├── tools/                    # One-file tool definitions (8 tools)
+│   │   ├── get_time.py           # Time and date queries
+│   │   ├── get_weather.py        # Weather conditions + forecast
+│   │   ├── get_system_info.py    # CPU, memory, disk, GPU, processes
+│   │   ├── find_files.py         # File search, line counting
+│   │   ├── developer_tools.py    # Git, codebase search, shell (13 actions)
+│   │   ├── manage_reminders.py   # Reminder CRUD (5 actions)
+│   │   ├── get_news.py           # News headlines (read/count)
+│   │   └── web_search.py         # Web research (always included, frontend-dispatched)
+│   ├── web_research.py           # DuckDuckGo + trafilatura web fetching
 │   ├── pipeline.py               # Event-driven Coordinator + STT/TTS workers
 │   ├── persona.py                # Response pools, system prompts, honorific injection
 │   ├── conversation_state.py     # Turn tracking, intent history, question detection
 │   ├── conversation_router.py    # Shared priority chain (voice/console/web)
-│   ├── skill_manager.py          # Skill loading + 4-layer routing
+│   ├── skill_manager.py          # Skill loading + semantic routing
 │   ├── semantic_matcher.py       # Sentence transformer intent matching
 │   ├── continuous_listener.py    # VAD + wake word + ambient filter + conversation windows
 │   ├── tts_normalizer.py         # Text normalization for natural speech
@@ -552,8 +586,8 @@ jarvis/
 │   ├── desktop_manager.py        # GNOME D-Bus bridge + wmctrl fallback + volume/clipboard
 │   ├── self_awareness.py         # Capability manifest + system state for LLM context
 │   ├── task_planner.py           # Compound request detection, LLM plan generation, execution
+│   ├── people_manager.py         # People database, TTS pronunciation, LLM context injection
 │   ├── metrics_tracker.py        # LLM metrics tracking (latency, tokens, errors)
-│   ├── people_manager.py         # People database, TTS pronunciation overrides, LLM context injection
 │   ├── health_check.py           # System diagnostics
 │   ├── user_profile.py           # User profiles + speaker ID
 │   ├── speaker_id.py             # Resemblyzer d-vector enrollment
@@ -562,20 +596,20 @@ jarvis/
 │   ├── logger.py                 # Logging setup
 │   └── base_skill.py             # Skill base class
 │
-├── skills/                       # Skill implementations
+├── skills/                       # Skill implementations (stateful skills + tool companions)
 │   ├── system/
-│   │   ├── time_info/            # Time and date
-│   │   ├── weather/              # Weather forecasts
-│   │   ├── system_info/          # CPU, RAM, disk info
-│   │   ├── filesystem/           # File search, line counting
-│   │   ├── file_editor/          # File operations + document generation (PPTX/DOCX/PDF)
-│   │   ├── developer_tools/      # Codebase search, git, shell
+│   │   ├── time_info/            # Time and date (companion to get_time tool)
+│   │   ├── weather/              # Weather forecasts (companion to get_weather tool)
+│   │   ├── system_info/          # CPU, RAM, disk info (companion to get_system_info tool)
+│   │   ├── filesystem/           # File search, line counting (companion to find_files tool)
+│   │   ├── file_editor/          # File write, edit, read, delete + document generation
+│   │   ├── developer_tools/      # Codebase search, git, shell (companion to developer_tools tool)
 │   │   ├── app_launcher/         # Desktop control (16 intents: apps, windows, volume, workspaces, clipboard)
 │   │   └── web_navigation/       # Web search + browsing
 │   └── personal/
-│       ├── conversation/         # Greetings, small talk
-│       ├── reminders/            # Voice reminders + calendar
-│       ├── news/                 # RSS headline delivery
+│       ├── conversation/         # DISABLED — LLM handles conversation natively
+│       ├── reminders/            # Voice reminders + calendar (companion to manage_reminders tool)
+│       ├── news/                 # RSS headline delivery (companion to get_news tool)
 │       └── social_introductions/ # Butler-style introductions + people database
 │
 ├── web/                          # Web UI frontend
@@ -588,7 +622,8 @@ jarvis/
 ├── assets/                       # Audio cues (generate your own .wav files)
 ├── scripts/                      # Utility scripts
 │   ├── install_desktop_extension.sh  # Install GNOME Shell extension
-│   ├── test_edge_cases.py            # Automated test suite (236 tests: unit, routing, LLM)
+│   ├── test_edge_cases.py            # Automated test suite (266 tests: 115 unit + 151 routing)
+│   ├── test_tool_calling.py          # Tool-calling harness (175 queries, 10-category taxonomy, --sweep mode)
 │   ├── unit_tests.sh                 # Test runner wrapper
 │   ├── test_router.py                # Router test suite (38 tests)
 │   ├── test_desktop_manager.py       # Test desktop manager module
@@ -597,11 +632,11 @@ jarvis/
 │   └── ...
 ├── docs/                         # Documentation
 │   ├── SETUP_GUIDE.md            # Detailed installation
-│   ├── SKILL_DEVELOPMENT.md      # How to create skills
+│   ├── SKILL_DEVELOPMENT.md      # How to create tools and skills
 │   ├── SEMANTIC_INTENT_MATCHING.md
 │   ├── VOICE_TRAINING_GUIDE.md   # Whisper fine-tuning
 │   └── ...
-└── tools/                        # Backup and maintenance scripts
+└── tools/                        # Backup, restore, and maintenance utilities
 ```
 
 ---
@@ -630,7 +665,7 @@ llm:
     context_size: 8192
     gpu_layers: 999          # Offload all layers to GPU (if available)
     temperature: 0.6
-    tool_calling: true       # Enable web research
+    tool_calling: true       # Enable LLM tool calling (8 tools)
   api:
     provider: anthropic      # Fallback LLM
     model: claude-sonnet-4-20250514
@@ -775,11 +810,27 @@ See [docs/VOICE_TRAINING_GUIDE.md](docs/VOICE_TRAINING_GUIDE.md) for the complet
 
 ## Development
 
-### Adding a New Skill
+### Adding New Functionality
 
-JARVIS skills are self-contained Python modules. See [docs/SKILL_DEVELOPMENT.md](docs/SKILL_DEVELOPMENT.md) for the full guide.
+There are two paths depending on what you're building. See [docs/SKILL_DEVELOPMENT.md](docs/SKILL_DEVELOPMENT.md) for the full guide with examples.
 
-Quick overview:
+**Path 1: LLM Tool** (stateless data query — most new features)
+
+Create one `.py` file in `core/tools/`. The registry auto-discovers it.
+
+```python
+# core/tools/your_tool.py
+TOOL_NAME = "your_tool"
+SKILL_NAME = "your_skill"       # or None if not skill-gated
+SCHEMA = { ... }                 # OpenAI function schema
+SYSTEM_PROMPT_RULE = "..."       # When to use this tool
+def handler(args):               # Execute and return result string
+    return "result"
+```
+
+That's it — no wiring changes, no imports to update, no registry edits.
+
+**Path 2: Skill** (stateful, multi-turn, desktop control, or nested LLM flows)
 
 ```
 skills/system/your_skill/
@@ -788,22 +839,12 @@ skills/system/your_skill/
 └── __init__.py        # Exports
 ```
 
-Skills register **semantic intents** (natural language examples) instead of regex patterns:
-
-```yaml
-# metadata.yaml
-intents:
-  - "turn on the lights"
-  - "switch the lights off"
-  - "dim the bedroom lights"
-```
-
-The sentence-transformer model matches user speech against these examples — no fragile pattern maintenance.
+Skills register semantic intents (natural language examples) and the sentence-transformer model matches user speech against them.
 
 ### Architecture Principles
 
 1. **Privacy first** — Everything runs locally. Claude API is a quality fallback, not a dependency.
-2. **Semantic over regex** — ML-based intent matching means 3-9 examples replace 100+ patterns.
+2. **LLM-centric** — Qwen3.5 decides which tools to call. Skills exist for things that need deterministic state machines.
 3. **Streaming everything** — LLM tokens stream to TTS, TTS streams to audio. No waiting for full responses.
 4. **Graceful degradation** — GPU fails? Fall back to CPU. Kokoro fails? Fall back to Piper. Local LLM fails? Fall back to Claude API.
 5. **Defensive conventions** — If something caused 18 hours of debugging once, we keep the guard rails even after fixing the root cause.
@@ -833,6 +874,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 2.9.0
+**Version:** 3.0.0
 **Status:** Production — actively developed
-**Last Updated:** February 25, 2026
+**Last Updated:** February 27, 2026
