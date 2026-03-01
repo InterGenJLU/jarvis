@@ -19,7 +19,7 @@ vad:
 llm:
   local:
     model_path: /mnt/storage/jarvis/models/llm/Qwen3.5-35B-A3B-Q3_K_M.gguf
-    context_size: 8192
+    context_size: 32768
     gpu_layers: 999
     batch_size: 512
     ubatch_size: 128

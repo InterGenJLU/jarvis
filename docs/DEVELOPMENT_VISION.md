@@ -195,21 +195,21 @@ After Phase 3 is stable, evaluate:
 
 Adding a second GPU changes the VRAM calculus for this entire migration. An RX 7600 (8GB, RDNA 3, officially ROCm-supported) was ordered and arrives Feb 28, 2026. This section analyzes three potential use cases, from lowest to highest risk.
 
-### Current VRAM Budget (Single GPU)
+### Current VRAM Budget (Dual GPU — RX 7600 display + RX 7900 XT compute)
 
 | Component | Typical VRAM | Notes |
 |-----------|-------------|-------|
-| Qwen3.5-35B-A3B Q3_K_M weights | ~17.5 GB | 16GB on disk + compute buffers |
-| KV cache (ctx-size 7168) | ~5.0 GB | Pre-allocated by llama.cpp |
+| Qwen3.5-35B-A3B Q3_K_M weights | ~15.6 GB | 16GB on disk |
+| KV cache (ctx-size 32768) | ~0.64 GB | Hybrid SSM — KV cache only for attention layers |
+| RS buffer (recurrent state) | ~0.06 GB | Fixed 62.81 MiB regardless of ctx-size |
+| Compute buffers | ~0.50 GB | 493 MiB ROCm + 72 MiB host |
 | CTranslate2 Whisper (transient) | ~0.4 GB | Loaded during transcription only |
 | Sentence Transformer | ~0.15 GB | Semantic matching (in-memory) |
-| Kokoro TTS (when active) | ~0.2 GB | 82M params, CPU primary but some GPU |
 | System overhead | ~0.5 GB | Allocators, buffers, Python |
-| **GNOME compositor** | **~0.5-1.0 GB** | **Display rendering on same GPU** |
-| **Total used** | **~19.5 GB** | **of 20.0 GB** |
-| **Free** | **~1.8 GB** | Measured after ctx-size reduction (session 63) |
+| **Total used** | **~19.1 GB peak** | **of 20.0 GB** |
+| **Free** | **~0.9 GB** | Measured under 25K-token stress test (session 107) |
 
-**The problem:** The GNOME compositor shares the GPU with LLM inference. Under peak load (Feb 24), compositor starvation caused `Failed to pin framebuffer with error -12` (ENOMEM) and crashed the desktop. The ctx-size reduction from 8192→7168 freed 1.2 GB as a band-aid, but the fundamental contention remains.
+**Resolved:** The GNOME compositor (which previously caused ENOMEM crashes sharing the 7900 XT) now runs on the RX 7600. The ctx-size was increased from 7168→32768 (4.6x) with stress testing confirming 9/9 pass at 25K tokens filled, peak VRAM 95.6%, junction temp 87°C. The SSM hybrid architecture means KV cache is near-zero at typical JARVIS workloads (<2K tokens).
 
 ### RX 7600 Specs
 
@@ -234,7 +234,7 @@ Move the GNOME compositor to the RX 7600. The RX 7900 XT becomes a dedicated com
 - Eliminates ENOMEM crash risk entirely — compositor can never starve the LLM
 - Total usable VRAM for inference grows from ~19.0 GB to ~19.5-20.0 GB
 - Enough headroom to load mmproj (~900MB) for vision without exceeding budget
-- Potentially enough to increase ctx-size from 7168 → 8192+ or try Q4_K_S quantization
+- **Done (session 107):** ctx-size increased from 7168 → 32768 (4.6x). SSM hybrid architecture means KV cache ≈ 0 at typical workloads
 
 **Implementation:** Connect monitor to RX 7600 output. GNOME/Mutter renders on the display-connected GPU. ROCm is NOT required for this — standard Mesa/AMDGPU kernel driver suffices.
 
@@ -305,8 +305,8 @@ Split Qwen3.5 transformer layers across both GPUs to fit a larger quantization (
 | **MoE architecture** | Running | 35B total params, 256 experts, 8+1 active per token, 3B active params |
 | **Tool calling** | Proven | `web_search` via `stream_with_tools()` with prescriptive prompts and `tool_choice=auto` |
 | **Vision support** | Available | mmproj-F16.gguf (~900MB) from unsloth. llama.cpp support merged Feb 10 (PR #19468). Not yet activated |
-| **Quantization** | Q3_K_M | ~16GB on disk, ~19.5GB VRAM with KV cache at ctx-size 7168 |
-| **Context window** | 7168 tokens | VRAM-constrained (reduced from 8192 after GNOME compositor crash). Tool schemas consume ~100-200 tokens each |
+| **Quantization** | Q3_K_M | ~16GB on disk, ~19.1GB VRAM peak with KV cache at ctx-size 32768 |
+| **Context window** | 32768 tokens | Increased 4.6x after RX 7600 display offload (session 107). SSM hybrid = near-zero KV cache at typical workloads |
 
 ### Vision Details
 
@@ -320,7 +320,7 @@ Qwen3.5 uses the same ViT architecture as Qwen3-VL but integrated via early fusi
 
 **Usage:** `llama-server -m Qwen3.5-35B-A3B-Q3_K_M.gguf --mmproj mmproj-F16.gguf`
 
-**VRAM impact:** +900MB when loaded. At current utilization (~19.5/20.0 GB), this exceeds budget without either dynamic loading or display offload to a second GPU (see Dual-GPU Strategy above).
+**VRAM impact:** +900MB when loaded. At current utilization (~19.1/20.0 GB peak under stress), this is tight but may fit. Idle VRAM usage is lower (~18.8 GB), leaving ~1.2 GB for mmproj. Needs testing.
 
 ---
 

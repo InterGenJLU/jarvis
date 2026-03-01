@@ -41,7 +41,7 @@ logging.disable(logging.INFO)  # Suppress INFO logs from llm_router during tests
 from core.config import Config
 from core.llm_router import (
     LLMRouter, ToolCallRequest,
-    WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL,
+    WEB_SEARCH_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL,
     GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL,
     GET_NEWS_TOOL,
 )
@@ -403,7 +403,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
                    temperature: float = 0.3, presence_penalty: float = 1.5,
                    verbose: bool = False, skill_filter: str = None) -> dict:
     """Run the full test suite and return results summary."""
-    tools = [WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL, GET_NEWS_TOOL]
+    tools = [WEB_SEARCH_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL, GET_NEWS_TOOL]
 
     if skill_filter:
         queries = [q for q in queries if q.category == skill_filter]

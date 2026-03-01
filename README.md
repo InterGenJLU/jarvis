@@ -660,7 +660,7 @@ audio:
 llm:
   local:
     model_path: /path/to/models/llm/Qwen3.5-35B-A3B-Q3_K_M.gguf
-    context_size: 8192
+    context_size: 32768
     gpu_layers: 999          # Offload all layers to GPU (if available)
     temperature: 0.6
     tool_calling: true       # Enable LLM tool calling (7 tools)
