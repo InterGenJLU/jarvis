@@ -42,7 +42,10 @@ SCHEMA = {
 
 SYSTEM_PROMPT_RULE = (
     "For questions about files on THIS COMPUTER (find files, count files, "
-    "count code lines), call find_files."
+    "count code lines), call find_files. "
+    "Examples: 'find my resume' → search, 'how many Python files?' → count_files, "
+    "'lines of code in the project?' → count_lines. "
+    "NOT for: reading file contents, editing files, web downloads."
 )
 
 

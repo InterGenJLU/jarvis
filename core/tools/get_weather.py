@@ -45,7 +45,10 @@ SCHEMA = {
 SYSTEM_PROMPT_RULE = (
     "For ANY question about weather, temperature, forecast, or "
     "rain, call get_weather. No location needed — it defaults to "
-    "the user's home location."
+    "the user's home location. "
+    "Examples: 'is it going to rain?' → rain_check, 'what's it like outside?' → current, "
+    "'weather this week' → forecast. "
+    "NOT for: climate change discussion, historical weather data, weather in fiction."
 )
 
 logger = logging.getLogger("jarvis.tools.get_weather")

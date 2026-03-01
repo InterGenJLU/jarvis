@@ -107,9 +107,9 @@ conversational_memory:
 context_window:
   enabled: true
   topic_shift_threshold: 0.35
-  max_segments: 20
-  verbatim_recent_messages: 6
-  token_budget: 6500
+  max_segments: 40
+  verbatim_recent_messages: 10
+  token_budget: 24000
   summarize_closed_segments: true
   db_path: /mnt/storage/jarvis/data/memory.db
   segment_retention_days: 7

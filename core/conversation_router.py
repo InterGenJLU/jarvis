@@ -1100,6 +1100,14 @@ class ConversationRouter:
                 user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
             )
 
+        # Full user knowledge (passive background — ALL stored facts)
+        if self.memory_manager:
+            user_ctx = self.memory_manager.get_full_user_context(
+                user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
+            )
+            if user_ctx:
+                memory_context = f"{memory_context}\n\n{user_ctx}" if memory_context else user_ctx
+
         # People context injection (known contacts mentioned in utterance)
         if self.people_manager:
             people_ctx = self.people_manager.get_people_context(
@@ -1142,23 +1150,39 @@ class ConversationRouter:
         # false positive cost is zero (LLM ignores irrelevant context).
         # _is_followup_request() is kept for skip-search in web research only.
         if in_conversation:
-            # Prefer research exchange if available, else use conv_state
-            if self.conv_state.research_exchange:
-                prev_q = self.conv_state.research_exchange['query']
-                prev_a = self.conv_state.research_exchange['answer']
-            elif self.conv_state.last_response_text:
-                prev_q = self.conv_state.last_command
-                prev_a = self.conv_state.last_response_text
-            else:
-                prev_q = prev_a = None
+            # Build compact prior context from last 3 exchanges
+            prior_lines = []
+            history = self.conversation.get_recent_history(max_turns=3)
+            # history is [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}, ...]
+            exchange_num = 0
+            i = 0
+            while i < len(history) - 1:
+                if history[i].get("role") == "user" and history[i+1].get("role") == "assistant":
+                    exchange_num += 1
+                    q = history[i]["content"][:200]
+                    a = history[i+1]["content"][:400]
+                    prior_lines.append(f"[{exchange_num}] User: \"{q}\" → You: \"{a}\"")
+                    i += 2
+                else:
+                    i += 1
 
-            if prev_q and prev_a:
-                # Truncate long answers to avoid blowing up context
-                if len(prev_a) > 800:
-                    prev_a = prev_a[:800] + "..."
+            # Fall back to conv_state if session_history is empty
+            if not prior_lines:
+                if self.conv_state.research_exchange:
+                    prev_q = self.conv_state.research_exchange['query']
+                    prev_a = self.conv_state.research_exchange['answer'][:400]
+                elif self.conv_state.last_response_text:
+                    prev_q = self.conv_state.last_command
+                    prev_a = self.conv_state.last_response_text[:400]
+                else:
+                    prev_q = prev_a = None
+                if prev_q and prev_a:
+                    prior_lines.append(f"[1] User: \"{prev_q}\" → You: \"{prev_a}\"")
+
+            if prior_lines:
+                context_block = "\n".join(prior_lines)
                 llm_command = (
-                    f"Context — the user just asked '{prev_q}' and you answered: "
-                    f"'{prev_a}'\n\n"
+                    f"<prior_context>\n{context_block}\n</prior_context>\n\n"
                     f"Now the user asks: {llm_command}"
                 )
 

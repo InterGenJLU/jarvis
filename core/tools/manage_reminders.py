@@ -72,7 +72,10 @@ SCHEMA = {
 SYSTEM_PROMPT_RULE = (
     "For reminder requests (set, list, cancel, snooze, "
     "acknowledge), call manage_reminders. Extract the title and "
-    "time from the user's words."
+    "time from the user's words. "
+    "Examples: 'remind me to call Mom at 3pm' → add, 'what reminders do I have?' → list, "
+    "'cancel the dentist reminder' → cancel. "
+    "NOT for: calendar events, alarms, timers, scheduling meetings."
 )
 
 

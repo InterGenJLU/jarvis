@@ -147,8 +147,8 @@ class WebResearcher:
             self.logger.error(f"Page fetch failed ({url}): {e}")
             return None
 
-    def fetch_pages_parallel(self, results: list[dict], max_results: int = 3,
-                             max_chars: int = 2000, timeout: float = 5.0,
+    def fetch_pages_parallel(self, results: list[dict], max_results: int = 5,
+                             max_chars: int = 4000, timeout: float = 5.0,
                              min_chars: int = 300) -> list[str]:
         """Fetch page content from multiple search results concurrently.
 

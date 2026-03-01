@@ -47,7 +47,9 @@ SYSTEM_PROMPT_RULE = (
     "headline counts), call get_news. This retrieves LOCAL RSS feed "
     "headlines — NOT web search results. If the user asks about a "
     "SPECIFIC news topic (e.g. 'latest news about SpaceX'), use "
-    "web_search instead."
+    "web_search instead. "
+    "Examples: 'any news?' → read, 'how many headlines?' → count. "
+    "NOT for: specific topic research, historical news, opinion pieces."
 )
 
 

@@ -1059,6 +1059,66 @@ class MemoryManager:
             f"Do NOT force it — only mention if genuinely relevant to what they're asking."
         )
 
+    def get_full_user_context(self, user_id: str = "primary_user",
+                              max_tokens: int = 5000) -> Optional[str]:
+        """Return ALL active facts as a structured block for LLM injection.
+
+        Groups facts by category for better LLM comprehension. Unlike
+        get_proactive_context() (which surfaces 1 relevant fact), this
+        provides passive background knowledge the LLM can draw on.
+
+        At ~2 tokens/fact-line, 250 facts ≈ 4000 tokens — well within budget.
+        If facts exceed max_tokens, falls back to semantic top-50 + all
+        high-confidence (≥0.8).
+        """
+        facts = self.get_facts(user_id, limit=500)
+        if not facts:
+            return None
+
+        # Group by category
+        grouped: dict[str, list[str]] = {}
+        for f in facts:
+            cat = f.get("category", "general") or "general"
+            phrase = self._fact_to_phrase(f) or f.get("content", "")
+            if phrase:
+                grouped.setdefault(cat, []).append(phrase)
+
+        # Build the block
+        lines = ["WHAT YOU KNOW ABOUT THE USER (use naturally, never recite):"]
+        for cat, items in sorted(grouped.items()):
+            label = cat.replace("_", " ").title()
+            lines.append(f"  {label}: {'; '.join(items)}")
+
+        block = "\n".join(lines)
+
+        # Rough token estimate (~4 chars per token for English)
+        est_tokens = len(block) // 4
+        if est_tokens <= max_tokens:
+            self.logger.debug(f"Full user context: {len(facts)} facts, ~{est_tokens} tokens")
+            return block
+
+        # Scale guard: too many facts — keep high-confidence + semantic top-50
+        self.logger.info(f"Full user context exceeds {max_tokens} tokens "
+                         f"(~{est_tokens}), applying scale guard")
+        kept = [f for f in facts if f.get("confidence", 0) >= 0.8]
+        remaining = [f for f in facts if f.get("confidence", 0) < 0.8]
+        remaining.sort(key=lambda x: x.get("times_referenced", 0), reverse=True)
+        kept.extend(remaining[:50])
+
+        grouped_slim: dict[str, list[str]] = {}
+        for f in kept:
+            cat = f.get("category", "general") or "general"
+            phrase = self._fact_to_phrase(f) or f.get("content", "")
+            if phrase:
+                grouped_slim.setdefault(cat, []).append(phrase)
+
+        lines = ["WHAT YOU KNOW ABOUT THE USER (use naturally, never recite):"]
+        for cat, items in sorted(grouped_slim.items()):
+            label = cat.replace("_", " ").title()
+            lines.append(f"  {label}: {'; '.join(items)}")
+
+        return "\n".join(lines)
+
     def reset_surfacing_window(self):
         """Called when conversation window closes — allows facts to be
         re-surfaced in the next conversation."""

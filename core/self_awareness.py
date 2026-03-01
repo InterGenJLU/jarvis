@@ -375,6 +375,22 @@ class SelfAwareness:
             if state.gpu_vram_gb:
                 gpu_label += f" GPU with {state.gpu_vram_gb:.0f}GB VRAM"
             lines.append(f"- {gpu_label}")
+
+        # Live VRAM usage (30s cache via _get_vram_usage)
+        vram_used = self._get_vram_usage()
+        if vram_used is not None and state.gpu_vram_gb:
+            lines.append(f"- VRAM usage: {vram_used:.1f}/{state.gpu_vram_gb:.0f} GB")
+
+        # Load average from /proc/loadavg
+        load_avg = self._get_load_average()
+        if load_avg:
+            lines.append(f"- System load: {load_avg}")
+
+        # Human-readable uptime
+        uptime_str = self._format_uptime(state.uptime_seconds)
+        if uptime_str:
+            lines.append(f"- Running for {uptime_str}")
+
         if state.memory_fact_count:
             lines.append(f"- You remember {state.memory_fact_count} facts about the user")
         if state.context_token_budget:
@@ -383,7 +399,71 @@ class SelfAwareness:
             lines.append(f"- Avg latency: {state.llm_avg_latency_ms:.0f}ms")
         if state.commands_processed:
             lines.append(f"- Commands processed: {state.commands_processed}")
+
+        # Recent errors (last 5 minutes)
+        if state.errors and self._coordinator_stats:
+            last_err = self._coordinator_stats.get('last_error_time', 0)
+            if last_err and (time.time() - last_err) < 300:
+                last_msg = self._coordinator_stats.get('last_error_msg', '')
+                if last_msg:
+                    lines.append(f"- Recent error: {last_msg[:80]}")
+
         return "\n".join(lines) if len(lines) > 1 else ""
+
+    # ------------------------------------------------------------------
+    # Live system metrics (cached where appropriate)
+    # ------------------------------------------------------------------
+
+    _vram_cache: tuple = (0.0, None)  # (timestamp, value_gb)
+
+    def _get_vram_usage(self) -> Optional[float]:
+        """Get current VRAM usage in GB from rocm-smi (30s cache)."""
+        now = time.time()
+        if now - self._vram_cache[0] < 30 and self._vram_cache[1] is not None:
+            return self._vram_cache[1]
+        try:
+            result = subprocess.run(
+                ["rocm-smi", "--showmeminfo", "vram"],
+                capture_output=True, text=True, timeout=3,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "Used" in line and "Memory" in line:
+                        parts = line.split(":")
+                        if len(parts) >= 2:
+                            vram_bytes = int(parts[-1].strip())
+                            used_gb = round(vram_bytes / (1024**3), 1)
+                            SelfAwareness._vram_cache = (now, used_gb)
+                            return used_gb
+        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+            pass
+        return None
+
+    @staticmethod
+    def _get_load_average() -> Optional[str]:
+        """Read 1/5/15 min load averages from /proc/loadavg."""
+        try:
+            with open("/proc/loadavg") as f:
+                parts = f.read().split()
+                return f"{parts[0]} {parts[1]} {parts[2]}"
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_uptime(seconds: float) -> str:
+        """Convert seconds to human-readable uptime."""
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        mins = int(seconds / 60)
+        if mins < 60:
+            return f"{mins}m"
+        hours = mins // 60
+        remaining_mins = mins % 60
+        if hours < 24:
+            return f"{hours}h {remaining_mins}m" if remaining_mins else f"{hours}h"
+        days = hours // 24
+        remaining_hours = hours % 24
+        return f"{days}d {remaining_hours}h" if remaining_hours else f"{days}d"
 
     # ------------------------------------------------------------------
     # Duration estimation

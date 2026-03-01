@@ -28,7 +28,10 @@ SCHEMA = {
 
 SYSTEM_PROMPT_RULE = (
     "For factual questions about the OUTSIDE WORLD (people, "
-    "events, specific news topics, scores, prices, etc.), call web_search."
+    "events, specific news topics, scores, prices, etc.), call web_search. "
+    "Examples: 'who won the Super Bowl?' → web_search, 'SpaceX launch date?' → web_search, "
+    "'how far is it to Nashville?' → web_search. "
+    "NOT for: opinions, creative writing, math, coding help, local system info."
 )
 
 handler = None  # Dispatched by frontends (WebResearcher.search())

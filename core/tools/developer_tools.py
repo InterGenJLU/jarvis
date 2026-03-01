@@ -107,7 +107,10 @@ SYSTEM_PROMPT_RULE = (
     "For developer operations (git, codebase search, processes, "
     "services, network info, packages, logs, or shell commands), call "
     "developer_tools. For codebase_search, extract the pattern. For "
-    "run_command, provide the exact shell command."
+    "run_command, provide the exact shell command. "
+    "Examples: 'git status' → git_status, 'search for TODO' → codebase_search, "
+    "'is nginx running?' → service_status. "
+    "NOT for: general programming questions, code explanations, learning git."
 )
 
 logger = logging.getLogger("jarvis.tools.developer_tools")
