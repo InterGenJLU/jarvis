@@ -203,6 +203,7 @@ def init_components(config, tts_proxy):
         config=config,
         event_queue=None,  # Web: no voice interrupt queue
         context_window=components.get('context_window'),
+        web_researcher=components['web_researcher'],
     )
 
     # Centralized conversation state (Phase 2 of conversational flow refactor)
@@ -281,18 +282,30 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
         used_llm = result.used_llm
         match_info = result.match_info
 
-        # Task plan: send announcement, then execute steps
+        # Task plan: stream announcement + progress + final result
         task_planner = components.get('task_planner')
         if result.intent == "task_plan" and task_planner and task_planner.active_plan:
-            # Send announcement first
             if ws:
+                # Start streaming so the frontend creates a message bubble
+                await ws.send_json({"type": "stream_start"})
                 await ws.send_json({"type": "stream_token", "token": response + "\n\n"})
+
+            # Capture event loop for sync→async bridge in progress callback
+            loop = asyncio.get_event_loop()
 
             def _web_progress(desc):
                 from core import persona as _persona
                 msg = _persona.task_progress(desc)
-                # Can't await from sync callback — log instead (ws gets final result)
                 logger.info(f"Plan progress: {msg}")
+                if ws:
+                    try:
+                        future = asyncio.run_coroutine_threadsafe(
+                            ws.send_json({"type": "stream_token", "token": msg + "\n\n"}),
+                            loop,
+                        )
+                        future.result(timeout=2)
+                    except Exception:
+                        pass
 
             plan_result = await asyncio.to_thread(
                 task_planner.execute_plan,
@@ -301,6 +314,19 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             )
             response = plan_result or "I wasn't able to complete the requested steps."
             used_llm = True
+            streamed = True
+
+            if ws:
+                # End streaming with the final synthesized response
+                await ws.send_json({"type": "stream_end", "full_response": response})
+
+            # Speak the plan result if voice is enabled
+            if tts_proxy.hybrid and tts_proxy.real_tts:
+                threading.Thread(
+                    target=tts_proxy.real_tts.speak,
+                    args=(response,),
+                    daemon=True,
+                ).start()
     else:
         # LLM fallback (streaming over WebSocket when ws is available)
         used_llm = True

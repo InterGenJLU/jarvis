@@ -187,7 +187,8 @@ class TaskPlanner:
                  conversation=None,
                  config=None,
                  event_queue=None,
-                 context_window=None):
+                 context_window=None,
+                 web_researcher=None):
         self._llm = llm
         self._skill_manager = skill_manager
         self._self_awareness = self_awareness
@@ -195,6 +196,7 @@ class TaskPlanner:
         self._config = config
         self._event_queue = event_queue  # For voice interrupt detection
         self._context_window = context_window
+        self._web_researcher = web_researcher
 
         self.active_plan: Optional[TaskPlan] = None
         self._cancel_requested = False
@@ -705,7 +707,10 @@ class TaskPlanner:
         if step.skill_name == "web_research":
             return self._web_research(input_text, step)
 
-        # Real skill — route through skill_manager
+        # Real skill — route through skill_manager using step input.
+        # Don't prepend the original request — it causes re-matching
+        # (e.g. "open the file" re-matches to "create presentation" if
+        # the original request says "create a presentation").
         response = self._skill_manager.execute_intent(input_text)
         if response:
             return response
@@ -726,24 +731,61 @@ class TaskPlanner:
             return ""
 
     def _web_research(self, input_text: str, step: PlanStep) -> str:
-        """Execute web research step.
+        """Execute web research step using WebResearcher.
 
-        Uses LLM with tool calling if available, falls back to plain LLM.
+        Searches DuckDuckGo, fetches top pages, then synthesizes via LLM.
+        Falls back to LLM parametric knowledge if web_researcher unavailable.
         """
-        # Try to collect streamed response with tool calling
+        if not self._web_researcher:
+            logger.warning("Web research requested but no web_researcher available — LLM fallback")
+            return self._llm_synthesis(f"Based on your knowledge, answer: {input_text}")
+
+        # Extract a clean search query — input_text may contain adjustment
+        # instructions and prior step context that would poison the search.
+        # Use only the first paragraph (the step's core query).
+        search_query = input_text.split('\n\n')[0].strip()
+        if len(search_query) > 200:
+            search_query = search_query[:200]
+        logger.info(f"Web research query: {search_query[:80]}")
+
         try:
-            tokens = []
-            for chunk in self._llm.stream_with_tools(input_text, max_tokens=400):
-                if isinstance(chunk, str):
-                    tokens.append(chunk)
-                else:
-                    # ToolCallRequest — we can't handle tool execution here
-                    # (would need the web_researcher). Fall back to plain LLM.
-                    logger.info("Web research tool call requested — using LLM synthesis")
-                    return self._llm_synthesis(f"Search the web and answer: {input_text}")
-            return "".join(tokens)
+            # Search the web with the clean query
+            results = self._web_researcher.search(search_query, max_results=5)
+            if not results:
+                logger.warning(f"Web research returned no results for: {search_query[:80]}")
+                return self._llm_synthesis(f"Based on your knowledge, answer: {input_text}")
+
+            # Fetch top pages in parallel
+            pages = self._web_researcher.fetch_pages_parallel(
+                results, max_results=3, max_chars=4000, timeout=5.0,
+            )
+
+            # Build research context from pages or fall back to snippets
+            if pages:
+                research_text = "\n\n".join(pages)
+            else:
+                snippets = []
+                for r in results[:5]:
+                    title = r.get('title', '')
+                    snippet = r.get('snippet', '')
+                    if snippet:
+                        snippets.append(f"[{title}]: {snippet}")
+                research_text = "\n\n".join(snippets) if snippets else ""
+
+            if not research_text:
+                return self._llm_synthesis(f"Based on your knowledge, answer: {input_text}")
+
+            # Synthesize research — pass full context so LLM has prior step info
+            logger.info(f"Web research complete: {len(results)} results, {len(pages)} pages fetched")
+            synthesis_prompt = (
+                f"Based on the following web research results, answer this question: {search_query}\n\n"
+                f"RESEARCH DATA:\n{research_text[:8000]}\n\n"
+                f"Provide a factual, concise answer using specific data from the research."
+            )
+            return self._llm.chat(user_message=synthesis_prompt, max_tokens=400)
+
         except Exception as e:
-            logger.warning(f"Web research streaming failed: {e}")
+            logger.warning(f"Web research failed: {e}")
             return self._llm_synthesis(f"Based on your knowledge, answer: {input_text}")
 
     def _synthesize_results(self, plan: TaskPlan, results: list[str]) -> str:

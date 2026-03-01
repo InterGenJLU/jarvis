@@ -510,6 +510,7 @@ class Coordinator:
             config=config,
             event_queue=event_queue,
             context_window=context_window,
+            web_researcher=self.web_researcher,
         )
 
         # Centralized conversation state (Phase 2 of conversational flow refactor)

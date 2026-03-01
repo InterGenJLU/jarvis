@@ -184,6 +184,13 @@ class DocumentGenerator:
         slide_layout = prs.slide_layouts[5]  # Title Only — full manual control
         slide = prs.slides.add_slide(slide_layout)
 
+        # Clear the layout placeholder so it doesn't show default text
+        # ("Click to add title") behind our custom textboxes
+        if slide.placeholders:
+            for ph in list(slide.placeholders):
+                sp = ph._element
+                sp.getparent().remove(sp)
+
         # Accent strip — bold bar across the bottom ~25%
         strip_height = Inches(2.0)
         strip_y = Emu(int(prs.slide_height - strip_height))

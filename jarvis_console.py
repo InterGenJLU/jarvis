@@ -778,6 +778,7 @@ def run_console(config, mode):
         config=config,
         event_queue=None,  # Console: no voice interrupt queue
         context_window=context_window,
+        web_researcher=web_researcher,
     )
 
     # People manager (social introductions + pronunciation)
