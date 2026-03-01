@@ -608,7 +608,8 @@ class FileEditorSkill(BaseSkill):
             'SLIDE_COUNT: <number, default 7 for presentations, 5 for documents>\n'
             'FILENAME: <filename with extension, invent if not specified>\n'
             'ANALYSIS_TYPE: overview|comparison|deep-dive|tutorial|summary\n'
-            'KEY_POINTS: <comma-separated areas to cover, or "auto" to let AI decide>'
+            'KEY_POINTS: <comma-separated areas to cover, or "auto" to let AI decide>\n'
+            'THEME: professional|modern|bold (default professional, use "modern" for clean/minimalist, "bold" for impactful/striking)'
         )
 
         result = self._llm.generate(parse_prompt, max_tokens=256)
@@ -640,6 +641,9 @@ class FileEditorSkill(BaseSkill):
                 params['analysis_type'] = value.lower()
             elif key == 'key_points':
                 params['key_points'] = value
+            elif key == 'theme':
+                if value.lower() in ('professional', 'modern', 'bold'):
+                    params['theme'] = value.lower()
 
         # Require at least a topic
         if not params.get('topic'):
@@ -651,6 +655,7 @@ class FileEditorSkill(BaseSkill):
         params.setdefault('slide_count', 7)
         params.setdefault('analysis_type', 'overview')
         params.setdefault('key_points', 'auto')
+        params.setdefault('theme', 'professional')
 
         return params
 
@@ -665,6 +670,7 @@ class FileEditorSkill(BaseSkill):
         filename = params.get('filename', 'output.pptx')
         analysis_type = params.get('analysis_type', 'overview')
         key_points = params.get('key_points', 'auto')
+        theme_name = params.get('theme', 'professional')
 
         self.logger.info(f"[file_editor] generating {doc_type}: topic={topic!r}, "
                          f"slides={slide_count}, file={filename}")
@@ -694,7 +700,8 @@ class FileEditorSkill(BaseSkill):
         try:
             if doc_type == 'presentation':
                 output_path = self._doc_generator.create_presentation(
-                    structure, filename=filename, images=images
+                    structure, filename=filename, images=images,
+                    theme_name=theme_name,
                 )
             elif doc_type == 'pdf':
                 # Generate DOCX first, then convert
@@ -804,10 +811,12 @@ class FileEditorSkill(BaseSkill):
                 '3. Each bullet MUST be an informative phrase (10-20 words) '
                 'containing at least one specific fact: a number, statistic, '
                 'dollar figure, percentage, named entity, or concrete example.\n'
-                '   GOOD: "Ransomware cost enterprises $20B globally in 2025 — up 40% from 2023"\n'
-                '   GOOD: "Colonial Pipeline attack (2021) shut down 5,500 miles of fuel supply"\n'
+                '   GOOD: "**Ransomware cost:** enterprises lost $20B globally in 2025, up 40% from 2023"\n'
+                '   GOOD: "**Colonial Pipeline (2021):** shut down 5,500 miles of fuel supply for 6 days"\n'
                 '   BAD: "Ransomware is increasing"\n'
                 '   BAD: "Critical infrastructure is at risk"\n'
+                '4. Use **bold lead phrases** at the start of bullets: **Key term:** followed by the detail.\n'
+                '   Every bullet SHOULD start with a **bolded 1-3 word lead** using **double asterisks**.\n'
             )
         else:
             bullet_guidance = (
@@ -815,8 +824,9 @@ class FileEditorSkill(BaseSkill):
                 '3. Each bullet MUST be a complete, informative sentence (15-30 words) '
                 'containing specific facts: numbers, statistics, dollar figures, '
                 'named examples, dates, or concrete evidence.\n'
-                '   GOOD: "The average cost of a data breach reached $4.45M in 2024, with healthcare breaches averaging $10.93M according to IBM."\n'
+                '   GOOD: "**Data breach costs:** The average reached $4.45M in 2024, with healthcare breaches averaging $10.93M according to IBM."\n'
                 '   BAD: "Data breaches are becoming more expensive."\n'
+                '4. Use **bold lead phrases** at the start of bullets using **double asterisks**.\n'
             )
 
         structure_prompt = (
@@ -832,8 +842,28 @@ class FileEditorSkill(BaseSkill):
             '  "slides": [\n'
             '    {\n'
             '      "title": "Slide Title",\n'
-            '      "bullets": ["Informative point with specific data", "Another point with a named example"],\n'
-            '      "image_query": "search term for a relevant image"\n'
+            '      "slide_type": "bullets",\n'
+            '      "bullets": ["**Key fact:** informative point with data"],\n'
+            '      "notes": "Speaker talking points (not shown on slide)",\n'
+            '      "image_query": "search term for relevant image"\n'
+            '    },\n'
+            '    {\n'
+            '      "title": "Key Metric",\n'
+            '      "slide_type": "stat",\n'
+            '      "stat_value": "$4.45M",\n'
+            '      "stat_label": "Average data breach cost in 2024",\n'
+            '      "bullets": ["**Context:** supporting detail"],\n'
+            '      "notes": "Emphasize year-over-year trend"\n'
+            '    },\n'
+            '    {\n'
+            '      "title": "X vs Y",\n'
+            '      "slide_type": "comparison",\n'
+            '      "left_heading": "Option A",\n'
+            '      "left_points": ["**Strength:** detail", "**Strength:** detail"],\n'
+            '      "right_heading": "Option B",\n'
+            '      "right_points": ["**Strength:** detail", "**Strength:** detail"],\n'
+            '      "bullets": ["**Summary:** both viable for enterprise use"],\n'
+            '      "notes": "Highlight key differentiator"\n'
             '    }\n'
             '  ]\n'
             '}\n\n'
@@ -841,17 +871,22 @@ class FileEditorSkill(BaseSkill):
             '1. First slide is title/intro (may have few or no bullets). '
             'Last slide is conclusion/summary with key takeaways.\n'
             f'{bullet_guidance}'
-            '4. MUST extract and use specific facts, names, statistics, and examples '
+            '5. slide_type MUST be one of: "bullets" (default), "stat", "comparison".\n'
+            '6. Use "stat" for ONE impressive number/metric per presentation (big value + label). Max 1-2 stat slides.\n'
+            '7. Use "comparison" ONLY when comparing two specific items side by side. Max 1-2 comparison slides.\n'
+            '8. Use "bullets" for everything else. Most slides should be "bullets".\n'
+            '9. MUST extract and use specific facts, names, statistics, and examples '
             'from the RESEARCH DATA above. Do NOT ignore the research and write generic content.\n'
-            '5. image_query should be a simple 2-4 word search for a relevant stock photo.\n'
-            f'6. Generate exactly {slide_count} slides total.\n'
-            '7. If comparing items, dedicate one slide per item with specific pros/cons/metrics.\n'
-            '8. NEVER write vague filler bullets like "X is important" or "Y is growing". '
+            '10. image_query should be a simple 2-4 word search for a relevant stock photo.\n'
+            f'11. Generate exactly {slide_count} slides total.\n'
+            '12. If comparing items, dedicate one slide per item with specific pros/cons/metrics.\n'
+            '13. NEVER write vague filler bullets like "X is important" or "Y is growing". '
             'Every bullet must teach the reader something specific.\n'
-            '9. Output ONLY valid JSON. No markdown fences, no explanations.\n'
+            '14. notes field is optional but encouraged — add speaker talking points that expand on slide content.\n'
+            '15. Output ONLY valid JSON. No markdown fences, no explanations.\n'
         )
 
-        raw = self._llm.generate(structure_prompt, max_tokens=2048)
+        raw = self._llm.generate(structure_prompt, max_tokens=3072)
         raw = self._strip_markdown_fences(raw)
 
         # Try to extract JSON from the response
