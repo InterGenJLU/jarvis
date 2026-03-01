@@ -18,6 +18,7 @@ from typing import Optional
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
 
 from docx import Document
@@ -74,15 +75,21 @@ def _parse_bold_text(text: str) -> list:
     return segments
 
 
-def _add_formatted_runs(paragraph, text, font_size, font_color):
-    """Add text with bold/normal runs parsed from **markdown** to a paragraph."""
+def _add_formatted_runs(paragraph, text, font_size, font_color, accent_color=None):
+    """Add text with bold/normal runs parsed from **markdown** to a paragraph.
+
+    Bold segments render in accent_color (if provided) for visual emphasis.
+    """
     segments = _parse_bold_text(text)
     for seg_text, is_bold in segments:
         run = paragraph.add_run()
         run.text = seg_text
         run.font.size = font_size
-        run.font.color.rgb = font_color
         run.font.bold = is_bold
+        if is_bold and accent_color:
+            run.font.color.rgb = accent_color
+        else:
+            run.font.color.rgb = font_color
 
 
 class DocumentGenerator:
@@ -91,6 +98,18 @@ class DocumentGenerator:
     def __init__(self, config=None):
         self.logger = get_logger(__name__, config)
         SHARE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _add_accent_bar(self, slide, prs, theme, y_pos=None):
+        """Add a thin accent-colored bar across the slide under the title area."""
+        bar_height = Inches(0.06)
+        y = y_pos or Inches(1.55)
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0.5), y,
+            Emu(int(prs.slide_width - Inches(1))), bar_height)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = theme["accent"]
+        shape.line.fill.background()  # No border
 
     # ------------------------------------------------------------------
     # PPTX Generation
@@ -161,23 +180,48 @@ class DocumentGenerator:
             return None
 
     def _add_title_slide(self, prs, title, subtitle, theme):
-        """Add a title slide (first slide of the deck)."""
-        slide_layout = prs.slide_layouts[0]
+        """Add a title slide with accent strip and visual hierarchy."""
+        slide_layout = prs.slide_layouts[5]  # Title Only — full manual control
         slide = prs.slides.add_slide(slide_layout)
 
-        title_shape = slide.placeholders[0]
-        title_shape.text = title
-        for paragraph in title_shape.text_frame.paragraphs:
-            paragraph.font.size = Pt(36)
-            paragraph.font.bold = True
-            paragraph.font.color.rgb = theme["heading"]
+        # Accent strip — bold bar across the bottom ~25%
+        strip_height = Inches(2.0)
+        strip_y = Emu(int(prs.slide_height - strip_height))
+        strip = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0), strip_y,
+            prs.slide_width, strip_height)
+        strip.fill.solid()
+        strip.fill.fore_color.rgb = theme["accent"]
+        strip.line.fill.background()
 
-        if len(slide.placeholders) > 1:
-            subtitle_shape = slide.placeholders[1]
-            subtitle_shape.text = subtitle
-            for paragraph in subtitle_shape.text_frame.paragraphs:
-                paragraph.font.size = Pt(20)
-                paragraph.font.color.rgb = theme["subtitle"]
+        # Title text — large, centered in upper area
+        title_box = slide.shapes.add_textbox(
+            Inches(1), Inches(1.8),
+            Emu(int(prs.slide_width - Inches(2))), Inches(2.5))
+        tf = title_box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run()
+        run.text = title
+        run.font.size = Pt(40)
+        run.font.bold = True
+        run.font.color.rgb = theme["heading"]
+
+        # Subtitle — inside the accent strip, white text
+        if subtitle:
+            sub_box = slide.shapes.add_textbox(
+                Inches(1), Emu(int(strip_y + Inches(0.4))),
+                Emu(int(prs.slide_width - Inches(2))), Inches(1.2))
+            stf = sub_box.text_frame
+            stf.word_wrap = True
+            sp = stf.paragraphs[0]
+            sp.alignment = PP_ALIGN.CENTER
+            run_s = sp.add_run()
+            run_s.text = subtitle
+            run_s.font.size = Pt(20)
+            run_s.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
 
         return slide
 
@@ -193,6 +237,8 @@ class DocumentGenerator:
             paragraph.font.bold = True
             paragraph.font.color.rgb = theme["heading"]
 
+        self._add_accent_bar(slide, prs, theme)
+
         if len(slide.placeholders) > 1:
             body_shape = slide.placeholders[1]
             tf = body_shape.text_frame
@@ -200,7 +246,7 @@ class DocumentGenerator:
 
             for j, bullet in enumerate(bullets):
                 p = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-                _add_formatted_runs(p, bullet, Pt(18), theme["body"])
+                _add_formatted_runs(p, bullet, Pt(18), theme["body"], theme["accent"])
                 p.space_after = Pt(8)
                 p.level = 0
 
@@ -218,6 +264,8 @@ class DocumentGenerator:
             paragraph.font.bold = True
             paragraph.font.color.rgb = theme["heading"]
 
+        self._add_accent_bar(slide, prs, theme)
+
         slide_width = prs.slide_width
 
         # Text box — left 55%
@@ -229,7 +277,7 @@ class DocumentGenerator:
 
         for j, bullet in enumerate(bullets):
             p = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-            _add_formatted_runs(p, f"\u2022 {bullet}", Pt(16), theme["body"])
+            _add_formatted_runs(p, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"])
             p.space_after = Pt(6)
 
         # Image — right 40%
@@ -261,6 +309,8 @@ class DocumentGenerator:
             p.font.size = Pt(28)
             p.font.bold = True
             p.font.color.rgb = theme["heading"]
+
+        self._add_accent_bar(slide, prs, theme)
 
         slide_width = prs.slide_width
         content_width = Emu(int(slide_width - Inches(2)))
@@ -303,7 +353,7 @@ class DocumentGenerator:
             tf3.word_wrap = True
             for j, bullet in enumerate(bullets):
                 p3 = tf3.paragraphs[0] if j == 0 else tf3.add_paragraph()
-                _add_formatted_runs(p3, f"\u2022 {bullet}", Pt(16), theme["body"])
+                _add_formatted_runs(p3, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"])
                 p3.space_after = Pt(4)
 
         return slide
@@ -320,6 +370,8 @@ class DocumentGenerator:
             p.font.size = Pt(28)
             p.font.bold = True
             p.font.color.rgb = theme["heading"]
+
+        self._add_accent_bar(slide, prs, theme)
 
         slide_width = prs.slide_width
         col_width = Emu(int((slide_width - Inches(2)) * 0.47))
@@ -343,7 +395,7 @@ class DocumentGenerator:
 
         for point in slide_data.get("left_points", []):
             p_l = ltf.add_paragraph()
-            _add_formatted_runs(p_l, f"\u2022 {point}", Pt(16), theme["body"])
+            _add_formatted_runs(p_l, f"\u2022 {point}", Pt(16), theme["body"], theme["accent"])
             p_l.space_after = Pt(6)
 
         # Right column
@@ -364,7 +416,7 @@ class DocumentGenerator:
 
         for point in slide_data.get("right_points", []):
             p_r = rtf.add_paragraph()
-            _add_formatted_runs(p_r, f"\u2022 {point}", Pt(16), theme["body"])
+            _add_formatted_runs(p_r, f"\u2022 {point}", Pt(16), theme["body"], theme["accent"])
             p_r.space_after = Pt(6)
 
         return slide
@@ -459,13 +511,15 @@ class DocumentGenerator:
                     except Exception as e:
                         self.logger.warning(f"[doc_gen] Failed to add image to doc section {i}: {e}")
 
-                # Bullet points with bold markup
+                # Bullet points with bold markup (accent-colored leads)
                 for bullet in bullets:
                     p = doc.add_paragraph(style="List Bullet")
                     segments = _parse_bold_text(bullet)
                     for seg_text, is_bold in segments:
                         run = p.add_run(seg_text)
                         run.bold = is_bold
+                        if is_bold:
+                            run.font.color.rgb = DocxRGB(0x2B, 0x57, 0x9A)
 
                 # Speaker notes as callout
                 notes = section.get("notes", "")
