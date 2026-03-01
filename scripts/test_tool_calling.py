@@ -60,7 +60,7 @@ class TestQuery:
     description: str = ""
 
 
-# 15 queries per skill × 6 + 10 no-tool + 15 time (no-tool) + 56 conversation + 5 web-search = 176 total
+# 15 queries per skill × 6 + 10 no-tool + 15 time (no-tool) + 56 conversation + 5 web + 8 anti-pattern = 184 total
 # Time/date handled by skill (not tool) — expect no tool call (LLM answers from prompt).
 TEST_QUERIES = [
     # --- TIME (15 queries, expect no tool — answered from prompt injection) ---
@@ -276,6 +276,25 @@ TEST_QUERIES = [
     TestQuery("how far is it from New York to London", "web_search", "web"),
     TestQuery("what is the current price of bitcoin", "web_search", "web"),
     TestQuery("what's the weather in Tokyo right now", "get_weather", "weather"),
+
+    # --- ANTI-PATTERN BOUNDARY (8 queries — should NOT trigger wrong tool) ---
+    # These test the "NOT for:" anti-patterns in enriched tool schemas
+    TestQuery("tell me about climate change", [None, "web_search"], "no_tool",
+              description="Anti-pattern: weather-adjacent but NOT a weather query"),
+    TestQuery("what laptop should I buy", [None, "web_search"], "no_tool",
+              description="Anti-pattern: hardware-adjacent but NOT about THIS computer"),
+    TestQuery("explain how git branching works", None, "no_tool",
+              description="Anti-pattern: git-adjacent but NOT a developer operation"),
+    TestQuery("write me a Python function to sort a list", None, "no_tool",
+              description="Anti-pattern: code-adjacent but NOT a developer tool operation"),
+    TestQuery("what's the meaning of life", None, "no_tool",
+              description="Anti-pattern: philosophical question, no tool needed"),
+    TestQuery("set an alarm for 6am", [None, "manage_reminders"], "no_tool",
+              description="Anti-pattern: alarm — acceptable via reminders since JARVIS handles alarms that way"),
+    TestQuery("help me plan a birthday party", [None, "web_search"], "no_tool",
+              description="Anti-pattern: planning is NOT a reminder"),
+    TestQuery("what happened during World War 2", [None, "web_search"], "no_tool",
+              description="Anti-pattern: historical, not news headlines"),
 ]
 
 

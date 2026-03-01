@@ -760,6 +760,136 @@ def run_self_awareness_test(case):
             pm.delete_person(pid)
             os.unlink(tmp.name)
 
+    # --- Memory Manager: Full User Context (Phase 10A) ---
+
+    elif test_type == "full_user_context_format":
+        import tempfile, os
+        from core.memory_manager import MemoryManager
+        from core.config import load_config
+        cfg = load_config()
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        cfg._config.setdefault("conversational_memory", {})["db_path"] = tmp.name
+        cfg._config["conversational_memory"]["faiss_index_path"] = tmp.name + "_faiss"
+        try:
+            mm = MemoryManager(cfg, conversation=None)
+            # Insert test facts
+            mm.store_fact({"user_id": "testuser", "category": "preference",
+                           "subject": "local-first architecture", "content": "prefers local-first",
+                           "source": "test", "confidence": 0.9, "source_messages": ""})
+            mm.store_fact({"user_id": "testuser", "category": "work",
+                           "subject": "cybersecurity", "content": "works in cybersecurity",
+                           "source": "test", "confidence": 0.9, "source_messages": ""})
+            mm.store_fact({"user_id": "testuser", "category": "location",
+                           "subject": "Alabama", "content": "lives in Alabama",
+                           "source": "test", "confidence": 0.9, "source_messages": ""})
+            ctx = mm.get_full_user_context(user_id="testuser")
+            if ctx is None:
+                return False, "get_full_user_context returned None with 3 facts"
+            if "WHAT YOU KNOW ABOUT THE USER" not in ctx:
+                return False, f"missing header: {ctx[:80]}"
+            if "never recite" not in ctx:
+                return False, f"missing instruction: {ctx[:80]}"
+            # Check category grouping
+            cats_found = sum(1 for line in ctx.split("\n") if line.strip().startswith(("Location:", "Preference:", "Work:")))
+            if cats_found < 2:
+                return False, f"expected >=2 category groups, found {cats_found}: {ctx}"
+            return True, f"Full user context: {len(ctx)} chars, categories present"
+        finally:
+            os.unlink(tmp.name)
+            for f in [tmp.name + "_faiss", tmp.name + "_faiss.idx"]:
+                if os.path.exists(f):
+                    os.unlink(f)
+
+    elif test_type == "full_user_context_empty":
+        import tempfile, os
+        from core.memory_manager import MemoryManager
+        from core.config import load_config
+        cfg = load_config()
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        cfg._config.setdefault("conversational_memory", {})["db_path"] = tmp.name
+        cfg._config["conversational_memory"]["faiss_index_path"] = tmp.name + "_faiss"
+        try:
+            mm = MemoryManager(cfg, conversation=None)
+            ctx = mm.get_full_user_context(user_id="nobody")
+            if ctx is not None:
+                return False, f"expected None for user with no facts, got: {ctx[:60]}"
+            return True, "No facts → None (correct)"
+        finally:
+            os.unlink(tmp.name)
+            for f in [tmp.name + "_faiss", tmp.name + "_faiss.idx"]:
+                if os.path.exists(f):
+                    os.unlink(f)
+
+    # --- Self-Awareness: Expanded State (Phase 10B) ---
+
+    elif test_type == "compact_state_vram":
+        state_str = sa.get_compact_state()
+        if "VRAM usage:" not in state_str:
+            return False, f"VRAM usage not in compact state"
+        return True, f"VRAM usage present in compact state"
+
+    elif test_type == "compact_state_load":
+        state_str = sa.get_compact_state()
+        if "System load:" not in state_str:
+            return False, f"System load not in compact state"
+        return True, f"System load present in compact state"
+
+    elif test_type == "compact_state_uptime":
+        state_str = sa.get_compact_state()
+        if "Running for" not in state_str:
+            return False, f"Uptime not in compact state"
+        return True, f"Uptime present in compact state"
+
+    elif test_type == "format_uptime_units":
+        from core.self_awareness import SelfAwareness
+        fmt = SelfAwareness._format_uptime
+        checks = [
+            (30, "30s"), (90, "1m"), (3600, "1h"),
+            (3660, "1h 1m"), (90000, "1d 1h"),
+        ]
+        for secs, expected in checks:
+            result = fmt(secs)
+            if result != expected:
+                return False, f"_format_uptime({secs})={result!r}, expected {expected!r}"
+        return True, f"All {len(checks)} uptime format cases pass"
+
+    # --- Multi-Turn Context Format (Phase 10C) ---
+
+    elif test_type == "prior_context_xml":
+        from core.conversation import ConversationManager
+        from core.conversation_router import ConversationRouter
+        from core.conversation_state import ConversationState
+        from core.config import load_config
+        cfg = load_config()
+        conv = ConversationManager(cfg)
+        conv.add_message("user", "what's the weather")
+        conv.add_message("assistant", "72 degrees and sunny in Gardendale")
+        conv.add_message("user", "any reminders")
+        conv.add_message("assistant", "You have 2 active reminders")
+        # Build a mock router with minimal deps
+        router = ConversationRouter.__new__(ConversationRouter)
+        router.conversation = conv
+        router.conv_state = ConversationState()
+        router.conv_state.last_command = "any reminders"
+        router.conv_state.last_response_text = "You have 2 active reminders"
+        router.memory_manager = None
+        router.people_manager = None
+        router.self_awareness = None
+        router.context_window = None
+        result = router._prepare_llm_context("set a reminder", in_conversation=True)
+        cmd = result.llm_command
+        if "<prior_context>" not in cmd:
+            return False, f"Missing <prior_context> tag: {cmd[:100]}"
+        if "</prior_context>" not in cmd:
+            return False, f"Missing closing tag: {cmd[:100]}"
+        if "[1]" not in cmd or "[2]" not in cmd:
+            return False, f"Missing exchange numbering: {cmd[:200]}"
+        if "Now the user asks:" not in cmd:
+            return False, f"Missing 'Now the user asks:' prefix: {cmd[:200]}"
+        return True, f"Prior context XML format correct ({len(cmd)} chars)"
+
     return False, f"unknown self_awareness test type: {test_type}"
 
 
@@ -2733,8 +2863,8 @@ TESTS += [
              notes="Should NOT dismiss outside conversation window"),
     TestCase("2D-05", "no thanks, but what time is it", 2, "2D", "Dismissal — compound",
              in_conversation=True,
-             expect_intent="tool_calling",
-             notes="Compound: dismissal NOT detected, 'what time is it' triggers LLM tool-calling path"),
+             expect_handled=False,
+             notes="Compound: dismissal NOT detected, falls to LLM fallback (get_time tool removed, prefix dilutes semantic match)"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -3599,6 +3729,51 @@ TESTS += [
              expect_not_contains=["22.2", "celsius"],
              expect_max_sentences=4,
              notes="Should use Fahrenheit naturally, never convert to Celsius"),
+]
+
+
+# ---------------------------------------------------------------------------
+# TIER 1: Phase 10A — Memory Manager: Full User Context
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("10A-01", "", 1, "10A", "Full User Context",
+             expect_self_awareness="full_user_context_format",
+             notes="3 facts → grouped by category, correct header"),
+    TestCase("10A-02", "", 1, "10A", "Full User Context — Empty",
+             expect_self_awareness="full_user_context_empty",
+             notes="No facts → None"),
+]
+
+
+# ---------------------------------------------------------------------------
+# TIER 1: Phase 10B — Self-Awareness: Expanded Compact State
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("10B-01", "", 1, "10B", "Compact State — VRAM",
+             expect_self_awareness="compact_state_vram",
+             notes="VRAM usage line present in compact state"),
+    TestCase("10B-02", "", 1, "10B", "Compact State — Load",
+             expect_self_awareness="compact_state_load",
+             notes="System load line present in compact state"),
+    TestCase("10B-03", "", 1, "10B", "Compact State — Uptime",
+             expect_self_awareness="compact_state_uptime",
+             notes="Running for line present in compact state"),
+    TestCase("10B-04", "", 1, "10B", "Format Uptime Units",
+             expect_self_awareness="format_uptime_units",
+             notes="30s, 90s→1m, 1h, 1h1m, 1d1h"),
+]
+
+
+# ---------------------------------------------------------------------------
+# TIER 1: Phase 10C — Multi-Turn Conversation Context
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("10C-01", "", 1, "10C", "Prior Context XML Format",
+             expect_self_awareness="prior_context_xml",
+             notes="2 prior exchanges → <prior_context> with [1], [2] numbering"),
 ]
 
 
