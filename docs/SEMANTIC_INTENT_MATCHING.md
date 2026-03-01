@@ -14,7 +14,7 @@ With the LLM-centric migration (Phases 1-2, Feb 26-27), semantic matching now se
 1. **Skill routing** — matching queries to the 3 non-migrated skills (app_launcher, file_editor, social_introductions)
 2. **Tool pruning** — the semantic pruner in `conversation_router.py` selects which LLM tools are relevant for each query
 
-For the 8 migrated tools (time, system_info, filesystem, weather, reminders, developer_tools, news, web_search), Qwen3.5 handles tool selection natively via `stream_with_tools()`.
+For the 7 tools (system_info, filesystem, weather, reminders, developer_tools, news, web_search), Qwen3.5 handles tool selection natively via `stream_with_tools()`. Time/date queries are handled by the TimeInfoSkill directly (instant response via semantic matching, no LLM tool call needed).
 
 ---
 
@@ -120,7 +120,7 @@ The semantic pruner in `conversation_router.py` (`_handle_tool_calling()`) deter
 5. **Skill guard** — if a stateful skill (app_launcher, file_editor, social_introductions) scores higher than any tool, defer to skill routing
 6. **web_search always included** — marked `ALWAYS_INCLUDED=True` in tool definition
 
-The pruner reduces token cost by only including relevant tool schemas in the LLM prompt, rather than sending all 8 tools for every query.
+The pruner reduces token cost by only including relevant tool schemas in the LLM prompt, rather than sending all 7 tools for every query.
 
 ---
 
@@ -171,7 +171,7 @@ With Phase 2 complete, the semantic matching system's role has narrowed:
 |----------|--------|
 | **Tool pruning** (select which tools to send to LLM) | Active — core function |
 | **Non-migrated skill routing** (app_launcher, file_editor, social_intros) | Active — 3 skills |
-| **Migrated skill routing** (time, weather, system, etc.) | Replaced by LLM tool calling |
+| **Migrated skill routing** (weather, system, etc.) | Replaced by LLM tool calling. Time/date handled by TimeInfoSkill (semantic matching) |
 
 Phase 4 of the LLM-centric migration will evaluate whether the semantic matcher can be removed entirely once all skills are migrated or simplified. For now, it remains essential for tool pruning and the 3 non-migrated skills.
 

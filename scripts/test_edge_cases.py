@@ -2600,7 +2600,7 @@ TESTS += [
              expect_not_skill="reminders",
              notes="Should NOT trigger reminder acknowledgment"),
     TestCase("1B-08", "what time does the news come on", 2, "1B", "Substring Traps",
-             notes="Routes via tool-calling after news migration; LLM decides get_time or web_search"),
+             notes="Routes via tool-calling after news migration; LLM decides web_search or answers directly"),
 ]
 
 # ---------------------------------------------------------------------------

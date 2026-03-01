@@ -2,7 +2,7 @@
 
 **Created:** February 18, 2026
 **Updated:** February 27, 2026
-**Context:** Qwen3.5-35B-A3B in production with 8 LLM tools (Phases 1-2 COMPLETE), tool-connector plugin system live
+**Context:** Qwen3.5-35B-A3B in production with 7 LLM tools (Phases 1-2 COMPLETE, get_time removed), tool-connector plugin system live
 
 ---
 
@@ -14,9 +14,9 @@ With Qwen3.5's native tool calling proven at 100% accuracy across 1,200+ trials,
 
 **Migration progress (Feb 26-27):**
 - **Phase 1 COMPLETE** — time, system_info, filesystem as tools. 100% accuracy (600/600 trials). Commit `06dd741`
-- **Phase 2 COMPLETE** — weather, reminders, conversation (disabled — LLM handles natively), developer_tools, news. 8 tools total. 100% accuracy on domain categories; 99.6% overall (523/525, 2 stochastic conversation borderlines). Commits: `1be0cb1` → `49eca5c` → `aa2f524` → `a6ae616` → `578e3c9`
+- **Phase 2 COMPLETE** — weather, reminders, conversation (disabled — LLM handles natively), developer_tools, news. 7 tools total (6 domain + web_search; get_time removed — time/date handled by TimeInfoSkill). 100% accuracy on domain categories; 99.6% overall (523/525, 2 stochastic conversation borderlines). Commits: `1be0cb1` → `49eca5c` → `aa2f524` → `a6ae616` → `578e3c9`
 - **Tool-connector plugin system** — one-file tool definitions, auto-discovery registry, dependency injection. Adding a new tool = create one file in `core/tools/`. Commit `ba80e5a`
-- **5-6 tool cliff DEBUNKED** — 8 tools, zero XML fallback, 1,200+ trials. Tool description quality + semantic domain separation matter more than raw count
+- **5-6 tool cliff DEBUNKED** — tested with up to 8 tools, zero XML fallback, 1,200+ trials. Tool description quality + semantic domain separation matter more than raw count. Now at 7 tools after get_time removal
 - **Vision unblocked** — mmproj-F16.gguf (~900MB) available, llama.cpp support merged. Waiting for RX 7600 display offload (arrives Feb 28)
 
 ---
@@ -51,13 +51,13 @@ P3.7:     News article pull-up
 Pre-P4:   Multi-step task planning (compound detection)
 Pre-P4b:  Self-hardware queries ("you/your" + hw keyword → direct LLM answer)
 Pre-P4c:  Pending skill confirmations
-P4-LLM:   ★ TOOL CALLING — semantic pruning → LLM with 8 tools (PRIMARY PATH)
+P4-LLM:   ★ TOOL CALLING — semantic pruning → LLM with 7 tools (PRIMARY PATH)
 P4:       Skill routing — stateful skills (app_launcher, file_editor, social_intros)
 P5:       News continuation
 Fallback:  LLM streaming with tools (Qwen3.5 → quality gate → Claude API)
 ```
 
-**P4-LLM is now the primary routing path** for most queries. The semantic pruner (threshold 0.40, hard cap 4 domain tools) selects relevant tools, then Qwen3.5 decides which to call via `stream_with_tools()`. 8 tools: get_time, get_system_info, find_files, get_weather, manage_reminders, developer_tools, get_news, web_search (always included).
+**P4-LLM is now the primary routing path** for most queries. The semantic pruner (threshold 0.40, hard cap 4 domain tools) selects relevant tools, then Qwen3.5 decides which to call via `stream_with_tools()`. 7 tools: get_system_info, find_files, get_weather, manage_reminders, developer_tools, get_news, web_search (always included). Time/date queries are handled by the TimeInfoSkill (instant response via semantic matching, no LLM needed).
 
 P4 skill routing handles 3 stateful skills that require deterministic routing: app_launcher (desktop verbs), file_editor (nested LLM doc gen + confirmation), social_introductions (multi-turn state machine). A skill guard in the pruner ensures these still route correctly.
 
@@ -101,7 +101,7 @@ Phase 4 will evaluate whether the remaining stateful priorities (P1-P3.7) can be
 - **Commit:** `ba80e5a`
 
 **Key findings from Phase 2:**
-- 5-6 tool cliff is DEBUNKED — 8 tools, 1,200+ trials, zero XML fallback
+- 5-6 tool cliff is DEBUNKED — tested with up to 8 tools, 1,200+ trials, zero XML fallback (now 7 tools after get_time removal)
 - Tool description quality + semantic domain separation matter more than raw count
 - Tool-calling latency is LLM-bound (~2.5s total: 1s tool decision + 1.5s response generation), not pipeline-bound
 - Conversation history in tool-calling messages causes over-triggering — keep messages array clean (system + user only)
@@ -349,7 +349,7 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 7. **"ALWAYS call the tool" > "call if you can"** — Qwen answers date questions from system prompt unless explicitly told "NEVER answer time/date from the prompt"
 8. **Tool description quality is the differentiator** — well-scoped descriptions prevent cross-tool confusion. "Only use when user explicitly asks about..." eliminates casual misrouting
 9. **Semantic pruner threshold 0.40 is the sweet spot** — sweep across 56 queries at 7 thresholds. 0.35 had cliff breaches, 0.45+ introduced false negatives
-10. **5-6 tool cliff is model-dependent, not universal** — Qwen3.5 Instruct handles 8 tools at 100%. The cliff documented for Qwen3-Coder doesn't apply
+10. **5-6 tool cliff is model-dependent, not universal** — Qwen3.5 Instruct handled 8 tools at 100% (now 7 after get_time removal). The cliff documented for Qwen3-Coder doesn't apply
 11. **Tool-calling latency is irreducibly LLM-bound** — ~2.5s total (1s tool decision + 1.5s response generation), all in C++ llama.cpp on GPU. Pipeline refactoring won't help
 12. **Skill guard prevents routing regressions** — pruner must check ALL skills, not just tool-backed ones. If a stateful skill scores higher semantically, defer to skill routing
 
@@ -359,7 +359,7 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 
 ### Completed
 - **Phase 1** (Feb 26): time, system_info, filesystem — 100% accuracy (600/600 trials)
-- **Phase 2** (Feb 26-27): weather, reminders, conversation, developer_tools, news — 8 tools, 99.6% overall
+- **Phase 2** (Feb 26-27): weather, reminders, conversation, developer_tools, news — 7 tools (get_time later removed), 99.6% overall
 - **Tool-connector** (Feb 27): plugin system for one-file tool definitions
 
 ### Next Steps
@@ -369,7 +369,7 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 4. **Phase 4 (routing evaluation)** — after Phase 3 is stable, assess what routing layers can be removed
 
 ### VRAM Budget With Display Offload
-- Tool schema budget: 8 tools consume ~800-1,600 tokens. Dynamic pruning keeps active set to 4-5 tools per query
+- Tool schema budget: 7 tools consume ~700-1,400 tokens. Dynamic pruning keeps active set to 4-5 tools per query
 - mmproj: +900MB VRAM when loaded. With display offload, fits within budget (~19.9/20.0 GB)
 - Larger context: could increase ctx-size from 7168 → 8192+ (more room for tool schemas + conversation)
 

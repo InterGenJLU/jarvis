@@ -18,7 +18,7 @@ vad:
   buffer_duration: 3.0
 llm:
   local:
-    model_path: /mnt/models/llm/Qwen3.5-35B-A3B-Q3_K_M.gguf
+    model_path: /mnt/storage/jarvis/models/llm/Qwen3.5-35B-A3B-Q3_K_M.gguf
     context_size: 8192
     gpu_layers: 999
     batch_size: 512
@@ -34,7 +34,7 @@ llm:
     model: claude-sonnet-4-20250514
     api_key_env: ANTHROPIC_API_KEY
 stt:
-  model_path: /mnt/models/whisper/ggml-base.bin
+  model_path: /mnt/storage/jarvis/models/whisper/ggml-base.bin
   whisper_bin: ~/whisper.cpp/build/bin/whisper-cli
   language: en
   debug_save_audio: false          # Set true for diagnosis sessions only
@@ -47,8 +47,8 @@ tts:
   kokoro_blend_ratio: 0.5           # 0.5 = 50% fable + 50% george
   kokoro_speed: 1.0
   # Piper settings (fallback)
-  model_path: /mnt/models/piper/en_GB-northern_english_male-medium.onnx
-  config_path: /mnt/models/piper/en_GB-northern_english_male-medium.onnx.json
+  model_path: /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx
+  config_path: /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx.json
   piper_bin: /home/user/.local/bin/piper
   length_scale: 1.12
   noise_scale: 0.55
@@ -90,7 +90,7 @@ metrics:
 semantic_matching:
   enabled: true
   model: all-MiniLM-L6-v2
-  cache_dir: /mnt/models/sentence-transformers
+  cache_dir: /mnt/storage/jarvis/models/sentence-transformers
   default_threshold: 0.85
   fallback_to_llm: true
 
@@ -271,4 +271,4 @@ web:
 # Fine-tuned Whisper model (custom accent training)
 stt_finetuned:
   enabled: true
-  model_path: /mnt/models/voice_training/whisper_finetuned/final
+  model_path: /mnt/storage/jarvis/models/voice_training/whisper_finetuned/final

@@ -83,7 +83,6 @@ def _get_schema(tool_name: str) -> dict:
     return ALL_TOOLS.get(tool_name, {})
 
 WEB_SEARCH_TOOL = _get_schema("web_search")
-GET_TIME_TOOL = _get_schema("get_time")
 GET_SYSTEM_INFO_TOOL = _get_schema("get_system_info")
 FIND_FILES_TOOL = _get_schema("find_files")
 GET_WEATHER_TOOL = _get_schema("get_weather")

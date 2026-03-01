@@ -40,7 +40,7 @@ class ToolCallRequest:
 # ---------------------------------------------------------------------------
 from core.tool_registry import (  # noqa: E402
     ALL_TOOLS, SKILL_TOOLS,
-    WEB_SEARCH_TOOL, GET_TIME_TOOL, GET_SYSTEM_INFO_TOOL,
+    WEB_SEARCH_TOOL, GET_SYSTEM_INFO_TOOL,
     FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL,
     DEVELOPER_TOOLS_TOOL, GET_NEWS_TOOL,
     build_tool_prompt_rules,
@@ -902,7 +902,8 @@ class LLMRouter:
             # Only includes rules for tools in the pruned active set.
             rules_text = build_tool_prompt_rules(tool_names)
             system_prompt += (
-                f"\n\nToday's date is {today}. Current time: {current_time}.\n\n"
+                f"\n\nToday's date is {today}. Current time: {current_time}."
+                "\nFor time or date questions, answer directly from the above — do NOT search.\n\n"
                 + rules_text
             )
         else:
@@ -931,7 +932,8 @@ class LLMRouter:
                 "'expand on that', 'tell me more', 'go deeper', 'explain further', "
                 "'break it down more') — just give a more detailed answer using "
                 "the context provided\n"
-                "- Pure opinions with no factual component"
+                "- Pure opinions with no factual component\n"
+                "- Time or date questions — answer directly from the date/time above"
             )
 
         if memory_context:

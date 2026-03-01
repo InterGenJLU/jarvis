@@ -31,7 +31,7 @@
 
 **Phase sequence (from DEVELOPMENT_VISION.md):**
 1. ~~Phase 1: Low-stakes skills as tools (system_info, filesystem, time)~~ — **COMPLETE Feb 26.** 100% accuracy (600/600 trials), 822ms avg latency, 266/266 existing tests pass. Commit `06dd741`.
-2. ~~Phase 2: API-backed + complex skills as tools~~ — **COMPLETE Feb 27.** 8 tools total (7 domain + web_search). 1,200+ trials, 100% on domain categories, 99.6% overall (523/525). Tool-connector plugin system built (`ba80e5a`). Sub-phases: 2.1a weather (`1be0cb1`), 2.1b reminders (`49eca5c`), 2.2 conversation disabled (`aa2f524`), 2.3 developer_tools (`a6ae616`), 2.4 news (`578e3c9`).
+2. ~~Phase 2: API-backed + complex skills as tools~~ — **COMPLETE Feb 27.** 7 tools total (6 domain + web_search). 1,200+ trials, 100% on domain categories, 99.6% overall (523/525). Tool-connector plugin system built (`ba80e5a`). Sub-phases: 2.1a weather (`1be0cb1`), 2.1b reminders (`49eca5c`), 2.2 conversation disabled (`aa2f524`), 2.3 developer_tools (`a6ae616`), 2.4 news (`578e3c9`). get_time removed post-Phase 2 (time/date handled by TimeInfoSkill via semantic matching).
 3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision) — **NEXT.** RX 7600 display offload (arrives Feb 28) enables VRAM headroom for mmproj.
 4. Phase 4: Routing layer evaluation (remove semantic matcher, keyword routing, priority layers)
 
@@ -165,7 +165,7 @@
 
 ### TOP PRIORITY
 - #20 Phase 1: LLM-centric tool calling — 3 skills (time, system, filesystem) as tools, tool_executor, P4-LLM routing, 100% accuracy (600/600), 822ms avg (Feb 26)
-- #20 Phase 2: API-backed + complex skills — weather, reminders, conversation (disabled), developer_tools, news. 8 tools total, 1,200+ trials, 99.6% overall. 5-6 tool cliff DEBUNKED (Feb 26-27)
+- #20 Phase 2: API-backed + complex skills — weather, reminders, conversation (disabled), developer_tools, news. 7 tools total (6 domain + web_search), 1,200+ trials, 99.6% overall. 5-6 tool cliff DEBUNKED (Feb 26-27). get_time later removed (time/date handled by TimeInfoSkill)
 - #20 Tool-connector plugin system — one-file tool definitions in `core/tools/`, auto-discovery registry, dependency injection. `tool_executor.py` 1,057→27 lines. Adding a new tool = create one file (Feb 27)
 
 ### Other Completed (non-roadmap enhancements)

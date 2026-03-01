@@ -60,24 +60,25 @@ class TestQuery:
     description: str = ""
 
 
-# 15 queries per skill × 7 + 10 no-tool + 56 conversation + 5 web-search = 176 total
+# 15 queries per skill × 6 + 10 no-tool + 15 time (no-tool) + 56 conversation + 5 web-search = 176 total
+# Time/date handled by skill (not tool) — expect no tool call (LLM answers from prompt).
 TEST_QUERIES = [
-    # --- TIME (15 queries, expect get_time) ---
-    TestQuery("what time is it", "get_time", "time"),
-    TestQuery("what's the time", "get_time", "time"),
-    TestQuery("tell me the time", "get_time", "time"),
-    TestQuery("current time please", "get_time", "time"),
-    TestQuery("what time do you have", "get_time", "time"),
-    TestQuery("what's the date", "get_time", "time"),
-    TestQuery("what date is it today", "get_time", "time"),
-    TestQuery("what day is it", "get_time", "time"),
-    TestQuery("today's date", "get_time", "time"),
-    TestQuery("what's today", "get_time", "time"),
-    TestQuery("do you know what time it is", "get_time", "time"),
-    TestQuery("give me the time and date", "get_time", "time"),
-    TestQuery("what's the current time and date", "get_time", "time"),
-    TestQuery("what year is it", "get_time", "time"),
-    TestQuery("is it morning or afternoon", "get_time", "time"),
+    # --- TIME (15 queries, expect no tool — answered from prompt injection) ---
+    TestQuery("what time is it", None, "time"),
+    TestQuery("what's the time", None, "time"),
+    TestQuery("tell me the time", None, "time"),
+    TestQuery("current time please", None, "time"),
+    TestQuery("what time do you have", None, "time"),
+    TestQuery("what's the date", None, "time"),
+    TestQuery("what date is it today", None, "time"),
+    TestQuery("what day is it", None, "time"),
+    TestQuery("today's date", None, "time"),
+    TestQuery("what's today", None, "time"),
+    TestQuery("do you know what time it is", None, "time"),
+    TestQuery("give me the time and date", None, "time"),
+    TestQuery("what's the current time and date", None, "time"),
+    TestQuery("what year is it", None, "time"),
+    TestQuery("is it morning or afternoon", None, "time"),
 
     # --- SYSTEM INFO (15 queries, expect get_system_info) ---
     TestQuery("what cpu do i have", "get_system_info", "system"),
@@ -196,7 +197,7 @@ TEST_QUERIES = [
 
     # What's up (5)
     TestQuery("what's going on", None, "conversation", "whats_up"),
-    TestQuery("what's the haps", [None, "get_news", "get_time"], "conversation", "whats_up"),
+    TestQuery("what's the haps", [None, "get_news"], "conversation", "whats_up"),
     TestQuery("what's happening", None, "conversation", "whats_up"),
     TestQuery("what's good", None, "conversation", "whats_up"),
     TestQuery("what ya know good", None, "conversation", "whats_up"),
@@ -297,7 +298,7 @@ ALL_OUTCOMES = [
 ]
 
 # Tool names we provide to the LLM
-VALID_TOOL_NAMES = {"web_search", "get_time", "get_system_info", "find_files", "get_weather", "manage_reminders", "developer_tools", "get_news"}
+VALID_TOOL_NAMES = {"web_search", "get_system_info", "find_files", "get_weather", "manage_reminders", "developer_tools", "get_news"}
 
 
 @dataclass

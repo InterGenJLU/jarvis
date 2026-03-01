@@ -9,13 +9,13 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 ## Highlights
 
 - **0.1-0.2s speech recognition** — Fine-tuned Whisper v2 (198 phrases, 94%+ accuracy) on AMD GPU via CTranslate2 + ROCm
-- **LLM-centric tool calling** — Qwen3.5-35B-A3B (MoE, 3B active params) decides which of 8 tools to call per query, 100% accuracy across 1,200+ trials. Adding a new tool = create one Python file
+- **LLM-centric tool calling** — Qwen3.5-35B-A3B (MoE, 3B active params) decides which of 7 tools to call per query, 100% accuracy across 1,200+ trials. Adding a new tool = create one Python file
 - **Natural blended voice** — Kokoro TTS with custom voice blend (fable + george), gapless streaming playback
 - **Conversational flow engine** — Persona module (24 response pools, ~90 templates), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
 - **Self-awareness + task planning** — capability manifest, system state injection, compound request detection, LLM plan generation, sequential execution with per-step evaluation, pause/resume/cancel
 - **Social introductions** — "Meet my niece Arya" triggers butler-style multi-turn introduction flow with name confirmation, pronunciation checks, and persistent people database
 - **Always-on listening** — Porcupine wake word + WebRTC VAD + ambient wake word filter + multi-turn conversation windows
-- **11 skills + 8 LLM tools** — time, weather, system info, filesystem, developer tools, reminders, news, web search (LLM tools) + file editor, desktop control, social introductions (skill-only)
+- **11 skills + 7 LLM tools** — weather, system info, filesystem, developer tools, reminders, news, web search (LLM tools) + file editor, desktop control, social introductions (skill-only). Time/date handled by TimeInfoSkill (instant response via semantic matching)
 - **Three frontends** — voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
 - **Privacy by design** — everything runs locally; Claude API is a last-resort quality fallback only
 
@@ -99,7 +99,7 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
                   │  1. Confirmations / dismissals        │
                   │  2. Memory / introductions            │
                   │  3. Task planner (compound detect)    │
-                  │  ★ P4-LLM: Tool calling (8 tools)    │
+                  │  ★ P4-LLM: Tool calling (7 tools)    │
                   │     semantic pruner → Qwen3.5 decides │
                   │  4. Skill routing (stateful skills)    │
                   │  5. LLM fallback (Qwen → Claude)     │
@@ -108,7 +108,7 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
               ┌──────────▼───┐   ┌──────▼──────────┐
               │  Skill       │   │  LLM Router     │
               │  Handler     │   │  Qwen → Claude  │
-              │  (3 skills)  │   │  + 8 LLM Tools  │
+              │  (3 skills)  │   │  + 7 LLM Tools  │
               └──────────┬───┘   └──────┬──────────┘
                          │              │
                   ┌──────▼──────────────▼────────┐
@@ -139,8 +139,8 @@ JARVIS has two extension mechanisms. The distinction matters:
 | **What they are** | Stateless query→response functions the LLM calls | Stateful modules with multi-turn flows, confirmations, or desktop control |
 | **Who decides** | Qwen3.5 selects which tool to call based on the user's query | Priority chain routes to the skill before the LLM sees the query |
 | **How to add one** | Create one `.py` file in `core/tools/` — auto-discovered | Create a skill directory with `skill.py` + `metadata.yaml` |
-| **Examples** | get_time, get_weather, find_files, developer_tools | app_launcher (desktop verbs), file_editor (doc gen + confirmation), social_introductions (multi-turn) |
-| **Count** | 8 tools (7 domain + web_search) | 3 skill-only + 7 with companion tools |
+| **Examples** | get_weather, find_files, developer_tools | app_launcher (desktop verbs), file_editor (doc gen + confirmation), social_introductions (multi-turn) |
+| **Count** | 7 tools (6 domain + web_search) | 3 skill-only + 7 with companion tools |
 
 Most functionality lives in **tools** now. Skills remain for things that need deterministic state machines, desktop integration, or nested LLM pipelines — things where "let the LLM decide" isn't reliable enough.
 
@@ -173,7 +173,6 @@ These are stateless query→response functions. The LLM receives the user's quer
 
 | Tool | Examples | What It Does |
 |------|---------|-------------|
-| **get_time** | "What time is it?" / "What day is it?" | Current time and date |
 | **get_weather** | "What's the weather?" / "Will it rain?" | OpenWeatherMap API — current conditions, forecast, rain check |
 | **get_system_info** | "What CPU do I have?" / "How much RAM?" | 8 sub-handlers: cpu, memory, disk, gpu, network, processes, uptime, all |
 | **find_files** | "Find my config file" / "Count lines in main.py" | File search, line counting, directory listing |
@@ -559,8 +558,7 @@ jarvis/
 │   ├── llm_router.py             # LLM routing (Qwen → quality gate → Claude fallback)
 │   ├── tool_registry.py          # Auto-discovery registry for tool definitions
 │   ├── tool_executor.py          # Tool dispatch (backward-compat shim)
-│   ├── tools/                    # One-file tool definitions (8 tools)
-│   │   ├── get_time.py           # Time and date queries
+│   ├── tools/                    # One-file tool definitions (7 tools)
 │   │   ├── get_weather.py        # Weather conditions + forecast
 │   │   ├── get_system_info.py    # CPU, memory, disk, GPU, processes
 │   │   ├── find_files.py         # File search, line counting
@@ -598,7 +596,7 @@ jarvis/
 │
 ├── skills/                       # Skill implementations (stateful skills + tool companions)
 │   ├── system/
-│   │   ├── time_info/            # Time and date (companion to get_time tool)
+│   │   ├── time_info/            # Time and date (semantic matching, instant response)
 │   │   ├── weather/              # Weather forecasts (companion to get_weather tool)
 │   │   ├── system_info/          # CPU, RAM, disk info (companion to get_system_info tool)
 │   │   ├── filesystem/           # File search, line counting (companion to find_files tool)
@@ -665,7 +663,7 @@ llm:
     context_size: 8192
     gpu_layers: 999          # Offload all layers to GPU (if available)
     temperature: 0.6
-    tool_calling: true       # Enable LLM tool calling (8 tools)
+    tool_calling: true       # Enable LLM tool calling (7 tools)
   api:
     provider: anthropic      # Fallback LLM
     model: claude-sonnet-4-20250514

@@ -43,7 +43,7 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Conversational Flow Engine** - Persona module (24 response pools, ~90 templates), ConversationState (turn tracking), ConversationRouter (shared priority chain)
 - **Text-to-Speech** - Kokoro 82M (primary, CPU, fable+george blend) + Piper ONNX fallback
 - **LLM Intelligence** - Qwen3.5-35B-A3B (Q3_K_M, MoE, 3B active params) via llama.cpp + Claude API fallback with quality gating
-- **LLM-Centric Tool Calling (Phase 1)** - 3 skills (time, system, filesystem) migrated to native Qwen3.5 tool calling. Semantic pruning selects tools; LLM decides. 100% accuracy (600/600 trials), ~822ms avg
+- **LLM-Centric Tool Calling (Phases 1-2)** - Skills migrated to native Qwen3.5 tool calling. 7 tools (6 domain + web_search). Semantic pruning selects tools; LLM decides. Time/date handled by TimeInfoSkill (instant response). 100% accuracy across 1,200+ trials
 - **Web Research** - Qwen3.5 native tool calling + DuckDuckGo + trafilatura, multi-source synthesis
 - **Event-Driven Pipeline** - Coordinator with STT/TTS workers, streaming LLM, contextual ack cache (10 tagged phrases)
 - **Gapless TTS Streaming** - StreamingAudioPipeline with single persistent aplay, background Kokoro generation

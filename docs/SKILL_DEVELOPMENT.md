@@ -99,59 +99,62 @@ def handler(args: dict) -> str:
     return f"Result: {param}"
 ```
 
-### Real Example: get_time.py
+### Real Example: get_news.py
 
-The simplest tool — a good starting point:
+A simple tool with a companion skill:
 
 ```python
-"""Tool definition: get_time — current local time and date."""
+"""Tool definition: get_news — read or count news headlines."""
 
-from datetime import datetime
-
-TOOL_NAME = "get_time"
-SKILL_NAME = "time_info"
+TOOL_NAME = "get_news"
+SKILL_NAME = "news"
 
 SCHEMA = {
     "type": "function",
     "function": {
-        "name": "get_time",
+        "name": "get_news",
         "description": (
-            "Get the current local time. Also handles date questions. "
-            "Call this for any question about what time it is, today's date, "
-            "the current day of the week, or the current year."
+            "Read or count current news headlines. Supports category "
+            "filtering (tech, cybersecurity, general, etc.) and priority "
+            "filtering (urgent, important). Call this when the user asks "
+            "about news, headlines, or what's happening in the world."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "include_date": {
-                    "type": "boolean",
-                    "description": "Set true ONLY when the user explicitly asks for the date."
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "count"],
+                    "description": "Whether to read headlines or just count them."
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Optional category filter."
                 }
             },
-            "required": []
+            "required": ["action"]
         }
     }
 }
 
 SYSTEM_PROMPT_RULE = (
-    "For ANY question about time, date, day, or year, call "
-    "get_time. NEVER answer time/date questions from the prompt."
+    "For ANY question about news or headlines, call get_news. "
+    "NEVER make up news from your own knowledge."
 )
 
+# Dependencies injected at runtime
+DEPENDENCIES = {"news_manager": "_news_manager"}
+_news_manager = None
 
 def handler(args: dict) -> str:
-    """Return current local time and optionally the date."""
-    now = datetime.now()
-    hour = now.hour % 12 or 12
-    minute = now.minute
-    period = "AM" if now.hour < 12 else "PM"
-    time_str = f"{hour}:{minute:02d} {period}"
-
-    if args.get("include_date", False):
-        day_name = now.strftime("%A")
-        month_name = now.strftime("%B")
-        return f"Current time: {time_str}. Date: {day_name}, {month_name} {now.day}, {now.year}."
-    return f"Current time: {time_str}."
+    """Read or count headlines via the news manager."""
+    if not _news_manager:
+        return "Error: news system not available"
+    action = args.get("action", "read")
+    category = args.get("category")
+    if action == "count":
+        return _news_manager.count_headlines(category=category)
+    return _news_manager.read_headlines(category=category)
 ```
 
 ### Required Attributes
@@ -217,7 +220,6 @@ python3 -u scripts/test_tool_calling.py --runs 1 --verbose > /tmp/test_output.tx
 core/tools/
 ├── __init__.py          # Package docstring
 ├── web_search.py        # Web search (ALWAYS_INCLUDED, handler=None)
-├── get_time.py          # Time and date queries
 ├── get_system_info.py   # CPU, memory, disk, hardware info
 ├── find_files.py        # File search, line counting, directory listing
 ├── get_weather.py       # Current weather, forecast, rain check
@@ -362,7 +364,7 @@ system/
 ├── file_editor/        # File ops + document generation (PPTX/DOCX/PDF), confirmation flows
 ├── filesystem/         # Find files, count lines — has companion tool for LLM queries
 ├── system_info/        # CPU, memory, system info — has companion tool for LLM queries
-├── time_info/          # Time and date — has companion tool for LLM queries
+├── time_info/          # Time and date — handled via semantic matching (instant response, no LLM tool call)
 ├── weather/            # Current weather, forecasts — has companion tool for LLM queries
 └── web_navigation/     # Web search & browsing (result selection, page nav, scroll pagination)
 
