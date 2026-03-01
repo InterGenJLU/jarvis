@@ -938,6 +938,17 @@ class LLMRouter:
 
         if memory_context:
             system_prompt += f"\n\n{memory_context}"
+
+            # Prescriptive rule: tell LLM to use user facts for web search queries
+            tool_names = {t.get("function", {}).get("name") for t in tools} if tools else set()
+            if "web_search" in tool_names:
+                system_prompt += (
+                    "\n\nIMPORTANT: When building web_search queries, USE the user's "
+                    "personal details (location, workplace, interests) from the context "
+                    "above to make searches more specific. Example: 'best coffee near me' "
+                    "+ user lives in Nashville → search 'best coffee Nashville'."
+                )
+
         messages = [{"role": "system", "content": system_prompt}]
 
         # Do NOT include conversation history for tool calling.

@@ -269,11 +269,14 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         memory_context=None, conversation_messages=None,
                         max_tokens=None, web_researcher=None,
                         use_tools_list=None, tool_temperature=None,
-                        tool_presence_penalty=None):
+                        tool_presence_penalty=None,
+                        memory_manager=None, raw_command=None):
     """Stream LLM response with typewriter output, web research, and quality gate.
 
     Returns the full accumulated response text, or empty string on failure.
     """
+    if raw_command is None:
+        raw_command = command
     chunker = SpeechChunker()
     full_response = ""
     first_chunk_checked = False
@@ -336,6 +339,9 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
         _MAX_TOOL_CHAIN = 3
         tool_chain_count = 0
         header_printed = False
+        first_tool_name = tool_call_request.name if tool_call_request else None
+        first_tool_args = tool_call_request.arguments.copy() if tool_call_request else {}
+        search_results_cache = None
 
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
@@ -344,6 +350,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 query = tool_call_request.arguments.get("query", command)
                 console.print(f"\n[dim]Searching: {query}[/dim]")
                 results = web_researcher.search(query)
+                search_results_cache = results
 
                 page_sections = web_researcher.fetch_pages_parallel(results)
                 page_content = ""
@@ -381,6 +388,25 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
 
         if header_printed:
             sys.stdout.write("\n")
+            # Persist interaction for cross-session awareness
+            if memory_manager and full_response:
+                if first_tool_name == "web_search":
+                    search_query = first_tool_args.get("query", raw_command)
+                    result_urls = [
+                        {"title": r.get("title", ""), "url": r.get("url", "")}
+                        for r in (search_results_cache or [])
+                    ]
+                    memory_manager.persist_interaction(
+                        "research", raw_command, full_response,
+                        detail=search_query,
+                        metadata={"result_urls": result_urls},
+                    )
+                elif first_tool_name:
+                    memory_manager.persist_interaction(
+                        "tool_call", raw_command, full_response,
+                        detail=first_tool_name,
+                        metadata={"tool_args": first_tool_args},
+                    )
             return full_response
 
         # --- Deflection safety net ---
@@ -787,6 +813,26 @@ def run_console(config, mode):
         from core.people_manager import get_people_manager
         people_manager = get_people_manager(config)
 
+    # Unified awareness assembler
+    awareness = None
+    try:
+        from core.awareness import AwarenessAssembler
+        # Get calendar manager from reminder_manager if available
+        cal_mgr = None
+        if reminder_manager and hasattr(reminder_manager, '_calendar_manager'):
+            cal_mgr = reminder_manager._calendar_manager
+        awareness = AwarenessAssembler(
+            memory_manager=memory_manager,
+            people_manager=people_manager,
+            self_awareness=self_awareness,
+            calendar_manager=cal_mgr,
+            news_manager=news_manager,
+            context_window=context_window,
+            config=config,
+        )
+    except Exception as e:
+        console.print(f"[dim]Awareness assembler init failed (non-fatal): {e}[/dim]")
+
     # Conversation state + shared router (Phase 2-3 of conversational flow refactor)
     conv_state = ConversationState()
     router = ConversationRouter(
@@ -803,6 +849,7 @@ def run_console(config, mode):
         self_awareness=self_awareness,
         task_planner=task_planner,
         people_manager=people_manager,
+        awareness=awareness,
     )
 
     # Command history (persists across sessions) + document buffer
@@ -982,6 +1029,8 @@ def run_console(config, mode):
                     use_tools_list=result.use_tools,
                     tool_temperature=result.tool_temperature,
                     tool_presence_penalty=result.tool_presence_penalty,
+                    memory_manager=memory_manager,
+                    raw_command=command,
                 )
                 if not response:
                     response = "I'm sorry, I'm having trouble processing that right now."

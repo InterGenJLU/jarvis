@@ -32,8 +32,8 @@
 **Phase sequence (from DEVELOPMENT_VISION.md):**
 1. ~~Phase 1: Low-stakes skills as tools (system_info, filesystem, time)~~ — **COMPLETE Feb 26.** 100% accuracy (600/600 trials), 822ms avg latency, 266/266 existing tests pass. Commit `06dd741`.
 2. ~~Phase 2: API-backed + complex skills as tools~~ — **COMPLETE Feb 27.** 7 tools total (6 domain + web_search). 1,200+ trials, 100% on domain categories, 99.6% overall (523/525). Tool-connector plugin system built (`ba80e5a`). Sub-phases: 2.1a weather (`1be0cb1`), 2.1b reminders (`49eca5c`), 2.2 conversation disabled (`aa2f524`), 2.3 developer_tools (`a6ae616`), 2.4 news (`578e3c9`). get_time removed post-Phase 2 (time/date handled by TimeInfoSkill via semantic matching).
-3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision) — **NEXT.** RX 7600 display offload (arrives Feb 28) enables VRAM headroom for mmproj.
-4. Phase 4: Routing layer evaluation (remove semantic matcher, keyword routing, priority layers)
+3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision) — **NEXT.** mmproj smoke-tested at server level, needs console/web input wiring.
+4. ~~Phase 4: Routing layer evaluation~~ — **RESOLVED Mar 1.** Hybrid architecture retained — skills and tools coexist by design.
 
 ---
 

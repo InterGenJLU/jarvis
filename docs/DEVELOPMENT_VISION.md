@@ -133,13 +133,13 @@ Vision is NOT a future dependency — it's available now. Qwen3.5's early-fusion
 - "Is anyone at the front door?" — LLM sees the camera frame directly
 - No separate vision pipeline needed — same mmproj handles all image tasks
 
-### Phase 4: Routing Layer Evaluation
+### Phase 4: Routing Layer Evaluation — RESOLVED (Mar 1, 2026)
 
-After Phase 3 is stable, evaluate:
-- Can the semantic matcher be removed entirely? (Currently only used for 3 non-migrated skills)
-- Can keyword routing be reduced to just the fast-paths?
-- Can stateful priorities (P1-P3.7) be simplified or LLM-driven?
-- What's the latency impact of routing everything through the LLM? (Phase 2 baseline: ~2.5s for tool-calling queries vs <1s for skill routing — acceptable for most use cases)
+**Decision: Hybrid architecture retained.** The evaluation concluded that:
+- The semantic matcher is still needed for 3 stateful skills (app_launcher, file_editor, social_introductions)
+- The priority chain fast-paths (P1-P3.7) are essential state machines that should NOT hit the LLM
+- The hybrid architecture — LLM tool-calling as primary path, skill routing for stateful skills, fast-paths for deterministic state machines — is the correct long-term design
+- There is nothing to remove. Skills and tools coexist by design.
 
 ---
 
@@ -363,10 +363,10 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 - **Tool-connector** (Feb 27): plugin system for one-file tool definitions
 
 ### Next Steps
-1. **RX 7600 display offload** (Feb 28) — frees ~1GB VRAM on primary GPU, eliminates compositor crash risk
-2. **Live testing** — verify tool-calling end-to-end via voice/console/web
-3. **Phase 3 (vision)** — activate mmproj (~900MB), add vision tools (screen reading, web nav, image understanding). Practical once display offload frees VRAM headroom
-4. **Phase 4 (routing evaluation)** — after Phase 3 is stable, assess what routing layers can be removed
+1. ~~**RX 7600 display offload** (Feb 28)~~ — **DONE.** Dual GPU active, ctx-size 32768, compositor on RX 7600
+2. ~~**Live testing**~~ — **DONE.** Tool-calling verified end-to-end via voice/console/web
+3. **Phase 3 (vision)** — activate mmproj (~900MB), add vision tools (screen reading, web nav, image understanding). mmproj smoke-tested at server level, needs console/web input wiring
+4. ~~**Phase 4 (routing evaluation)**~~ — **RESOLVED Mar 1.** Hybrid architecture retained — skills and tools coexist by design
 
 ### VRAM Budget With Display Offload
 - Tool schema budget: 7 tools consume ~700-1,400 tokens. Dynamic pruning keeps active set to 4-5 tools per query
@@ -375,4 +375,4 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 
 ---
 
-*Originally discussed February 18, 2026. Updated February 27, 2026 — Phases 1-2 COMPLETE, tool-connector plugin system live, RX 7600 ordered for display offload.*
+*Originally discussed February 18, 2026. Updated March 1, 2026 — Phases 1-2 COMPLETE, Phase 4 RESOLVED (hybrid retained), tool-connector plugin system live, dual GPU active.*

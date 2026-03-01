@@ -1,15 +1,34 @@
 # TODO — Next Session
 
-**Updated:** March 1, 2026 (session 110)
+**Updated:** March 1, 2026 (session 112)
 
 ---
 
-## Session 110 Completed
+## Session 112 Completed
 
-- Verified session 109 fixes: generated test PPTX, confirmed stat slide, comparison slide, no ghost placeholder
-- Committed 7 doc gen fixes across both repos + published
-- Analyzed 4 professional presentation templates for layout engine overhaul
-- Saved detailed plan: `memory/plan_presentation_engine.md`
+- **Audio fix (again)**: Same broken jack detect issue — came back after church
+  - Diagnosed: WirePlumber's `policy-device-profile.lua` checks `profile.available` on ALL code paths — no config-only override possible
+  - Created `~/.config/systemd/user/fix-audio-profile.service` (replaces old `audio-fix.service`) — forces profile 3s after WirePlumber starts, enabled
+  - Created `~/.config/wireplumber/main.lua.d/51-alsa-realtek-fix.lua` — priority boost for analog output node
+  - Created HDA firmware patch at `/tmp/hda-jack-retask.fw` — disables jack detection on pin 0x14 (line-out) and 0x1b (headphone)
+
+## IMMEDIATE: Run These Sudo Commands Before Reboot
+
+The kernel-level jack detect fix is staged but needs sudo:
+
+```bash
+sudo cp /tmp/hda-jack-retask.fw /lib/firmware/hda-jack-retask.fw
+echo 'options snd-hda-intel patch=,,hda-jack-retask.fw' | sudo tee -a /etc/modprobe.d/alsa-base.conf
+sudo update-initramfs -u
+```
+
+After reboot, verify:
+1. `pactl list cards | grep -A 5 "Active Profile"` — Realtek should show `output:analog-stereo+input:analog-stereo`
+2. `pactl list sinks short` — analog sink should exist
+3. `pactl get-default-sink` — should be `alsa_output.pci-0000_10_00.4.analog-stereo`
+4. Play a test sound: `paplay /usr/share/sounds/freedesktop/stereo/bell.oga`
+
+If the kernel patch works, the `fix-audio-profile.service` becomes a safety net only. If it doesn't work (unlikely), the service alone will keep audio working.
 
 ---
 

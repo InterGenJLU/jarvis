@@ -6,7 +6,7 @@ audio:
   mic_device: USB PnP Audio Device
   sample_rate: 16000
   channels: 1
-  output_device: default
+  output_device: plughw:2,0
   use_rnnoise: false
   device_monitor_interval: 5.0      # Seconds between hot-plug checks
   startup_retry_count: 5             # Max mic retries at boot
@@ -113,6 +113,19 @@ context_window:
   summarize_closed_segments: true
   db_path: /mnt/storage/jarvis/data/memory.db
   segment_retention_days: 7
+
+# Awareness layer (unified context assembly + proactive surfacing)
+awareness:
+  proactive_token_budget: 400       # base AWARENESS section budget (tokens)
+  expanded_token_budget: 600        # expanded budget when context window has headroom
+  base_max_items: 3                 # max proactive items (base)
+  expanded_max_items: 5             # max proactive items (expanded)
+  context_headroom_threshold: 20000 # switch to expanded mode below this token count
+  fact_threshold: 0.45              # min cosine similarity for memory facts
+  interaction_threshold: 0.50       # min cosine similarity for interaction history
+  calendar_horizon_hours: 4         # how far ahead to look for calendar events
+  news_threshold: 0.55              # min cosine similarity for news topics
+  interaction_retention_days: 30    # how long to keep interaction log entries
 
 # People manager (social introductions + pronunciation)
 people:

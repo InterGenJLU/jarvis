@@ -114,6 +114,7 @@ class MemoryManager:
 
         self._init_db()
         self._init_faiss()
+        self.cleanup_old_interactions()
         self.logger.info(
             f"MemoryManager initialized (Phase 6 complete: facts + FAISS + recall + batch + proactive + forget/transparency "
             f"[{self.faiss_index.ntotal if self.faiss_index else 0} vectors, "
@@ -160,6 +161,34 @@ class MemoryManager:
                         value TEXT NOT NULL
                     )
                 """)
+
+                # Interaction log — persist significant interactions for
+                # cross-session awareness (research, tool calls, doc gen, skills)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS interaction_log (
+                        interaction_id  TEXT PRIMARY KEY,
+                        user_id         TEXT NOT NULL DEFAULT 'user',
+                        type            TEXT NOT NULL,
+                        query           TEXT NOT NULL,
+                        detail          TEXT,
+                        answer_summary  TEXT NOT NULL,
+                        metadata_json   TEXT,
+                        created_at      REAL NOT NULL,
+                        embedding       BLOB
+                    )
+                """)
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_interaction_user "
+                    "ON interaction_log(user_id)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_interaction_time "
+                    "ON interaction_log(created_at DESC)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_interaction_type "
+                    "ON interaction_log(type)"
+                )
 
                 conn.commit()
             finally:
@@ -1125,6 +1154,168 @@ class MemoryManager:
         if self._surfaced_this_window:
             self.logger.debug(f"Surfacing window reset ({len(self._surfaced_this_window)} facts cleared)")
         self._surfaced_this_window.clear()
+
+    # ------------------------------------------------------------------
+    # Interaction log — cross-session awareness persistence
+    # ------------------------------------------------------------------
+
+    def persist_interaction(self, interaction_type: str, query: str,
+                            answer: str, *, detail: str = None,
+                            metadata: dict = None,
+                            user_id: str = "primary_user"):
+        """Persist a significant interaction for cross-session recall.
+
+        Types: 'research', 'tool_call', 'document', 'skill'
+        """
+        import json
+        import uuid
+        import numpy as np
+
+        interaction_id = uuid.uuid4().hex[:16]
+        answer_summary = answer[:500] if answer else ""
+
+        # Pre-compute embedding for fast semantic recall
+        embedding_blob = None
+        if self.embedding_model:
+            try:
+                emb = self.embedding_model.encode(
+                    query, normalize_embeddings=True, show_progress_bar=False
+                )
+                embedding_blob = np.array(emb, dtype=np.float32).tobytes()
+            except Exception as e:
+                self.logger.warning(f"Interaction embedding failed (non-fatal): {e}")
+
+        metadata_json = json.dumps(metadata) if metadata else None
+
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                conn.execute(
+                    """INSERT INTO interaction_log
+                       (interaction_id, user_id, type, query, detail,
+                        answer_summary, metadata_json, created_at, embedding)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (interaction_id, user_id, interaction_type, query, detail,
+                     answer_summary, metadata_json, time.time(), embedding_blob)
+                )
+                conn.commit()
+                self.logger.debug(
+                    f"Persisted {interaction_type} interaction: "
+                    f"'{query[:50]}'"
+                )
+            except Exception as e:
+                self.logger.warning(f"Failed to persist interaction: {e}")
+            finally:
+                conn.close()
+
+    def recall_interactions(self, query: str, *, types: list = None,
+                            top_k: int = 3, days: int = 30,
+                            user_id: str = "primary_user") -> list[dict]:
+        """Find past interactions relevant to current query via semantic search.
+
+        Returns list of {interaction_id, type, query, detail, answer_summary,
+        metadata_json, created_at, score}.
+        """
+        import json
+        import numpy as np
+
+        cutoff = time.time() - (days * 86400)
+
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                if types:
+                    placeholders = ",".join("?" for _ in types)
+                    rows = conn.execute(
+                        f"""SELECT * FROM interaction_log
+                            WHERE user_id = ? AND created_at > ?
+                              AND type IN ({placeholders})
+                            ORDER BY created_at DESC LIMIT 100""",
+                        (user_id, cutoff, *types)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """SELECT * FROM interaction_log
+                           WHERE user_id = ? AND created_at > ?
+                           ORDER BY created_at DESC LIMIT 100""",
+                        (user_id, cutoff)
+                    ).fetchall()
+            finally:
+                conn.close()
+
+        if not rows or not self.embedding_model:
+            return [dict(r) for r in rows[:top_k]] if rows else []
+
+        try:
+            query_emb = self.embedding_model.encode(
+                query, normalize_embeddings=True, show_progress_bar=False
+            )
+
+            scored = []
+            for row in rows:
+                row_dict = dict(row)
+                emb_blob = row_dict.get("embedding")
+                if emb_blob:
+                    stored_emb = np.frombuffer(emb_blob, dtype=np.float32)
+                    score = float(np.dot(query_emb, stored_emb))
+                else:
+                    score = 0.0
+                row_dict["score"] = score
+                scored.append(row_dict)
+
+            scored.sort(key=lambda x: x["score"], reverse=True)
+            return scored[:top_k]
+        except Exception as e:
+            self.logger.warning(f"Interaction recall search failed: {e}")
+            return [dict(r) for r in rows[:top_k]]
+
+    def get_recent_interactions(self, *, types: list = None, limit: int = 10,
+                                days: int = 7,
+                                user_id: str = "primary_user") -> list[dict]:
+        """Get recent interactions chronologically (for rundowns/recall)."""
+        cutoff = time.time() - (days * 86400)
+
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                if types:
+                    placeholders = ",".join("?" for _ in types)
+                    rows = conn.execute(
+                        f"""SELECT * FROM interaction_log
+                            WHERE user_id = ? AND created_at > ?
+                              AND type IN ({placeholders})
+                            ORDER BY created_at DESC LIMIT ?""",
+                        (user_id, cutoff, *types, limit)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """SELECT * FROM interaction_log
+                           WHERE user_id = ? AND created_at > ?
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (user_id, cutoff, limit)
+                    ).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    def cleanup_old_interactions(self, retention_days: int = 30):
+        """Remove interactions older than retention period."""
+        cutoff = time.time() - (retention_days * 86400)
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                result = conn.execute(
+                    "DELETE FROM interaction_log WHERE created_at < ?",
+                    (cutoff,)
+                )
+                if result.rowcount:
+                    conn.commit()
+                    self.logger.info(
+                        f"Cleaned up {result.rowcount} interactions "
+                        f"older than {retention_days} days"
+                    )
+            finally:
+                conn.close()
 
     def _search_facts_semantic(self, query: str, user_id: str, top_k: int = 3) -> list[dict]:
         """Embed query and compare against stored fact content embeddings."""

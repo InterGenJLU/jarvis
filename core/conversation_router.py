@@ -109,7 +109,8 @@ class ConversationRouter:
                  web_researcher=None,
                  self_awareness=None,
                  task_planner=None,
-                 people_manager=None):
+                 people_manager=None,
+                 awareness=None):
         self.skill_manager = skill_manager
         self.conversation = conversation
         self.llm = llm
@@ -123,6 +124,7 @@ class ConversationRouter:
         self.self_awareness = self_awareness
         self.task_planner = task_planner
         self.people_manager = people_manager
+        self.awareness = awareness
 
     def route(self, command: str, *,
               in_conversation: bool = False,
@@ -1092,40 +1094,34 @@ class ConversationRouter:
         if self.context_window and self.context_window.enabled:
             context_messages = self.context_window.assemble_context(command)
 
-        # Proactive memory surfacing
+        # Unified awareness context assembly
+        user_id = getattr(self.conversation, 'current_user', None) or "primary_user"
         memory_context = None
-        if self.memory_manager:
-            memory_context = self.memory_manager.get_proactive_context(
-                command,
-                user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
-            )
 
-        # Full user knowledge (passive background — ALL stored facts)
-        if self.memory_manager:
-            user_ctx = self.memory_manager.get_full_user_context(
-                user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
-            )
-            if user_ctx:
-                memory_context = f"{memory_context}\n\n{user_ctx}" if memory_context else user_ctx
+        if self.awareness:
+            # New unified path: single assembler replaces 5 scattered blocks
+            memory_context = self.awareness.assemble(command, user_id=user_id)
+        else:
+            # Legacy fallback (when awareness assembler not wired)
+            if self.memory_manager:
+                memory_context = self.memory_manager.get_proactive_context(
+                    command, user_id=user_id)
+            if self.memory_manager:
+                user_ctx = self.memory_manager.get_full_user_context(user_id=user_id)
+                if user_ctx:
+                    memory_context = f"{memory_context}\n\n{user_ctx}" if memory_context else user_ctx
+            if self.people_manager:
+                people_ctx = self.people_manager.get_people_context(command, user_id=user_id)
+                if people_ctx:
+                    memory_context = f"{people_ctx}\n\n{memory_context}" if memory_context else people_ctx
+            if self.self_awareness:
+                manifest = self.self_awareness.get_capability_manifest()
+                compact = self.self_awareness.get_compact_state()
+                awareness_block = "\n".join(filter(None, [manifest, compact]))
+                if awareness_block:
+                    memory_context = f"{awareness_block}\n\n{memory_context}" if memory_context else awareness_block
 
-        # People context injection (known contacts mentioned in utterance)
-        if self.people_manager:
-            people_ctx = self.people_manager.get_people_context(
-                command,
-                user_id=getattr(self.conversation, 'current_user', None) or "primary_user",
-            )
-            if people_ctx:
-                memory_context = f"{people_ctx}\n\n{memory_context}" if memory_context else people_ctx
-
-        # Self-awareness: inject capability manifest + compact state
-        if self.self_awareness:
-            manifest = self.self_awareness.get_capability_manifest()
-            compact = self.self_awareness.get_compact_state()
-            awareness_block = "\n".join(filter(None, [manifest, compact]))
-            if awareness_block:
-                memory_context = f"{awareness_block}\n\n{memory_context}" if memory_context else awareness_block
-
-        # Document-aware LLM hint
+        # Document-aware LLM hint (request-specific, not awareness)
         if doc_buffer and doc_buffer.active:
             doc_hint = ("The user has loaded a document into the context buffer. "
                         "Refer to the <document> tags in their message. "

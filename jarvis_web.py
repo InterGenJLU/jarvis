@@ -209,6 +209,26 @@ def init_components(config, tts_proxy):
     # Centralized conversation state (Phase 2 of conversational flow refactor)
     components['conv_state'] = ConversationState()
 
+    # Unified awareness assembler
+    components['awareness'] = None
+    try:
+        from core.awareness import AwarenessAssembler
+        cal_mgr = None
+        rm = components.get('reminder_manager')
+        if rm and hasattr(rm, '_calendar_manager'):
+            cal_mgr = rm._calendar_manager
+        components['awareness'] = AwarenessAssembler(
+            memory_manager=components['memory_manager'],
+            people_manager=None,  # Web frontend doesn't have people_manager
+            self_awareness=components['self_awareness'],
+            calendar_manager=cal_mgr,
+            news_manager=components['news_manager'],
+            context_window=components['context_window'],
+            config=config,
+        )
+    except Exception as e:
+        logger.warning(f"Awareness assembler init failed (non-fatal): {e}")
+
     # Shared command router (Phase 3 of conversational flow refactor)
     components['router'] = ConversationRouter(
         skill_manager=components['skill_manager'],
@@ -223,6 +243,7 @@ def init_components(config, tts_proxy):
         web_researcher=components['web_researcher'],
         self_awareness=components['self_awareness'],
         task_planner=components['task_planner'],
+        awareness=components['awareness'],
     )
 
     return components
@@ -339,6 +360,8 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 use_tools_list=result.use_tools,
                 tool_temperature=result.tool_temperature,
                 tool_presence_penalty=result.tool_presence_penalty,
+                memory_manager=components.get('memory_manager'),
+                raw_command=command,
             )
         else:
             response = await _llm_fallback(
@@ -406,13 +429,16 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           memory_context=None, conversation_messages=None,
                           max_tokens=None, use_tools_list=None,
                           tool_temperature=None,
-                          tool_presence_penalty=None) -> tuple:
+                          tool_presence_penalty=None,
+                          memory_manager=None, raw_command=None) -> tuple:
     """Stream LLM response over WebSocket with quality gate and tool calling.
 
     Returns (response_text, streamed_bool).
     When streamed_bool is True, stream_start/stream_end were sent over ws.
     When False, caller should send a normal 'response' message.
     """
+    if raw_command is None:
+        raw_command = command
     _enable_tools = llm.tool_calling and (web_researcher or use_tools_list)
     queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
@@ -600,6 +626,25 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             'type': 'stream_end',
             'full_response': cleaned,
         })
+
+        # Persist interaction for cross-session awareness
+        if memory_manager and cleaned and tool_chain_count > 0:
+            # Check if web_search was involved (results variable from loop)
+            try:
+                if results is not None:
+                    search_query = query if 'query' in dir() else raw_command
+                    result_urls = [
+                        {"title": r.get("title", ""), "url": r.get("url", "")}
+                        for r in (results or [])
+                    ]
+                    memory_manager.persist_interaction(
+                        "research", raw_command, cleaned,
+                        detail=search_query,
+                        metadata={"result_urls": result_urls},
+                    )
+            except NameError:
+                pass  # No web search results — non-research tool call
+
         return (cleaned, True)
 
     # --- Handle short response (no sentence boundary hit) ---

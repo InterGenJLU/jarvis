@@ -449,6 +449,67 @@ class GoogleCalendarManager:
             self.logger.error(f"Failed to get primary calendar events for week: {e}")
             return []
 
+    def get_upcoming_context(self, hours: int = 4) -> List[Dict]:
+        """Get upcoming events for awareness injection.
+
+        Returns lightweight event data for the next N hours.
+        Cached for 5 minutes to avoid API spam.
+        """
+        if not self._authenticated or not self._include_primary:
+            return []
+
+        # Simple TTL cache
+        now = time.time()
+        cache_key = "_upcoming_context_cache"
+        cache_ts_key = "_upcoming_context_ts"
+        cached = getattr(self, cache_key, None)
+        cached_ts = getattr(self, cache_ts_key, 0)
+        if cached is not None and (now - cached_ts) < 300:  # 5-minute TTL
+            return cached
+
+        self._ensure_valid()
+
+        try:
+            now_dt = datetime.now()
+            end_dt = now_dt + timedelta(hours=hours)
+
+            tz = self._tz_offset()
+            events_result = self.service.events().list(
+                calendarId="primary",
+                timeMin=now_dt.strftime("%Y-%m-%dT%H:%M:%S") + tz,
+                timeMax=end_dt.strftime("%Y-%m-%dT%H:%M:%S") + tz,
+                singleEvents=True,
+                orderBy="startTime",
+                maxResults=10,
+            ).execute()
+
+            results = []
+            for event in events_result.get("items", []):
+                parsed = self._parse_google_event(event)
+                if parsed:
+                    delta = parsed["start_time"] - now_dt
+                    minutes_until = max(0, int(delta.total_seconds() / 60))
+                    # Extract attendees if available
+                    attendees = [
+                        a.get("displayName") or a.get("email", "")
+                        for a in event.get("attendees", [])
+                        if not a.get("self")
+                    ]
+                    results.append({
+                        "title": parsed["title"],
+                        "start_time": parsed["start_time"],
+                        "minutes_until": minutes_until,
+                        "attendees": attendees,
+                    })
+
+            setattr(self, cache_key, results)
+            setattr(self, cache_ts_key, now)
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Failed to get upcoming calendar context: {e}")
+            return []
+
     def _parse_google_event(self, event: Dict) -> Optional[Dict]:
         """Parse a Google Calendar event into a JARVIS-friendly dict."""
         summary = event.get("summary", "")

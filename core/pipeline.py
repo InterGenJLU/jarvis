@@ -543,6 +543,22 @@ class Coordinator:
             from core.people_manager import get_people_manager
             self.people_manager = get_people_manager(config)
 
+        # Unified awareness assembler
+        self.awareness = None
+        try:
+            from core.awareness import AwarenessAssembler
+            self.awareness = AwarenessAssembler(
+                memory_manager=memory_manager,
+                people_manager=self.people_manager,
+                self_awareness=self.self_awareness,
+                calendar_manager=self.calendar_manager,
+                news_manager=news_manager,
+                context_window=context_window,
+                config=config,
+            )
+        except Exception as e:
+            self.logger.warning(f"Awareness assembler init failed (non-fatal): {e}")
+
         # Shared command router (Phase 3 of conversational flow refactor)
         self.router = ConversationRouter(
             skill_manager=skill_manager,
@@ -558,6 +574,7 @@ class Coordinator:
             self_awareness=self.self_awareness,
             task_planner=self.task_planner,
             people_manager=self.people_manager,
+            awareness=self.awareness,
         )
 
         # Wire timeout cleanup so silence-expired windows get same cleanup as dismissals
@@ -1244,6 +1261,27 @@ class Coordinator:
                 exchange={"query": raw_command, "answer": full_response},
             )
 
+            # Persist interaction for cross-session awareness
+            if hasattr(self, 'memory_manager') and self.memory_manager:
+                tool_name = tool_call_request.name
+                if tool_name == "web_search":
+                    search_query = tool_call_request.arguments.get("query", raw_command)
+                    result_urls = [
+                        {"title": r.get("title", ""), "url": r.get("url", "")}
+                        for r in (self.conv_state.research_results or [])
+                    ]
+                    self.memory_manager.persist_interaction(
+                        "research", raw_command, full_response,
+                        detail=search_query,
+                        metadata={"result_urls": result_urls},
+                    )
+                else:
+                    self.memory_manager.persist_interaction(
+                        "tool_call", raw_command, full_response,
+                        detail=tool_name,
+                        metadata={"tool_args": tool_call_request.arguments},
+                    )
+
         return full_response
 
     def _process_speech_chunk(self, chunk, command, history, memory_context,
@@ -1428,6 +1466,8 @@ class Coordinator:
         self.listener.close_conversation_window()
         if self.memory_manager:
             self.memory_manager.reset_surfacing_window()
+        if self.awareness:
+            self.awareness.reset_window()
         if self.context_window:
             self.context_window.reset()
         # Reset centralized conversation state (clears research cache,
@@ -1446,6 +1486,8 @@ class Coordinator:
         self.logger.info("Timeout cleanup: resetting state, context, caches")
         if self.memory_manager:
             self.memory_manager.reset_surfacing_window()
+        if self.awareness:
+            self.awareness.reset_window()
         if self.context_window:
             self.context_window.reset()
         self.conv_state.close_window()

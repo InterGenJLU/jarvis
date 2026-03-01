@@ -878,6 +878,7 @@ def run_self_awareness_test(case):
         router.people_manager = None
         router.self_awareness = None
         router.context_window = None
+        router.awareness = None
         result = router._prepare_llm_context("set a reminder", in_conversation=True)
         cmd = result.llm_command
         if "<prior_context>" not in cmd:
