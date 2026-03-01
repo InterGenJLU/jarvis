@@ -1,6 +1,6 @@
 # TODO — Next Session
 
-**Updated:** February 26, 2026
+**Updated:** February 28, 2026
 
 ---
 
@@ -83,12 +83,12 @@
 **Concept:** Playlist learning, volume via PulseAudio. Apple Music web interface is finicky.
 **Design:** `.archive/docs/MASTER_DESIGN.md` has playlist DB schema.
 
-### 11. LLM-Centric Architecture Migration — Phase 1 COMPLETE
-**Priority:** TOP (active migration)
+### 11. LLM-Centric Architecture Migration — Phase 2 COMPLETE
+**Priority:** COMPLETE
 **Design:** `docs/DEVELOPMENT_VISION.md`
 **Concept:** Skills become tools, not destinations. Incremental migration.
-**Phase 1 (Feb 26):** 3 skills migrated (time_info, system_info, filesystem). 100% accuracy (600/600 trials), 822ms avg latency. Commit `06dd741`.
-**Next:** Phase 2 — migrate weather, reminders, developer_tools. Assess 5-6 tool cliff risk.
+**Phase 1 (Feb 26):** 3 skills migrated (time_info, system_info, filesystem). 100% accuracy (600/600 trials).
+**Phase 2 (Feb 27):** 4 more tools (weather, reminders, devtools, news). 7 tools total (6 domain + web_search). get_time removed Feb 28 — time/date handled by TimeInfoSkill (instant, no LLM round trip).
 
 ### 12. Docker Container (Web UI Mode)
 **Priority:** MEDIUM
@@ -142,7 +142,7 @@ None!
 
 ## Pending Live Tests
 
-- **LLM-centric tool calling (Phase 1)** — restart JARVIS, test "what time is it?", "how much RAM do I have?", "find my config files" via voice/console/web. Verify tool-calling path fires instead of legacy skill routing
+- **Tool calling (7 tools)** — run test suite to validate get_time removal, time queries should pass as no-tool
 - **Social introductions** — restart JARVIS, test "Meet my niece Arya" end-to-end via voice, verify TTS pronunciation overrides
 - **Task planner compound requests** — verify predictive timing announcement, LLM step evaluation, pause/resume ("wait" → "continue") end-to-end via voice
 - **Batch extraction (Phase 4)** — needs 25+ messages in one session to trigger
@@ -158,12 +158,14 @@ None!
 
 ---
 
-## Completed (Feb 10-25)
+## Completed (Feb 10-28)
 
 *Brief summary. Full details in git history and `docs/PRIORITY_ROADMAP.md`.*
 
 | Feature | Date |
 |---------|------|
+| RX 7600 display offload, GPU pinning, SSD model migration, get_time removal | Feb 28 |
+| Tool-connector plugin system (8→7 tools, 1200+ trials, 100% accuracy) | Feb 27 |
 | WebUI health check spoken/on-screen mismatch fix | Feb 23 |
 | jarvis-web.service — systemd service for web UI auto-start | Feb 23 |
 | Preferred-mic hot-swap recovery — device monitor recovers from wrong-mic fallback | Feb 23 |
