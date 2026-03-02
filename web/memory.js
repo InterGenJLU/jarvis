@@ -53,55 +53,77 @@ async function apiFetch(url) {
 }
 
 // ---------------------------------------------------------------------------
-// Charts — legend font 15px for 4K readability
+// Color constants
 // ---------------------------------------------------------------------------
+const USER_DISPLAY = { christopher: 'Chris', erica: 'Erica' };
 const LEGEND_OPTS = { color: '#94a3b8', font: { size: 15 } };
 
-const TYPE_COLORS = {
-    research: '#38bdf8', tool_call: '#34d399', document: '#a78bfa', skill: '#fbbf24', other: '#64748b',
+// Per-category color pairs: [chris_color, erica_color]
+const CAT_COLORS = {
+    general:      ['#34d399', '#047857'],
+    preference:   ['#38bdf8', '#0284c7'],
+    relationship: ['#a78bfa', '#7c3aed'],
+    work:         ['#fbbf24', '#d97706'],
+    location:     ['#fb923c', '#ea580c'],
+    health:       ['#f87171', '#b91c1c'],
+    habit:        ['#818cf8', '#4f46e5'],
 };
-const CAT_PALETTE = ['#38bdf8','#34d399','#a78bfa','#fbbf24','#f87171','#fb923c','#e879f9','#818cf8'];
+const CAT_FALLBACK = ['#64748b', '#334155'];
+
+// Per-type colors: { christopher: hex, erica: hex }
+const TYPE_COLORS_USER = {
+    research:  { christopher: '#38bdf8', erica: '#0284c7' },
+    tool_call: { christopher: '#34d399', erica: '#047857' },
+    document:  { christopher: '#a78bfa', erica: '#7c3aed' },
+    skill:     { christopher: '#fbbf24', erica: '#d97706' },
+    other:     { christopher: '#64748b', erica: '#334155' },
+};
 
 function destroyChart(id) {
     if (state.charts[id]) { state.charts[id].destroy(); delete state.charts[id]; }
 }
 
-function renderFactsCategoryChart(byCat) {
+// ---------------------------------------------------------------------------
+// Chart 1: Facts by Category — slices per category·user
+// ---------------------------------------------------------------------------
+function renderFactsCategoryChart(items) {
     destroyChart('facts-cat');
-    const labels = Object.keys(byCat);
-    if (!labels.length) return;
+    if (!items || !items.length) return;
+    const labels = items.map(i => `${i.category} · ${USER_DISPLAY[i.user_id] || i.user_id}`);
+    const colors = items.map(i => {
+        const pair = CAT_COLORS[i.category] || CAT_FALLBACK;
+        return i.user_id === 'christopher' ? pair[0] : pair[1];
+    });
     const ctx = document.getElementById('chart-facts-cat').getContext('2d');
     state.charts['facts-cat'] = new Chart(ctx, {
         type: 'doughnut',
-        data: {
-            labels,
-            datasets: [{ data: Object.values(byCat), backgroundColor: CAT_PALETTE.slice(0, labels.length), borderWidth: 0 }]
-        },
-        options: {
-            responsive: true,
-            plugins: { legend: { position: 'right', labels: LEGEND_OPTS } }
-        }
+        data: { labels, datasets: [{ data: items.map(i => i.count), backgroundColor: colors, borderWidth: 0 }] },
+        options: { responsive: true, plugins: { legend: { position: 'right', labels: LEGEND_OPTS } } }
     });
 }
 
-function renderInteractionTypesChart(byType) {
+// ---------------------------------------------------------------------------
+// Chart 4: Interactions by Type (7d) — slices per type·user
+// ---------------------------------------------------------------------------
+function renderInteractionTypesChart(items) {
     destroyChart('itype');
-    const labels = Object.keys(byType);
-    if (!labels.length) return;
+    if (!items || !items.length) return;
+    const labels = items.map(i => `${i.type} · ${USER_DISPLAY[i.user_id] || i.user_id}`);
+    const colors = items.map(i => {
+        const tc = TYPE_COLORS_USER[i.type] || TYPE_COLORS_USER.other;
+        return i.user_id === 'christopher' ? tc.christopher : tc.erica;
+    });
     const ctx = document.getElementById('chart-interaction-types').getContext('2d');
     state.charts['itype'] = new Chart(ctx, {
         type: 'doughnut',
-        data: {
-            labels,
-            datasets: [{ data: Object.values(byType), backgroundColor: labels.map(l => TYPE_COLORS[l] || TYPE_COLORS.other), borderWidth: 0 }]
-        },
-        options: {
-            responsive: true,
-            plugins: { legend: { position: 'right', labels: LEGEND_OPTS } }
-        }
+        data: { labels, datasets: [{ data: items.map(i => i.count), backgroundColor: colors, borderWidth: 0 }] },
+        options: { responsive: true, plugins: { legend: { position: 'right', labels: LEGEND_OPTS } } }
     });
 }
 
+// ---------------------------------------------------------------------------
+// Chart 3: Context Budget gauge (session-level, shared — not per-user)
+// ---------------------------------------------------------------------------
 function renderContextGauge(usagePct) {
     destroyChart('ctx-gauge');
     const used = Math.min(usagePct, 100);
@@ -128,21 +150,47 @@ function renderContextGauge(usagePct) {
     });
 }
 
-function renderTimeseriesChart(series) {
+// ---------------------------------------------------------------------------
+// Chart 2: Interactions Over Time (30d) — one line per type·user
+// Chris = solid, Erica = dashed
+// ---------------------------------------------------------------------------
+function renderTimeseriesChart(seriesByUser) {
     destroyChart('itime');
-    if (!series.length) return;
-    const ctx = document.getElementById('chart-interactions-time').getContext('2d');
+    const users = Object.keys(seriesByUser || {});
+    if (!users.length) return;
+
+    const allDates = [...new Set(users.flatMap(u => seriesByUser[u].map(d => d.date)))].sort();
     const types = ['research', 'tool_call', 'document', 'skill'];
-    const datasets = types.map(t => ({
-        label: t,
-        data: series.map(d => d[t] || 0),
-        borderColor: TYPE_COLORS[t],
-        backgroundColor: TYPE_COLORS[t] + '33',
-        fill: true, tension: 0.3, borderWidth: 2, pointRadius: 2,
-    }));
+    const datasets = [];
+
+    for (const user of users) {
+        const dateMap = Object.fromEntries(seriesByUser[user].map(d => [d.date, d]));
+        const shortName = USER_DISPLAY[user] || user;
+        const isDashed = user !== 'christopher';
+
+        for (const type of types) {
+            const typeData = allDates.map(d => dateMap[d]?.[type] || 0);
+            if (typeData.every(v => v === 0)) continue;
+            const tc = TYPE_COLORS_USER[type] || TYPE_COLORS_USER.other;
+            const color = isDashed ? tc.erica : tc.christopher;
+            datasets.push({
+                label: `${type} · ${shortName}`,
+                data: typeData,
+                borderColor: color,
+                backgroundColor: color + '22',
+                borderDash: isDashed ? [5, 3] : [],
+                fill: true,
+                tension: 0.3,
+                borderWidth: isDashed ? 1.5 : 2,
+                pointRadius: 2,
+            });
+        }
+    }
+
+    const ctx = document.getElementById('chart-interactions-time').getContext('2d');
     state.charts['itime'] = new Chart(ctx, {
         type: 'line',
-        data: { labels: series.map(d => d.date), datasets },
+        data: { labels: allDates, datasets },
         options: {
             responsive: true,
             scales: {
@@ -155,13 +203,42 @@ function renderTimeseriesChart(series) {
 }
 
 // ---------------------------------------------------------------------------
+// Sparkline — tiny timeline chart embedded in health cards
+// ---------------------------------------------------------------------------
+function renderSparkline(canvasId, timeline) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || !timeline || timeline.length < 2) return;
+    destroyChart(canvasId);
+    const ctx = canvas.getContext('2d');
+    state.charts[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: timeline.map(t => t.date),
+            datasets: [{
+                data: timeline.map(t => t.count),
+                borderColor: '#38bdf8',
+                backgroundColor: '#38bdf815',
+                borderWidth: 1.5,
+                fill: true,
+                tension: 0.4,
+                pointRadius: 0,
+            }]
+        },
+        options: {
+            responsive: false,
+            animation: false,
+            scales: { x: { display: false }, y: { display: false, beginAtZero: true } },
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Summary cards
 // ---------------------------------------------------------------------------
 async function loadSummary() {
     try {
-        // No user_id param — backend aggregates all users
         const data = await apiFetch('/api/memory/summary');
-
         const facts = data.facts || {};
         const ilog = data.interactions || {};
         const faiss = data.faiss || {};
@@ -173,8 +250,8 @@ async function loadSummary() {
         document.getElementById('val-context').textContent = fmtPct(ctx.usage_pct);
         document.getElementById('val-ctx-tokens').textContent = (ctx.estimated_tokens ?? '--').toLocaleString();
 
-        renderFactsCategoryChart(facts.by_category || {});
-        renderInteractionTypesChart(ilog.by_type || {});
+        renderFactsCategoryChart(facts.by_category_user || []);
+        renderInteractionTypesChart(ilog.by_type_user || []);
         renderContextGauge(ctx.usage_pct || 0);
     } catch (e) {
         console.error('Summary load failed:', e);
@@ -184,14 +261,14 @@ async function loadSummary() {
 async function loadTimeseries() {
     try {
         const data = await apiFetch('/api/memory/timeseries?days=30');
-        renderTimeseriesChart(data.series || []);
+        renderTimeseriesChart(data.series_by_user || {});
     } catch (e) {
         console.error('Timeseries load failed:', e);
     }
 }
 
 // ---------------------------------------------------------------------------
-// DB Health — card grid render
+// DB Health — card grid with sparklines
 // ---------------------------------------------------------------------------
 async function loadDbHealth() {
     try {
@@ -201,23 +278,105 @@ async function loadDbHealth() {
 
         const grid = document.getElementById('health-grid');
         grid.innerHTML = '';
-        for (const s of stores) {
+
+        stores.forEach((s, i) => {
+            const canvasId = `sparkline-${i}`;
             const records = Object.entries(s.row_counts || {})
                 .map(([k, v]) => `<span class="rec-label">${k}:</span> <strong>${v?.toLocaleString() ?? '—'}</strong>`)
                 .join('<br>');
+            const hasTimeline = s.timeline && s.timeline.length > 1;
             grid.insertAdjacentHTML('beforeend', `
                 <div class="health-card">
                     <div class="health-card-name">${escHtml(s.name)}</div>
                     <div class="health-card-records">${records || '—'}</div>
+                    ${hasTimeline ? `<canvas id="${canvasId}" class="health-sparkline" width="220" height="50"></canvas>` : ''}
                     <div class="health-card-meta">
                         <span>${fmtBytes(s.size_bytes)} · ${s.last_modified || 'unknown'}</span>
                         ${statusBadge(s.status)}
                     </div>
                 </div>
             `);
-        }
+            if (hasTimeline) {
+                requestAnimationFrame(() => renderSparkline(canvasId, s.timeline));
+            }
+        });
     } catch (e) {
         console.error('DB health load failed:', e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inline editing for facts table
+// ---------------------------------------------------------------------------
+const FACT_CATEGORIES = ['general', 'preference', 'relationship', 'work', 'location', 'health', 'habit'];
+
+function makeCellEditable(td, field, factId) {
+    if (td.classList.contains('cell-editing')) return;
+    td.classList.add('cell-editing');
+
+    const original = td.dataset.value;
+    let saved = false;
+    let el;
+
+    if (field === 'category') {
+        el = document.createElement('select');
+        el.className = 'cell-edit';
+        FACT_CATEGORIES.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c; opt.textContent = c;
+            if (c === original) opt.selected = true;
+            el.appendChild(opt);
+        });
+    } else {
+        el = document.createElement('input');
+        el.type = 'text';
+        el.className = 'cell-edit';
+        el.value = original;
+    }
+
+    td.innerHTML = '';
+    td.appendChild(el);
+    el.focus();
+    if (el.tagName === 'INPUT') el.select();
+
+    function restore(text) {
+        saved = true;
+        td.classList.remove('cell-editing');
+        td.dataset.value = text;
+        if (field === 'category') {
+            td.innerHTML = `<span class="cat-badge cat-${escHtml(text)}">${escHtml(text)}</span>`;
+        } else {
+            td.textContent = text;
+        }
+        td.onclick = () => makeCellEditable(td, field, factId);
+    }
+
+    async function trySave() {
+        if (saved) return;
+        const newVal = el.value.trim();
+        if (!newVal || newVal === original) { restore(original); return; }
+        try {
+            const r = await fetch(`/api/memory/facts/${encodeURIComponent(factId)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [field]: newVal }),
+            });
+            restore(r.ok ? newVal : original);
+        } catch (e) {
+            console.error('Fact update failed:', e);
+            restore(original);
+        }
+    }
+
+    if (field === 'category') {
+        el.addEventListener('change', trySave);
+        el.addEventListener('blur', () => { if (!saved) restore(original); });
+    } else {
+        el.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+            if (e.key === 'Escape') { e.preventDefault(); saved = true; restore(original); }
+        });
+        el.addEventListener('blur', trySave);
     }
 }
 
@@ -250,10 +409,12 @@ function renderFacts(facts) {
         const conf = typeof f.confidence === 'number' ? (f.confidence * 100).toFixed(0) + '%' : '—';
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td><span class="cat-badge cat-${escHtml(f.category)}">${escHtml(f.category)}</span></td>
-            <td class="cell-subject">${escHtml(f.subject)}</td>
-            <td class="cell-content">${escHtml(f.content)}</td>
-            <td class="cell-source">${escHtml(f.source)}</td>
+            <td class="cell-editable" data-field="category" data-id="${escHtml(f.fact_id)}" data-value="${escHtml(f.category)}">
+                <span class="cat-badge cat-${escHtml(f.category)}">${escHtml(f.category)}</span>
+            </td>
+            <td class="cell-subject cell-editable" data-field="subject" data-id="${escHtml(f.fact_id)}" data-value="${escHtml(f.subject)}">${escHtml(f.subject)}</td>
+            <td class="cell-content cell-editable" data-field="content" data-id="${escHtml(f.fact_id)}" data-value="${escHtml(f.content)}">${escHtml(f.content)}</td>
+            <td class="cell-source cell-editable" data-field="source" data-id="${escHtml(f.fact_id)}" data-value="${escHtml(f.source)}">${escHtml(f.source)}</td>
             <td>${conf}</td>
             <td>${f.times_referenced ?? 0}</td>
             <td class="cell-time">${fmtTs(f.created_at)}</td>
@@ -261,6 +422,10 @@ function renderFacts(facts) {
         `;
         tbody.appendChild(row);
     }
+    tbody.querySelectorAll('.cell-editable').forEach(td => {
+        td.title = 'Click to edit';
+        td.onclick = () => makeCellEditable(td, td.dataset.field, td.dataset.id);
+    });
     tbody.querySelectorAll('.btn-delete').forEach(btn => {
         btn.addEventListener('click', async () => {
             if (!confirm('Delete this fact?')) return;
@@ -294,7 +459,7 @@ function renderInteractions(rows) {
     const tbody = document.getElementById('ilog-body');
     tbody.innerHTML = '';
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-row">No interactions found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-row">No interactions found</td></tr>';
         return;
     }
     for (const r of rows) {
@@ -305,9 +470,19 @@ function renderInteractions(rows) {
                 <td>${typeTag(r.type)}</td>
                 <td class="cell-query">${escHtml(r.query || '')}</td>
                 <td class="cell-summary">${escHtml(r.answer_summary || '')}</td>
+                <td><button class="btn-delete" data-id="${escHtml(r.interaction_id)}" title="Delete entry">✕</button></td>
             </tr>
         `);
     }
+    tbody.querySelectorAll('.btn-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            if (!confirm('Delete this interaction log entry?')) return;
+            try {
+                const resp = await fetch(`/api/memory/interactions/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+                if (resp.ok) { btn.closest('tr').remove(); state.ilog.total--; updatePagination('ilog', state.ilog.offset, state.ilog.limit, state.ilog.total); }
+            } catch (e) { console.error('Delete failed:', e); }
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------

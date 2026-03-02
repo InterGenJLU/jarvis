@@ -276,3 +276,40 @@
     padding: 40px;
     font-size: 0.9rem;
 }
+
+/* Health card sparkline */
+.health-sparkline {
+    display: block;
+    width: 100% !important;
+    height: 50px !important;
+    margin: 4px 0 2px;
+    opacity: 0.85;
+}
+
+/* Editable fact cells */
+.cell-editable {
+    cursor: pointer;
+    position: relative;
+}
+.cell-editable:hover {
+    background: rgba(56, 189, 248, 0.07);
+}
+.cell-editing {
+    padding: 4px 8px !important;
+}
+.cell-edit {
+    width: 100%;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    outline: none;
+    box-sizing: border-box;
+}
+.cell-edit:focus {
+    border-color: #7dd3fc;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+}

@@ -1711,7 +1711,7 @@ async def memory_summary_handler(request):
 
     result = {}
 
-    # Facts by category — all users combined
+    # Facts by category, split by user
     if memory_manager:
         try:
             def _all_user_facts():
@@ -1721,23 +1721,24 @@ async def memory_summary_handler(request):
                     conn.row_factory = sqlite3.Row
                     try:
                         rows = conn.execute("""
-                            SELECT category, COUNT(*) as cnt FROM facts
+                            SELECT category, user_id, COUNT(*) as cnt FROM facts
                             WHERE deleted = 0 AND superseded_by IS NULL
-                            GROUP BY category
+                            GROUP BY category, user_id
+                            ORDER BY category, user_id
                         """).fetchall()
-                        return {r['category']: r['cnt'] for r in rows}
+                        return [{'category': r['category'], 'user_id': r['user_id'], 'count': r['cnt']} for r in rows]
                     finally:
                         conn.close()
 
-            by_cat = await asyncio.to_thread(_all_user_facts)
+            by_cat_user = await asyncio.to_thread(_all_user_facts)
             result['facts'] = {
-                'total': sum(by_cat.values()),
-                'by_category': by_cat,
+                'total': sum(r['count'] for r in by_cat_user),
+                'by_category_user': by_cat_user,
             }
         except Exception as e:
-            result['facts'] = {'total': 0, 'by_category': {}, 'error': str(e)}
+            result['facts'] = {'total': 0, 'by_category_user': [], 'error': str(e)}
 
-        # Recent interaction log stats (7 days, all users)
+        # Recent interaction log stats (7 days), split by user
         try:
             def _all_user_interactions():
                 import sqlite3, time
@@ -1747,20 +1748,20 @@ async def memory_summary_handler(request):
                     conn.row_factory = sqlite3.Row
                     try:
                         rows = conn.execute("""
-                            SELECT type, COUNT(*) as cnt FROM interaction_log
-                            WHERE created_at > ? GROUP BY type
+                            SELECT type, user_id, COUNT(*) as cnt FROM interaction_log
+                            WHERE created_at > ? GROUP BY type, user_id ORDER BY type, user_id
                         """, (cutoff,)).fetchall()
-                        return {r['type']: r['cnt'] for r in rows}
+                        return [{'type': r['type'], 'user_id': r['user_id'], 'count': r['cnt']} for r in rows]
                     finally:
                         conn.close()
 
-            by_type = await asyncio.to_thread(_all_user_interactions)
+            by_type_user = await asyncio.to_thread(_all_user_interactions)
             result['interactions'] = {
-                'total_7d': sum(by_type.values()),
-                'by_type': by_type,
+                'total_7d': sum(r['count'] for r in by_type_user),
+                'by_type_user': by_type_user,
             }
         except Exception as e:
-            result['interactions'] = {'total_7d': 0, 'by_type': {}, 'error': str(e)}
+            result['interactions'] = {'total_7d': 0, 'by_type_user': [], 'error': str(e)}
 
         # FAISS index size
         try:
@@ -1771,8 +1772,8 @@ async def memory_summary_handler(request):
         except Exception as e:
             result['faiss'] = {'vectors': 0, 'size_bytes': 0, 'error': str(e)}
     else:
-        result['facts'] = {'total': 0, 'by_category': {}}
-        result['interactions'] = {'total_7d': 0, 'by_type': {}}
+        result['facts'] = {'total': 0, 'by_category_user': []}
+        result['interactions'] = {'total_7d': 0, 'by_type_user': []}
         result['faiss'] = {'vectors': 0, 'size_bytes': 0}
 
     # Context window stats
@@ -1927,31 +1928,35 @@ async def memory_timeseries_handler(request):
     days = min(int(request.query.get('days', 30)), 365)
 
     def _fetch_timeseries():
-        import sqlite3, time, datetime
+        import sqlite3, time
         cutoff = time.time() - (days * 86400)
         with memory_manager._db_lock:
             conn = sqlite3.connect(str(memory_manager.db_path))
             conn.row_factory = sqlite3.Row
             try:
-                # All users combined
+                # Per user, per type, per day
                 rows = conn.execute(
                     """SELECT date(created_at, 'unixepoch', 'localtime') AS day,
-                              type, COUNT(*) AS cnt
+                              user_id, type, COUNT(*) AS cnt
                        FROM interaction_log
                        WHERE created_at > ?
-                       GROUP BY day, type ORDER BY day""",
+                       GROUP BY day, user_id, type ORDER BY day, user_id""",
                     (cutoff,)
                 ).fetchall()
-                # Pivot into list of {date, research, tool_call, document, skill, total}
-                days_map: dict = {}
+                # Pivot: series_by_user[user_id][day] = {date, research, tool_call, ...}
+                users_map: dict = {}
                 for r in rows:
+                    uid = r['user_id'] or 'unknown'
                     d = r['day']
-                    if d not in days_map:
-                        days_map[d] = {'date': d, 'research': 0, 'tool_call': 0, 'document': 0, 'skill': 0, 'total': 0}
-                    days_map[d][r['type']] = days_map[d].get(r['type'], 0) + r['cnt']
-                    days_map[d]['total'] += r['cnt']
-                series = sorted(days_map.values(), key=lambda x: x['date'])
-                return {'series': series}
+                    if uid not in users_map:
+                        users_map[uid] = {}
+                    if d not in users_map[uid]:
+                        users_map[uid][d] = {'date': d, 'research': 0, 'tool_call': 0, 'document': 0, 'skill': 0, 'total': 0}
+                    users_map[uid][d][r['type']] = users_map[uid][d].get(r['type'], 0) + r['cnt']
+                    users_map[uid][d]['total'] += r['cnt']
+                series_by_user = {uid: sorted(dm.values(), key=lambda x: x['date'])
+                                  for uid, dm in users_map.items()}
+                return {'series_by_user': series_by_user}
             finally:
                 conn.close()
 
@@ -1972,17 +1977,20 @@ async def memory_db_health_handler(request):
             'path': str(data_dir / 'memory.db'),
             'tables': {'facts': 'SELECT COUNT(*) FROM facts WHERE deleted = 0',
                        'interaction_log': 'SELECT COUNT(*) FROM interaction_log'},
+            'timeline_sql': "SELECT date(created_at, 'unixepoch', 'localtime') as d, COUNT(*) as c FROM interaction_log WHERE created_at > ? GROUP BY d ORDER BY d",
         },
         {
             'name': 'reminders.db',
             'path': str(data_dir / 'reminders.db'),
             'tables': {'reminders': 'SELECT COUNT(*) FROM reminders WHERE status = "pending"',
                        'reminders_total': 'SELECT COUNT(*) FROM reminders'},
+            'timeline_sql': "SELECT date(created_at) as d, COUNT(*) as c FROM reminders WHERE created_at > datetime(?, 'unixepoch') GROUP BY d ORDER BY d",
         },
         {
             'name': 'metrics.db',
             'path': str(data_dir / 'metrics.db'),
             'tables': {'llm_interactions': 'SELECT COUNT(*) FROM llm_interactions'},
+            'timeline_sql': "SELECT date(timestamp, 'unixepoch', 'localtime') as d, COUNT(*) as c FROM llm_interactions WHERE timestamp > ? GROUP BY d ORDER BY d",
         },
         {
             'name': 'news_headlines.db',
@@ -2033,12 +2041,24 @@ async def memory_db_health_handler(request):
                             row_counts[label] = conn.execute(sql).fetchone()[0]
                         except Exception:
                             row_counts[label] = None
+                    # Timeline sparkline data (last 30 days)
+                    timeline = []
+                    tl_sql = cfg.get('timeline_sql')
+                    if tl_sql:
+                        try:
+                            cutoff_30d = now - 30 * 86400
+                            trows = conn.execute(tl_sql, (cutoff_30d,)).fetchall()
+                            timeline = [{'date': t[0], 'count': t[1]} for t in trows]
+                        except Exception:
+                            timeline = []
                     conn.close()
                     entry['row_counts'] = row_counts
+                    entry['timeline'] = timeline
                     entry['status'] = 'warning' if stale else 'ok'
                 except Exception as e:
                     entry['status'] = 'error'
                     entry['error'] = str(e)
+                    entry['timeline'] = []
             results.append(entry)
 
         # chat_history.jsonl
@@ -2050,6 +2070,7 @@ async def memory_db_health_handler(request):
             'row_counts': {'messages': 0},
             'last_modified': None,
             'status': 'missing',
+            'timeline': [],
         }
         if jsonl.exists():
             stat = jsonl.stat()
@@ -2073,6 +2094,7 @@ async def memory_db_health_handler(request):
             'row_counts': {'vectors': 0},
             'last_modified': None,
             'status': 'missing',
+            'timeline': [],
         }
         if faiss_dir.is_dir():
             files = list(faiss_dir.iterdir())
@@ -2098,6 +2120,79 @@ async def memory_db_health_handler(request):
 
     data = await asyncio.to_thread(_check_stores)
     return web.json_response(data)
+
+
+async def memory_fact_update_handler(request):
+    """PATCH /api/memory/facts/{fact_id} — Update editable fields of a fact."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+    memory_manager = components.get('memory_manager')
+    if not memory_manager:
+        return web.json_response({'error': 'Memory not enabled'}, status=503)
+
+    fact_id = request.match_info['fact_id']
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    ALLOWED = {'category', 'subject', 'content', 'source'}
+    updates = {k: str(v) for k, v in body.items() if k in ALLOWED and v is not None}
+    if not updates:
+        return web.json_response({'error': 'No valid fields to update'}, status=400)
+
+    def _update():
+        import sqlite3
+        with memory_manager._db_lock:
+            conn = sqlite3.connect(str(memory_manager.db_path))
+            try:
+                set_clause = ', '.join(f'{k} = ?' for k in updates)
+                vals = list(updates.values()) + [fact_id]
+                rowcount = conn.execute(
+                    f"UPDATE facts SET {set_clause} WHERE fact_id = ? AND deleted = 0",
+                    vals
+                ).rowcount
+                conn.commit()
+                return rowcount
+            finally:
+                conn.close()
+
+    rowcount = await asyncio.to_thread(_update)
+    if rowcount == 0:
+        return web.json_response({'error': 'Not found'}, status=404)
+    return web.json_response({'updated': fact_id})
+
+
+async def memory_interaction_delete_handler(request):
+    """DELETE /api/memory/interactions/{interaction_id} — Delete an interaction log entry."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+    memory_manager = components.get('memory_manager')
+    if not memory_manager:
+        return web.json_response({'error': 'Memory not enabled'}, status=503)
+
+    interaction_id = request.match_info['interaction_id']
+
+    def _delete():
+        import sqlite3
+        with memory_manager._db_lock:
+            conn = sqlite3.connect(str(memory_manager.db_path))
+            try:
+                rowcount = conn.execute(
+                    "DELETE FROM interaction_log WHERE interaction_id = ?",
+                    (interaction_id,)
+                ).rowcount
+                conn.commit()
+                return rowcount
+            finally:
+                conn.close()
+
+    rowcount = await asyncio.to_thread(_delete)
+    if rowcount == 0:
+        return web.json_response({'error': 'Not found'}, status=404)
+    return web.json_response({'deleted': interaction_id})
 
 
 async def dashboard_ws_handler(request):
@@ -2151,8 +2246,10 @@ def create_app(config) -> web.Application:
     app.router.add_get('/memory', memory_page_handler)
     app.router.add_get('/api/memory/summary', memory_summary_handler)
     app.router.add_get('/api/memory/facts', memory_facts_handler)
+    app.router.add_patch('/api/memory/facts/{fact_id}', memory_fact_update_handler)
     app.router.add_delete('/api/memory/facts/{fact_id}', memory_fact_delete_handler)
     app.router.add_get('/api/memory/interactions', memory_interactions_handler)
+    app.router.add_delete('/api/memory/interactions/{interaction_id}', memory_interaction_delete_handler)
     app.router.add_get('/api/memory/timeseries', memory_timeseries_handler)
     app.router.add_get('/api/memory/db-health', memory_db_health_handler)
     app.router.add_get('/', index_handler)
