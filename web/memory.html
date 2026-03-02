@@ -16,10 +16,6 @@
             <h1>J.A.R.V.I.S. <span class="header-sub">MEMORY</span></h1>
         </div>
         <div class="header-right">
-            <select id="user-select">
-                <option value="primary_user" selected>Primary User</option>
-                <option value="secondary_user">Secondary User</option>
-            </select>
             <button id="btn-refresh" class="btn-refresh">Refresh</button>
             <a href="/dashboard" class="back-link">Metrics</a>
             <a href="/" class="back-link">Back to Chat</a>
@@ -31,26 +27,32 @@
         <div class="card" id="card-facts">
             <div class="card-label">Active Facts</div>
             <div class="card-value" id="val-facts">--</div>
+            <div class="card-sub">all users · all time</div>
         </div>
         <div class="card" id="card-interactions">
             <div class="card-label">Interactions (7d)</div>
             <div class="card-value" id="val-interactions">--</div>
+            <div class="card-sub">all users · last 7 days</div>
         </div>
         <div class="card" id="card-faiss">
             <div class="card-label">FAISS Vectors</div>
             <div class="card-value" id="val-faiss">--</div>
+            <div class="card-sub">conversation history index</div>
         </div>
         <div class="card" id="card-context">
             <div class="card-label">Context Used</div>
             <div class="card-value" id="val-context">--</div>
+            <div class="card-sub">current session</div>
         </div>
         <div class="card" id="card-db-size">
             <div class="card-label">Total DB Size</div>
             <div class="card-value" id="val-db-size">--</div>
+            <div class="card-sub">all data stores</div>
         </div>
         <div class="card" id="card-ctx-tokens">
             <div class="card-label">Context Tokens</div>
             <div class="card-value" id="val-ctx-tokens">--</div>
+            <div class="card-sub">current session</div>
         </div>
     </section>
 
@@ -74,23 +76,10 @@
         </div>
     </section>
 
-    <!-- DB Health Table -->
+    <!-- DB Health Card Grid -->
     <section id="db-health">
         <h3>Data Store Health</h3>
-        <div class="table-wrap">
-            <table id="health-table">
-                <thead>
-                    <tr>
-                        <th>Store</th>
-                        <th>Size</th>
-                        <th>Records</th>
-                        <th>Last Modified</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody id="health-body"></tbody>
-            </table>
-        </div>
+        <div id="health-grid" class="health-grid"></div>
     </section>
 
     <!-- Data Explorer Tabs -->
@@ -102,27 +91,30 @@
 
         <!-- Facts Tab -->
         <div id="tab-facts" class="tab-panel active">
-            <div class="explorer-header">
-                <div class="explorer-controls">
-                    <select id="filter-category">
-                        <option value="">All Categories</option>
-                        <option value="preference">preference</option>
-                        <option value="general">general</option>
-                        <option value="relationship">relationship</option>
-                        <option value="work">work</option>
-                        <option value="location">location</option>
-                        <option value="health">health</option>
-                        <option value="habit">habit</option>
-                    </select>
-                    <select id="filter-sort">
-                        <option value="last_referenced">Last Referenced</option>
-                        <option value="created_at">Created</option>
-                        <option value="confidence">Confidence</option>
-                        <option value="times_referenced">Times Referenced</option>
-                    </select>
-                </div>
+            <div class="explorer-controls-bar">
+                <select id="filter-category">
+                    <option value="">All Categories</option>
+                    <option value="preference">preference</option>
+                    <option value="general">general</option>
+                    <option value="relationship">relationship</option>
+                    <option value="work">work</option>
+                    <option value="location">location</option>
+                    <option value="health">health</option>
+                    <option value="habit">habit</option>
+                </select>
+                <select id="filter-user-facts">
+                    <option value="">All Users</option>
+                    <option value="primary_user">Primary User</option>
+                    <option value="secondary_user">Secondary User</option>
+                </select>
+                <select id="filter-sort">
+                    <option value="last_referenced">Last Referenced</option>
+                    <option value="created_at">Created</option>
+                    <option value="confidence">Confidence</option>
+                    <option value="times_referenced">Times Referenced</option>
+                </select>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap explorer-table-wrap">
                 <table id="facts-table">
                     <thead>
                         <tr>
@@ -148,28 +140,32 @@
 
         <!-- Interactions Tab -->
         <div id="tab-interactions" class="tab-panel hidden">
-            <div class="explorer-header">
-                <div class="explorer-controls">
-                    <select id="filter-type">
-                        <option value="">All Types</option>
-                        <option value="research">research</option>
-                        <option value="tool_call">tool_call</option>
-                        <option value="document">document</option>
-                        <option value="skill">skill</option>
-                    </select>
-                    <select id="filter-days">
-                        <option value="7">Last 7 days</option>
-                        <option value="14">Last 14 days</option>
-                        <option value="30" selected>Last 30 days</option>
-                        <option value="90">Last 90 days</option>
-                    </select>
-                </div>
+            <div class="explorer-controls-bar">
+                <select id="filter-type">
+                    <option value="">All Types</option>
+                    <option value="research">research</option>
+                    <option value="tool_call">tool_call</option>
+                    <option value="document">document</option>
+                    <option value="skill">skill</option>
+                </select>
+                <select id="filter-user-ilog">
+                    <option value="">All Users</option>
+                    <option value="primary_user">Primary User</option>
+                    <option value="secondary_user">Secondary User</option>
+                </select>
+                <select id="filter-days">
+                    <option value="7">Last 7 days</option>
+                    <option value="14">Last 14 days</option>
+                    <option value="30" selected>Last 30 days</option>
+                    <option value="90">Last 90 days</option>
+                </select>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap explorer-table-wrap">
                 <table id="ilog-table">
                     <thead>
                         <tr>
                             <th>Time</th>
+                            <th>User</th>
                             <th>Type</th>
                             <th>Query</th>
                             <th>Summary</th>

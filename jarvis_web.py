@@ -1701,7 +1701,7 @@ async def memory_page_handler(request):
 
 
 async def memory_summary_handler(request):
-    """GET /api/memory/summary — Fact counts, context stats, FAISS size."""
+    """GET /api/memory/summary — Fact counts, context stats, FAISS size (all users combined)."""
     components = request.app.get('components')
     if not components:
         return web.json_response({'error': 'Not initialized'}, status=503)
@@ -1711,33 +1711,52 @@ async def memory_summary_handler(request):
 
     result = {}
 
-    # Facts by category (all users combined for summary)
+    # Facts by category — all users combined
     if memory_manager:
         try:
-            counts_primary = await asyncio.to_thread(
-                memory_manager.get_fact_count, 'christopher'
-            )
-            # Sum all categories for the total
-            total_facts = sum(counts_primary.values())
+            def _all_user_facts():
+                import sqlite3
+                with memory_manager._db_lock:
+                    conn = sqlite3.connect(str(memory_manager.db_path))
+                    conn.row_factory = sqlite3.Row
+                    try:
+                        rows = conn.execute("""
+                            SELECT category, COUNT(*) as cnt FROM facts
+                            WHERE deleted = 0 AND superseded_by IS NULL
+                            GROUP BY category
+                        """).fetchall()
+                        return {r['category']: r['cnt'] for r in rows}
+                    finally:
+                        conn.close()
+
+            by_cat = await asyncio.to_thread(_all_user_facts)
             result['facts'] = {
-                'total': total_facts,
-                'by_category': counts_primary,
+                'total': sum(by_cat.values()),
+                'by_category': by_cat,
             }
         except Exception as e:
             result['facts'] = {'total': 0, 'by_category': {}, 'error': str(e)}
 
-        # Recent interaction log stats (7 days)
+        # Recent interaction log stats (7 days, all users)
         try:
-            interactions_7d = await asyncio.to_thread(
-                memory_manager.get_recent_interactions,
-                limit=500, days=7
-            )
-            by_type: dict = {}
-            for row in interactions_7d:
-                t = row.get('type', 'unknown')
-                by_type[t] = by_type.get(t, 0) + 1
+            def _all_user_interactions():
+                import sqlite3, time
+                cutoff = time.time() - 7 * 86400
+                with memory_manager._db_lock:
+                    conn = sqlite3.connect(str(memory_manager.db_path))
+                    conn.row_factory = sqlite3.Row
+                    try:
+                        rows = conn.execute("""
+                            SELECT type, COUNT(*) as cnt FROM interaction_log
+                            WHERE created_at > ? GROUP BY type
+                        """, (cutoff,)).fetchall()
+                        return {r['type']: r['cnt'] for r in rows}
+                    finally:
+                        conn.close()
+
+            by_type = await asyncio.to_thread(_all_user_interactions)
             result['interactions'] = {
-                'total_7d': len(interactions_7d),
+                'total_7d': sum(by_type.values()),
                 'by_type': by_type,
             }
         except Exception as e:
@@ -1785,7 +1804,7 @@ async def memory_facts_handler(request):
         return web.json_response({'error': 'Memory not enabled'}, status=503)
 
     category = request.query.get('category', '') or None
-    user_id = request.query.get('user_id', 'christopher')
+    user_id = request.query.get('user_id', '') or None  # None = all users
     offset = max(0, int(request.query.get('offset', 0)))
     limit = min(int(request.query.get('limit', 50)), 200)
     sort = request.query.get('sort', 'last_referenced')
@@ -1798,8 +1817,11 @@ async def memory_facts_handler(request):
             conn = sqlite3.connect(str(memory_manager.db_path))
             conn.row_factory = sqlite3.Row
             try:
-                base = "FROM facts WHERE user_id = ? AND deleted = 0 AND superseded_by IS NULL"
-                args = [user_id]
+                base = "FROM facts WHERE deleted = 0 AND superseded_by IS NULL"
+                args: list = []
+                if user_id:
+                    base += " AND user_id = ?"
+                    args.append(user_id)
                 if category:
                     base += " AND category = ?"
                     args.append(category)
@@ -1857,10 +1879,10 @@ async def memory_interactions_handler(request):
         return web.json_response({'error': 'Memory not enabled'}, status=503)
 
     type_filter = request.query.get('type', '') or None
-    days = int(request.query.get('days', 7))
+    days = int(request.query.get('days', 30))
     offset = max(0, int(request.query.get('offset', 0)))
     limit = min(int(request.query.get('limit', 50)), 200)
-    user_id = request.query.get('user_id', 'christopher')
+    user_id = request.query.get('user_id', '') or None  # None = all users
 
     def _fetch_interactions():
         import sqlite3, time
@@ -1869,8 +1891,11 @@ async def memory_interactions_handler(request):
             conn = sqlite3.connect(str(memory_manager.db_path))
             conn.row_factory = sqlite3.Row
             try:
-                base = "FROM interaction_log WHERE user_id = ? AND created_at > ?"
-                args = [user_id, cutoff]
+                base = "FROM interaction_log WHERE created_at > ?"
+                args: list = [cutoff]
+                if user_id:
+                    base += " AND user_id = ?"
+                    args.append(user_id)
                 if type_filter:
                     base += " AND type = ?"
                     args.append(type_filter)
@@ -1900,7 +1925,6 @@ async def memory_timeseries_handler(request):
         return web.json_response({'error': 'Memory not enabled'}, status=503)
 
     days = min(int(request.query.get('days', 30)), 365)
-    user_id = request.query.get('user_id', 'christopher')
 
     def _fetch_timeseries():
         import sqlite3, time, datetime
@@ -1909,13 +1933,14 @@ async def memory_timeseries_handler(request):
             conn = sqlite3.connect(str(memory_manager.db_path))
             conn.row_factory = sqlite3.Row
             try:
+                # All users combined
                 rows = conn.execute(
                     """SELECT date(created_at, 'unixepoch', 'localtime') AS day,
                               type, COUNT(*) AS cnt
                        FROM interaction_log
-                       WHERE user_id = ? AND created_at > ?
+                       WHERE created_at > ?
                        GROUP BY day, type ORDER BY day""",
-                    (user_id, cutoff)
+                    (cutoff,)
                 ).fetchall()
                 # Pivot into list of {date, research, tool_call, document, skill, total}
                 days_map: dict = {}
