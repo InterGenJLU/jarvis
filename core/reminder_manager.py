@@ -154,6 +154,18 @@ class ReminderManager:
                     conn.execute("ALTER TABLE reminders ADD COLUMN event_time TEXT DEFAULT NULL")
                     conn.commit()
                     self.logger.info("Migrated: added event_time column")
+                if "created_by" not in columns:
+                    conn.execute("ALTER TABLE reminders ADD COLUMN created_by TEXT DEFAULT 'user'")
+                    conn.commit()
+                    self.logger.info("Migrated: added created_by column")
+                if "origin_endpoint" not in columns:
+                    conn.execute("ALTER TABLE reminders ADD COLUMN origin_endpoint TEXT DEFAULT 'voice'")
+                    conn.commit()
+                    self.logger.info("Migrated: added origin_endpoint column")
+                if "caldav_event_id" not in columns:
+                    conn.execute("ALTER TABLE reminders ADD COLUMN caldav_event_id TEXT DEFAULT NULL")
+                    conn.commit()
+                    self.logger.info("Migrated: added caldav_event_id column")
 
                 # Indexes (after migrations so all columns exist)
                 conn.execute("""
@@ -167,6 +179,14 @@ class ReminderManager:
                 conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_reminders_google_event
                     ON reminders(google_event_id)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_reminders_user
+                    ON reminders(created_by, status)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_reminders_caldav_event
+                    ON reminders(caldav_event_id)
                 """)
                 conn.commit()
 
@@ -274,6 +294,35 @@ class ReminderManager:
                     "AND reminder_time BETWEEN ? AND ? "
                     "ORDER BY reminder_time ASC",
                     (today_start, today_end)
+                ).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
+
+    def _query_rundown_reminders(self, start_str: str, end_str: str) -> List[Dict]:
+        """Query reminders for rundown display over a date window.
+
+        Calendar-synced reminders (have google_event_id + event_time) are filtered
+        by event_time so events that occur in the window always appear, even if all
+        reminder fire times are outside the window (e.g. a 7-day-advance reminder
+        that fired last week for a Thursday event).
+
+        Local reminders (no google_event_id) are filtered by reminder_time as usual.
+        Cancelled events are excluded.
+        """
+        with self._db_lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM reminders WHERE ("
+                    "  (google_event_id IS NOT NULL AND event_time IS NOT NULL"
+                    "   AND event_time BETWEEN ? AND ? AND status != 'cancelled')"
+                    "  OR"
+                    "  (google_event_id IS NULL"
+                    "   AND reminder_time BETWEEN ? AND ?"
+                    "   AND status IN ('pending', 'fired'))"
+                    ") ORDER BY reminder_time ASC",
+                    (start_str, end_str, start_str, end_str)
                 ).fetchall()
                 return [dict(r) for r in rows]
             finally:
@@ -949,22 +998,46 @@ class ReminderManager:
 
     def get_daily_rundown(self) -> str:
         """Format today's reminders and calendar events as natural flowing speech."""
-        # Gather all items for today
-        items = []
+        now = datetime.now()
+        start_str = now.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+        end_str = now.replace(hour=23, minute=59, second=59, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
 
-        today = self.list_today()
-        for r in today:
+        reminders = self._query_rundown_reminders(start_str, end_str)
+
+        # Build items list — calendar events deduped by base google_event_id,
+        # displayed at event_time (actual event time, not reminder fire time).
+        items = []
+        seen_base_ids = set()
+
+        for r in reminders:
+            gid = r.get("google_event_id")
+            if gid:
+                base_id = self._base_google_event_id(gid)
+                if base_id in seen_base_ids:
+                    continue
+                seen_base_ids.add(base_id)
+
+            # Use event_time when set (actual event time), else reminder fire time
+            time_field = r.get("event_time") or r.get("reminder_time")
+            if not time_field:
+                continue
             try:
-                t = datetime.strptime(r["reminder_time"], "%Y-%m-%d %H:%M:%S")
-                items.append({"time": t, "title": r["title"]})
+                t = datetime.strptime(time_field, "%Y-%m-%d %H:%M:%S")
             except ValueError:
-                pass
+                continue
+            items.append({"time": t, "title": r["title"]})
 
         if self._calendar_manager:
             try:
                 cal_events = self._calendar_manager.get_primary_events_today()
                 for ev in cal_events:
+                    # Skip if already represented by a DB reminder (different calendar)
+                    ev_gid = ev.get("google_event_id")
+                    if ev_gid and ev_gid in seen_base_ids:
+                        continue
                     items.append({"time": ev["start_time"], "title": ev["title"]})
+                    if ev_gid:
+                        seen_base_ids.add(ev_gid)
             except Exception as e:
                 self.logger.error(f"Failed to fetch calendar events for rundown: {e}")
 
@@ -1128,11 +1201,7 @@ class ReminderManager:
             self.tts.speak(f"Here's your weekly rundown, {get_honorific()}. {rundown}")
             if self._resume_listener_callback:
                 self._resume_listener_callback()
-
-            # After weekly, offer daily rundown too
-            self._rundown_is_weekly = False
-            self._rundown_cycle = 0
-            self._offer_rundown()
+            # Weekly rundown covers today's events grouped by day — no separate daily needed
         else:
             rundown = self.get_daily_rundown()
             self.logger.info(f"Daily rundown: {rundown}")
@@ -1177,24 +1246,13 @@ class ReminderManager:
         day_names = ["Monday", "Tuesday", "Wednesday", "Thursday",
                      "Friday", "Saturday", "Sunday"]
 
-        # Gather reminders for the week
+        # Gather reminders for the week (by event_time for calendar events)
         monday_str = monday.strftime("%Y-%m-%d %H:%M:%S")
         sunday_str = sunday.strftime("%Y-%m-%d %H:%M:%S")
 
-        with self._db_lock:
-            conn = self._conn()
-            try:
-                rows = conn.execute(
-                    "SELECT * FROM reminders WHERE status IN ('pending', 'fired') "
-                    "AND reminder_time BETWEEN ? AND ? "
-                    "ORDER BY reminder_time ASC",
-                    (monday_str, sunday_str)
-                ).fetchall()
-                reminders = [dict(r) for r in rows]
-            finally:
-                conn.close()
+        reminders = self._query_rundown_reminders(monday_str, sunday_str)
 
-        # Gather calendar events for the week
+        # Gather calendar events for the week (primary calendar, not JARVIS calendar)
         cal_events = []
         if self._calendar_manager:
             try:
@@ -1202,23 +1260,44 @@ class ReminderManager:
             except Exception as e:
                 self.logger.error(f"Failed to fetch weekly calendar events: {e}")
 
-        # Group all items by day
+        # Group all items by day — dedup calendar events by base google_event_id
         days_with_items = {}  # day_offset -> list of {time, title}
+        seen_base_ids = set()  # global across all days (one event = one day slot)
+
         for day_offset in range(7):
             day_date = (monday + timedelta(days=day_offset)).date()
             items = []
 
             for r in reminders:
+                gid = r.get("google_event_id")
+                # Use event_time when set (actual event time), else reminder fire time
+                time_field = r.get("event_time") or r.get("reminder_time")
+                if not time_field:
+                    continue
                 try:
-                    t = datetime.strptime(r["reminder_time"], "%Y-%m-%d %H:%M:%S")
-                    if t.date() == day_date:
-                        items.append({"time": t, "title": r["title"]})
+                    t = datetime.strptime(time_field, "%Y-%m-%d %H:%M:%S")
                 except ValueError:
-                    pass
+                    continue
+                if t.date() != day_date:
+                    continue
+
+                if gid:
+                    base_id = self._base_google_event_id(gid)
+                    if base_id in seen_base_ids:
+                        continue
+                    seen_base_ids.add(base_id)
+
+                items.append({"time": t, "title": r["title"]})
 
             for ev in cal_events:
-                if ev["start_time"].date() == day_date:
-                    items.append({"time": ev["start_time"], "title": ev["title"]})
+                if ev["start_time"].date() != day_date:
+                    continue
+                ev_gid = ev.get("google_event_id")
+                if ev_gid and ev_gid in seen_base_ids:
+                    continue
+                items.append({"time": ev["start_time"], "title": ev["title"]})
+                if ev_gid:
+                    seen_base_ids.add(ev_gid)
 
             if items:
                 items.sort(key=lambda x: x["time"])

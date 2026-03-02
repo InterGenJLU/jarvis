@@ -1,8 +1,21 @@
 # TODO — Next Session
 
-**Updated:** March 1, 2026 (session 116)
+**Updated:** March 2, 2026 (session 118)
 
 ---
+
+## Session 117 Completed
+
+### Reminder Staleness Guard (COMMITTED)
+- **Problem:** 3 reminders with **2025 dates** fired on service restart — birthdays/anniversaries that slipped through sync import guards during a timing gap (background sync created them AFTER the mass delete in session 116)
+- **Root cause:** `_check_due_reminders()` had no lower bound — matched any pending reminder with `reminder_time <= now`, no matter how old
+- **Fix in `core/reminder_manager.py`:**
+  - Reminders >24h overdue are **auto-cancelled** (with warning log) instead of fired
+  - Firing query now has lower bound: `reminder_time >= now - 24h`
+  - Belt-and-suspenders: even if bad data enters the DB through any path, stale reminders never fire
+- **Also:** Manually deleted the 3 past-dated reminders from the DB
+- **Verified:** 777 pending (all future-dated, earliest 2026-03-05), 0 fired, clean startup, no loop
+- **Commit:** `2575a75`
 
 ## Session 116 Completed
 
@@ -35,16 +48,20 @@
 
 ---
 
+## Session 118 In Progress
+
+### Multi-User + Email + Memory Page (4-feature plan approved)
+- **Full plan:** `memory/plan_multiuser_email_memory.md` + `.claude/plans/serene-chasing-candle.md`
+- **DB migration PARTIAL:** `created_by`, `origin_endpoint`, `caldav_event_id` columns + indexes added to `_init_db()` in `core/reminder_manager.py`. Wiring (add_reminder params, push-back routing, tool/router passthrough) NOT done yet.
+- **Memory page:** Not started. Expanded from original plan — now includes DB health table for all data stores.
+- **CalDAV:** Not started. Needs secondary user's Apple ID validation (see prereqs in plan).
+- **Email skill:** Not started. Gmail (OAuth) + AOL (IMAP). Read-only Phase 1 with junk filtering.
+
+---
+
 ## Up Next
 
-### 0. Memory & Awareness Dashboard (plan ready)
-**Priority:** HIGH — Plan saved to `memory/plan_memory_dashboard.md`
-**What:** New `/memory` web page. 6 summary cards, 3 charts, facts + interaction explorer. Dark theme.
-
-### 1. Presentation Engine Overhaul (#49 extended)
-**Priority:** HIGH — Plan saved to `memory/plan_presentation_engine.md`
-
-### 2. Voice Enrollment for Second User
+### 0. Voice Enrollment for secondary user (at lunch)
 ```bash
 cd ~/jarvis
 python3 scripts/enroll_speaker.py --user erica   # 3 clips x 3s, needs her at mic
@@ -52,7 +69,24 @@ systemctl --user restart jarvis                    # reload embedding
 python3 scripts/enroll_speaker.py --test           # verify both speakers recognized
 ```
 
-### 3. "Onscreen please" — retroactive visual display (#11)
-### 4. Document refinement follow-ups (#49)
-### 5. Vision pipeline integration — console/web image input
-### 6. Mobile iOS App (#60) — `memory/plan_mobile_ios_app.md`
+### 1. Multi-User Calendar Integration (PLAN NEEDED)
+**Priority:** HIGH — Plan before build
+**What:** Tie secondary user's Apple Calendar into the reminder system alongside the user's Google Calendar.
+- **Per-user calendar ownership:** Add `created_by` column (or similar) to reminders DB so the system knows which user created each reminder
+- **Two-way sync per user:** Google Calendar for the user, Apple Calendar (iCloud/CalDAV) for secondary user — each user's phone additions sync to JARVIS
+- **Push-back routing:** When syncing reminders back to external calendars, only push to the originating user's calendar
+- **Local announcement:** ALL reminders fire locally regardless of who created them (simple cumulative approach from the shared DB)
+
+### 2. Mobile iOS App (#60) — `memory/plan_mobile_ios_app.md`
+**Priority:** HIGH — Starting shortly after enrollment + calendar planning
+
+### 3. Memory & Awareness Dashboard (plan ready)
+**Priority:** MEDIUM — Plan saved to `memory/plan_memory_dashboard.md`
+**What:** New `/memory` web page. 6 summary cards, 3 charts, facts + interaction explorer. Dark theme.
+
+### 4. Presentation Engine Overhaul (#49 extended)
+**Priority:** MEDIUM — Plan saved to `memory/plan_presentation_engine.md`
+
+### 5. "Onscreen please" — retroactive visual display (#11)
+### 6. Document refinement follow-ups (#49)
+### 7. Vision pipeline integration — console/web image input
