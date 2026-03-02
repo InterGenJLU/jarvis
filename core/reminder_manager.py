@@ -472,18 +472,41 @@ class ReminderManager:
     def _check_due_reminders(self) -> List[Dict]:
         """Get all pending reminders whose time has arrived.
 
-        Capped at 3 per poll cycle to prevent notification floods
-        (e.g., historical calendar sync importing hundreds of past events).
+        Staleness guard: reminders more than 24 hours overdue are auto-cancelled
+        (prevents firing historical reminders that slipped through sync guards).
+        Capped at 3 per poll cycle to prevent notification floods.
         """
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        stale_cutoff = (now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+
         with self._db_lock:
             conn = self._conn()
             try:
+                # Auto-cancel stale reminders (>24h overdue)
+                stale = conn.execute(
+                    "SELECT id, title, reminder_time FROM reminders "
+                    "WHERE status = 'pending' AND reminder_time < ?",
+                    (stale_cutoff,)
+                ).fetchall()
+                for s in stale:
+                    conn.execute(
+                        "UPDATE reminders SET status = 'cancelled' WHERE id = ?",
+                        (s["id"],)
+                    )
+                    self.logger.warning(
+                        f"Auto-cancelled stale reminder #{s['id']}: "
+                        f"'{s['title']}' (due {s['reminder_time']})"
+                    )
+                if stale:
+                    conn.commit()
+
+                # Fetch due reminders (within the 24h window)
                 rows = conn.execute(
                     "SELECT * FROM reminders WHERE status = 'pending' "
-                    "AND reminder_time <= ? ORDER BY priority ASC, reminder_time ASC "
-                    "LIMIT 3",
-                    (now_str,)
+                    "AND reminder_time <= ? AND reminder_time >= ? "
+                    "ORDER BY priority ASC, reminder_time ASC LIMIT 3",
+                    (now_str, stale_cutoff)
                 ).fetchall()
                 return [dict(r) for r in rows]
             finally:
