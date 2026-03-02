@@ -1070,6 +1070,34 @@ async def websocket_handler(request):
                     logger.info(f"User switched to: {uid}")
                     await ws.send_json({'type': 'user_changed', 'user_id': uid})
 
+                    # Reload sessions + history filtered for this user
+                    try:
+                        all_messages = await asyncio.to_thread(conversation.load_full_history)
+                        user_msgs = [m for m in all_messages if m.get('user_id', 'christopher') == uid]
+                        user_sessions = _detect_sessions(user_msgs)
+                        meta = _load_sessions_meta(config)
+                        for s in user_sessions:
+                            s['custom_name'] = meta.get(s['id'], None)
+                        await ws.send_json({
+                            'type': 'session_list',
+                            'sessions': user_sessions[:10],
+                            'has_more': len(user_sessions) > 10,
+                            'total': len(user_sessions),
+                        })
+                        if user_sessions:
+                            current = user_sessions[0]
+                            current_msgs = [
+                                m for m in user_msgs
+                                if current['start_ts'] <= m.get('timestamp', 0) <= current['end_ts']
+                            ]
+                            await ws.send_json({
+                                'type': 'history',
+                                'messages': current_msgs,
+                                'session_id': current['id'],
+                            })
+                    except Exception:
+                        logger.exception("Failed to reload history after user switch")
+
                 elif msg_type == 'restart':
                     logger.info("Restart requested via web UI")
                     await ws.send_json({'type': 'info', 'content': 'Restarting...'})
@@ -1337,7 +1365,9 @@ async def sessions_handler(request):
     limit = min(int(request.query.get('limit', 10)), 50)
 
     all_messages = await asyncio.to_thread(conversation.load_full_history)
-    sessions = _detect_sessions(all_messages)
+    user_filter = request.query.get('user', conversation.current_user or 'christopher')
+    filtered = [m for m in all_messages if m.get('user_id', 'christopher') == user_filter]
+    sessions = _detect_sessions(filtered)
     meta = _load_sessions_meta(config)
 
     # Apply custom names
@@ -1364,14 +1394,16 @@ async def session_messages_handler(request):
     conversation = components['conversation']
 
     all_messages = await asyncio.to_thread(conversation.load_full_history)
-    sessions = _detect_sessions(all_messages)
+    user_filter = request.query.get('user', conversation.current_user or 'christopher')
+    filtered = [m for m in all_messages if m.get('user_id', 'christopher') == user_filter]
+    sessions = _detect_sessions(filtered)
 
     # Find matching session — session_id is the start_ts as string
     for s in sessions:
         if s['id'] == session_id:
-            # Extract messages in this time range from the original (chronological) list
+            # Extract messages in this time range from the filtered list
             msgs = [
-                m for m in all_messages
+                m for m in filtered
                 if s['start_ts'] <= m.get('timestamp', 0) <= s['end_ts']
             ]
             return web.json_response({'messages': msgs, 'session': s})

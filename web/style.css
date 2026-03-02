@@ -128,19 +128,19 @@ header h1 {
 
 .header-sep {
     width: 1px;
-    height: 18px;
+    height: 20px;
     background: var(--border);
     flex-shrink: 0;
 }
 
 .user-select {
-    font-size: 0.75rem;
-    padding: 2px 10px;
+    font-size: 0.875rem;
+    padding: 3px 12px;
     border-radius: 10px;
     background: rgba(56, 189, 248, 0.1);
     color: var(--accent);
     border: 1px solid rgba(56, 189, 248, 0.25);
-    font-weight: 500;
+    font-weight: 700;
     cursor: pointer;
     outline: none;
     appearance: none;
@@ -149,10 +149,10 @@ header h1 {
 .user-select:hover { border-color: var(--accent); background: rgba(56, 189, 248, 0.18); }
 
 .status {
-    font-size: 0.75rem;
-    padding: 2px 10px;
+    font-size: 0.875rem;
+    padding: 3px 12px;
     border-radius: 10px;
-    font-weight: 500;
+    font-weight: 700;
 }
 
 .status.connected {

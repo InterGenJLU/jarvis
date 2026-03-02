@@ -192,6 +192,11 @@
                 addHealthReport(msg.data);
                 break;
 
+            case 'user_changed':
+                messagesEl.innerHTML = '';
+                activeSessionId = null;
+                break;
+
             case 'history':
                 loadHistory(msg.messages, msg.session_id || null);
                 break;
@@ -1161,7 +1166,7 @@
     }
 
     function fetchSessions(offset) {
-        fetch('/api/sessions?offset=' + offset + '&limit=10')
+        fetch('/api/sessions?offset=' + offset + '&limit=10&user=' + encodeURIComponent(userSelect.value))
             .then(function (resp) { return resp.json(); })
             .then(function (data) {
                 if (data.sessions) {
@@ -1255,7 +1260,7 @@
         messagesEl.innerHTML = '';
         addInfoMessage('Loading session...');
 
-        fetch('/api/session/' + encodeURIComponent(sessionId))
+        fetch('/api/session/' + encodeURIComponent(sessionId) + '?user=' + encodeURIComponent(userSelect.value))
             .then(function (resp) { return resp.json(); })
             .then(function (data) {
                 messagesEl.innerHTML = '';
