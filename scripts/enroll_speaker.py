@@ -82,12 +82,14 @@ def enroll_interactive(config, user_id: str, num_clips: int = 3,
     sid = SpeakerIdentifier(config, pm)
     sid.load_embeddings()
 
+    import sounddevice as sd
     mic_device = get_mic_device(config)
-    sample_rate = 16000
+    device_info = sd.query_devices(mic_device if mic_device is not None else sd.default.device[0])
+    sample_rate = int(device_info['default_samplerate'])
 
     print(f"\n  Enrolling: {profile['name']} ({profile['honorific']})")
     print(f"  Clips: {num_clips} x {clip_duration}s")
-    print(f"  Mic: {mic_device or 'system default'}")
+    print(f"  Mic: {mic_device or 'system default'} ({sample_rate} Hz)")
     print()
     print("  Just speak naturally during each recording — say anything at all.")
     print("  Content doesn't matter; it's capturing your voice signature.")
@@ -160,8 +162,10 @@ def test_identification(config, clip_duration: float = 3.0):
         return
 
     print(f"\n  Enrolled speakers: {list(sid._cache.keys())}")
+    import sounddevice as sd
     mic_device = get_mic_device(config)
-    sample_rate = 16000
+    device_info = sd.query_devices(mic_device if mic_device is not None else sd.default.device[0])
+    sample_rate = int(device_info['default_samplerate'])
 
     input("\n  Press Enter to record a test clip...")
     for sec in [3, 2, 1]:
