@@ -2041,14 +2041,27 @@ async def memory_db_health_handler(request):
                             row_counts[label] = conn.execute(sql).fetchone()[0]
                         except Exception:
                             row_counts[label] = None
-                    # Timeline sparkline data (last 30 days)
+                    # Timeline sparkline data: 14-day window ending at most recent entry
                     timeline = []
                     tl_sql = cfg.get('timeline_sql')
                     if tl_sql:
                         try:
-                            cutoff_30d = now - 30 * 86400
-                            trows = conn.execute(tl_sql, (cutoff_30d,)).fetchall()
-                            timeline = [{'date': t[0], 'count': t[1]} for t in trows]
+                            # Fetch last 14 days of activity
+                            cutoff_14d = now - 14 * 86400
+                            trows = conn.execute(tl_sql, (cutoff_14d,)).fetchall()
+                            raw = {t[0]: t[1] for t in trows}
+                            if raw:
+                                # Pad all 14 days from (most_recent - 13d) to most_recent
+                                most_recent = max(raw.keys())
+                                from datetime import date as _date, timedelta as _td
+                                end = _date.fromisoformat(most_recent)
+                                start = end - _td(days=13)
+                                timeline = []
+                                d = start
+                                while d <= end:
+                                    ds = d.isoformat()
+                                    timeline.append({'date': ds, 'count': raw.get(ds, 0)})
+                                    d += _td(days=1)
                         except Exception:
                             timeline = []
                     conn.close()

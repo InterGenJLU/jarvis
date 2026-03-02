@@ -774,12 +774,22 @@ class MemoryManager:
         return extracted
 
     def _extract_subject(self, text: str) -> str:
-        """Extract a short subject (1-3 words) from fact content."""
-        words = text.strip().split()
-        # Skip common filler words at the start
-        skip = {"a", "an", "the", "my", "that", "to", "it", "is"}
-        meaningful = [w for w in words[:5] if w.lower() not in skip]
-        return " ".join(meaningful[:3]).lower().rstrip(".,!?;:")
+        """Extract a concise subject label (1-2 meaningful words) from fact content."""
+        text = text.strip()
+        # Strip first-person prefix so "I am married to X" → "married to X"
+        text = re.sub(r"^(?:i(?:'m| am| have| will| would| can)\s+)", "", text, flags=re.IGNORECASE)
+        # Strip "my " prefix so "my address is X" → "address is X"
+        text = re.sub(r"^my\s+", "", text, flags=re.IGNORECASE)
+        words = text.split()
+        # Skip stop words and common verb forms that don't make good subject labels
+        skip = {
+            "a", "an", "the", "that", "to", "it",
+            "is", "am", "are", "was", "were", "be", "been",
+            "have", "has", "had", "will", "would", "can", "could",
+            "do", "does", "did", "not", "never", "also", "just",
+        }
+        meaningful = [w for w in words[:6] if w.lower() not in skip]
+        return " ".join(meaningful[:2]).lower().rstrip(".,!?;:")
 
     # ------------------------------------------------------------------
     # on_message hook (called from conversation.add_message)

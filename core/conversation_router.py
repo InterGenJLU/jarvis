@@ -426,6 +426,27 @@ class ConversationRouter:
             )
 
         if mm.is_fact_request(command):
+            # Ensure the fact is persisted. on_message() already ran extract_facts_realtime()
+            # but EXPLICIT_PATTERNS only cover "remember that X" — not "remember I X" or
+            # "remember my X". If nothing was stored, fall back to direct storage.
+            if not getattr(mm, 'last_extracted', None):
+                import time as _t
+                import re as _re
+                # Strip "remember [that]" framing to get the raw fact content
+                content = _re.sub(
+                    r"^(?:remember|don't forget|keep in mind)\s+(?:that\s+)?",
+                    "", command, flags=_re.IGNORECASE
+                ).strip().rstrip(".,!?;:")
+                if len(content) > 3:
+                    mm.store_fact({
+                        "user_id": user_id,
+                        "category": "general",
+                        "subject": mm._extract_subject(content),
+                        "content": content,
+                        "source": "explicit",
+                        "confidence": 0.90,
+                        "source_messages": None,
+                    })
             logger.info("Handled by memory fact request")
             return RouteResult(
                 text=persona.pick("fact_stored"), intent="fact_stored",

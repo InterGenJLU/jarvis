@@ -207,8 +207,12 @@ function renderTimeseriesChart(seriesByUser) {
 // ---------------------------------------------------------------------------
 function renderSparkline(canvasId, timeline) {
     const canvas = document.getElementById(canvasId);
-    if (!canvas || !timeline || timeline.length < 2) return;
+    if (!canvas || !timeline || timeline.length < 1) return;
     destroyChart(canvasId);
+    // Set canvas resolution to match its displayed CSS width (avoids stretch artifacts)
+    const displayWidth = canvas.offsetWidth;
+    if (displayWidth > 0) canvas.width = displayWidth;
+    canvas.height = 50;
     const ctx = canvas.getContext('2d');
     state.charts[canvasId] = new Chart(ctx, {
         type: 'line',
@@ -284,7 +288,7 @@ async function loadDbHealth() {
             const records = Object.entries(s.row_counts || {})
                 .map(([k, v]) => `<span class="rec-label">${k}:</span> <strong>${v?.toLocaleString() ?? '—'}</strong>`)
                 .join('<br>');
-            const hasTimeline = s.timeline && s.timeline.length > 1;
+            const hasTimeline = s.timeline && s.timeline.length > 0;
             grid.insertAdjacentHTML('beforeend', `
                 <div class="health-card">
                     <div class="health-card-name">${escHtml(s.name)}</div>
