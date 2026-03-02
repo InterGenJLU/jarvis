@@ -208,7 +208,9 @@ class ReminderManager:
                      priority: int = 3, reminder_type: str = "one_time",
                      recurrence_rule: str = None, description: str = "",
                      _skip_calendar_push: bool = False,
-                     event_time: datetime = None) -> int:
+                     event_time: datetime = None,
+                     created_by: str = 'christopher',
+                     origin_endpoint: str = 'voice') -> int:
         """Add a new reminder. Returns the reminder ID.
 
         _skip_calendar_push is used internally when creating from Google sync
@@ -217,6 +219,10 @@ class ReminderManager:
         event_time: the actual event start time when reminder_time is offset
         (e.g., reminder fires 15 min before the event). Used for speech:
         "You have X in 15 minutes."
+
+        created_by: user_id of whoever created this reminder (e.g. 'christopher', 'erica').
+        origin_endpoint: how it was created — 'voice', 'console', 'web',
+            'google_calendar', 'caldav'. Used for push-back routing.
         """
         requires_ack = 1 if priority <= 2 else 0
         time_str = reminder_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -238,11 +244,11 @@ class ReminderManager:
                     INSERT INTO reminders
                         (title, description, reminder_time, reminder_type,
                          recurrence_rule, priority, requires_ack, google_event_id,
-                         event_time)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         event_time, created_by, origin_endpoint)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (title, description, time_str, reminder_type,
                       recurrence_rule, priority, requires_ack, google_event_id,
-                      event_time_str))
+                      event_time_str, created_by, origin_endpoint))
                 conn.commit()
                 rid = cur.lastrowid
             finally:
@@ -251,7 +257,7 @@ class ReminderManager:
         self.logger.info(
             f"Reminder #{rid} created: '{title}' at {time_str} "
             f"{'(event at ' + event_time_str + ') ' if event_time_str else ''}"
-            f"(priority={priority}, type={reminder_type}"
+            f"(priority={priority}, type={reminder_type}, by={created_by}, via={origin_endpoint}"
             f"{', gcal=' + google_event_id if google_event_id else ''})"
         )
         return rid
@@ -1480,9 +1486,11 @@ class ReminderManager:
                 self.logger.info(f"Updated reminder #{existing['id']} from Google sync")
             return existing["id"]
 
-        # Create new local reminder
+        # Create new local reminder — no push-back; source is Google Calendar
         rid = self.add_reminder(title, reminder_time, priority,
-                                _skip_calendar_push=True, event_time=event_time)
+                                _skip_calendar_push=True, event_time=event_time,
+                                created_by='christopher',
+                                origin_endpoint='google_calendar')
         # Store the composite google_event_id
         with self._db_lock:
             conn = self._conn()

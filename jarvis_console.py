@@ -733,8 +733,12 @@ def run_console(config, mode):
 
         reminder_manager.start()
         # Wire reminder manager for tool-calling dispatch
-        from core.tool_executor import set_reminder_manager, set_config as set_tool_config
+        from core.tool_executor import (set_reminder_manager, set_config as set_tool_config,
+                                        set_current_user_fn)
         set_reminder_manager(reminder_manager)
+        set_current_user_fn(
+            lambda: getattr(conversation, 'current_user', None) or 'christopher'
+        )
         set_tool_config(config)
 
     # News system

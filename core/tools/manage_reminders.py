@@ -5,7 +5,10 @@ from datetime import datetime
 TOOL_NAME = "manage_reminders"
 SKILL_NAME = "reminders"
 
-DEPENDENCIES = {"reminder_manager": "_reminder_manager"}
+DEPENDENCIES = {
+    "reminder_manager": "_reminder_manager",
+    "current_user_fn": "_current_user_fn",
+}
 
 SCHEMA = {
     "type": "function",
@@ -80,10 +83,11 @@ SYSTEM_PROMPT_RULE = (
 
 
 # ---------------------------------------------------------------------------
-# Runtime dependency — injected via tool_registry.inject_dependencies()
+# Runtime dependencies — injected via tool_registry.inject_dependencies()
 # ---------------------------------------------------------------------------
 
 _reminder_manager = None
+_current_user_fn = None  # Callable[[], str] — returns current user_id
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +139,13 @@ def _reminders_add(mgr, args: dict) -> str:
         return (f"Error: couldn't parse time '{time_text}'. "
                 "Try formats like 'tomorrow at 6 PM' or 'in 30 minutes'.")
 
+    created_by = _current_user_fn() if _current_user_fn else 'christopher'
     rid = mgr.add_reminder(
         title=title,
         reminder_time=reminder_time,
         priority=priority,
+        created_by=created_by,
+        origin_endpoint='voice',
     )
 
     time_desc = _format_reminder_time(reminder_time)

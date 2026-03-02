@@ -467,8 +467,11 @@ class Coordinator:
         self.reminder_manager = reminder_manager
         # Wire reminder manager and config for tool-calling dispatch
         if reminder_manager:
-            from core.tool_executor import set_reminder_manager
+            from core.tool_executor import set_reminder_manager, set_current_user_fn
             set_reminder_manager(reminder_manager)
+            set_current_user_fn(
+                lambda: getattr(self.conversation, 'current_user', None) or 'christopher'
+            )
         from core.tool_executor import set_config as set_tool_config
         set_tool_config(config)
         self.news_manager = news_manager

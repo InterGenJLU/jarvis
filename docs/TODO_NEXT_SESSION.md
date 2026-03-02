@@ -1,10 +1,34 @@
 # TODO — Next Session
 
-**Updated:** March 2, 2026 (session 118)
+**Updated:** March 2, 2026 (session 119)
 
 ---
 
-## Session 117 Completed
+## Session 119 Completed
+
+### Rundown Bug Fixes (COMMITTED — bb57ed1)
+
+Three bugs in `core/reminder_manager.py`:
+
+**Bug 1 — Wrong event times + same-event duplicates:**
+- **Root cause:** `get_daily_rundown()` and `get_weekly_rundown()` used `reminder_time` (offset fire time, e.g. 2:30 PM for a 3 PM event) instead of `event_time` (actual event start). With 2 reminder offsets per event (530 total reminders = 265 events × 2), the same event appeared twice at different fire times.
+- **Fix:** New `_query_rundown_reminders()` helper; both rundowns now deduplicate by base google event ID and display at `event_time`.
+
+**Bug 2 — Immediate re-offer after weekly rundown:**
+- **Root cause:** `deliver_rundown()` called `_offer_rundown()` immediately after weekly speech — jarring "Good morning, are you ready for the rundown?" right after the full week summary.
+- **Fix:** Dropped the daily re-offer entirely. Weekly rundown already covers Monday grouped by day. Monday = one rundown only.
+
+**Bug 3 — Missed events (tomorrow / Friday not announced):**
+- **Root cause:** Weekly DB query filtered by `reminder_time BETWEEN monday AND sunday`. Events with a 7-day-ahead reminder had their `reminder_time` *last* Monday — outside the window, invisible.
+- **Fix:** `_query_rundown_reminders()` now queries calendar-synced events by `event_time` (actual event day), so all events *occurring* this week always appear regardless of when their reminder fires.
+
+**Also:** Added 4 new redact.conf patterns for "secondary user's Apple" variants that were leaking into public repo via TODO notes.
+
+---
+
+## Session 118 Completed
+
+### Multi-User + Email + Memory Page — DB Migration Schema
 
 ### Reminder Staleness Guard (COMMITTED)
 - **Problem:** 3 reminders with **2025 dates** fired on service restart — birthdays/anniversaries that slipped through sync import guards during a timing gap (background sync created them AFTER the mass delete in session 116)
@@ -48,7 +72,7 @@
 
 ---
 
-## Session 118 In Progress
+## Still In Progress
 
 ### Multi-User + Email + Memory Page (4-feature plan approved)
 - **Full plan:** `memory/plan_multiuser_email_memory.md` + `.claude/plans/serene-chasing-candle.md`

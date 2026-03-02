@@ -142,8 +142,12 @@ def init_components(config, tts_proxy):
         # explicit commands ("daily rundown", "remind me...").
         components['reminder_manager'] = rm
         # Wire reminder manager for tool-calling dispatch
-        from core.tool_executor import set_reminder_manager, set_config as set_tool_config
+        from core.tool_executor import (set_reminder_manager, set_config as set_tool_config,
+                                        set_current_user_fn)
         set_reminder_manager(rm)
+        set_current_user_fn(
+            lambda: getattr(conversation, 'current_user', None) or 'christopher'
+        )
         set_tool_config(config)
 
     # News
