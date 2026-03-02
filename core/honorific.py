@@ -11,6 +11,7 @@ import threading
 
 _lock = threading.Lock()
 _current_honorific = "sir"
+_current_formal_address = None  # e.g., "Ms. Guest" — richer form for LLM prompts
 
 
 def get_honorific() -> str:
@@ -19,11 +20,18 @@ def get_honorific() -> str:
         return _current_honorific
 
 
-def set_honorific(honorific: str):
-    """Set the current speaker's honorific (thread-safe)."""
-    global _current_honorific
+def get_formal_address():
+    """Get the formal address (e.g., 'Ms. Guest') or None if not set."""
+    with _lock:
+        return _current_formal_address
+
+
+def set_honorific(honorific: str, formal_address: str = None):
+    """Set the current speaker's honorific and optional formal address."""
+    global _current_honorific, _current_formal_address
     with _lock:
         _current_honorific = honorific
+        _current_formal_address = formal_address
 
 
 def resolve_honorific(text: str) -> str:

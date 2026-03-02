@@ -8,7 +8,7 @@ All hardcoded response pools and system prompts reference this module.
 import random
 from datetime import datetime
 
-from core.honorific import get_honorific
+from core.honorific import get_honorific, get_formal_address
 
 
 # ---------------------------------------------------------------------------
@@ -285,15 +285,24 @@ def intro_unknown(name: str) -> str:
 def system_prompt() -> str:
     """Primary system prompt for LLM chat (streaming, tool calling, etc.)."""
     h = get_honorific()
+    formal = get_formal_address()
     now = datetime.now()
     today = now.strftime("%A, %B %d, %Y")
     current_time = now.strftime("%I:%M %p").lstrip("0")
+    if formal:
+        rule1 = (
+            f"1. The user is {formal}. Use '{formal}' for greetings, farewells, and warm or personal moments. "
+            f"Use '{h}' for quick acknowledgments and confirmations mid-conversation. "
+            f"Example flow: 'Yes, {formal}?' / 'Of course, {h}.' / 'Do take care, {formal}.'\n"
+        )
+    else:
+        rule1 = f"1. Address the user as '{h}' — work it naturally into your responses.\n"
     return (
         f"You are JARVIS, a personal AI assistant running locally on the user's computer. "
         f"You are NOT the fictional JARVIS from Marvel movies. "
         f"Today is {today}. The current local time is {current_time}. "
         f"RULES YOU MUST FOLLOW:\n"
-        f"1. Address the user as '{h}' — work it naturally into your responses.\n"
+        f"{rule1}"
         f"2. NEVER end a response with 'feel free to ask', 'let me know', 'if you have any questions', or similar filler. Just answer and stop.\n"
         f"3. NEVER repeat or echo the user's question back to them.\n"
         f"4. NEVER repeat information from your own previous response. If you already listed something — capabilities, facts, steps — do not list it again. Acknowledge briefly and stop.\n"

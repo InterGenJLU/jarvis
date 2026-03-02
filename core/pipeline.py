@@ -1694,11 +1694,12 @@ class Coordinator:
         """Set honorific and conversation user based on speaker identification."""
         if speaker_id and self.profile_manager:
             honorific = self.profile_manager.get_honorific_for(speaker_id)
-            set_honorific(honorific)
+            formal = self.profile_manager.get_formal_address_for(speaker_id)
+            set_honorific(honorific, formal)
             self.conversation.current_user = speaker_id
             self.logger.info(
                 f"Speaker identified: {speaker_id} (confidence={confidence:.3f}, "
-                f"honorific={honorific})"
+                f"honorific={honorific}, formal={formal})"
             )
         elif speaker_id is None and self.profile_manager:
             # Unknown speaker — keep current honorific (default "sir")

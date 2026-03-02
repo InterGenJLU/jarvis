@@ -713,15 +713,16 @@ def run_console(config, mode, user_id="user"):
     # Core components
     conversation = ConversationManager(config)
     conversation.current_user = user_id
-    # Set honorific based on user profile
+    # Set honorific + formal address based on user profile
     if user_id != "primary_user":
         from core.honorific import set_honorific
         from core.user_profile import ProfileManager
         try:
             pm = ProfileManager(config)
-            set_honorific(pm.get_honorific_for(user_id))
+            set_honorific(pm.get_honorific_for(user_id), pm.get_formal_address_for(user_id))
         except Exception:
-            set_honorific("ma'am" if user_id == "secondary_user" else "sir")
+            formal = "Ms. Guest" if user_id == "secondary_user" else None
+            set_honorific("ma'am" if user_id == "secondary_user" else "sir", formal)
     responses = get_response_library()
     llm = LLMRouter(config)
     skill_manager = SkillManager(config, conversation, tts_proxy, responses, llm)

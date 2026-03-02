@@ -404,6 +404,21 @@ class TextToSpeech:
                     time.sleep(retry_delay)
         return None
 
+    def _trim_trailing_silence(self, audio_np, threshold=0.01, keep_ms=150):
+        """Trim trailing silence from an audio chunk, keeping keep_ms of it.
+
+        Reduces the long comma/clause pauses Kokoro inserts between segments
+        while preserving a natural brief gap.
+        """
+        abs_audio = self._np.abs(audio_np)
+        above = self._np.where(abs_audio > threshold)[0]
+        if len(above) == 0:
+            return audio_np
+        last_sound = above[-1]
+        keep_samples = int(24000 * keep_ms / 1000)
+        trim_point = min(last_sound + keep_samples, len(audio_np))
+        return audio_np[:trim_point]
+
     def _speak_kokoro(self, text: str) -> bool:
         """Generate and play audio via Kokoro — streaming with lazy aplay.
 
@@ -415,6 +430,10 @@ class TextToSpeech:
         """
         t0 = time.time()
 
+        # Strip commas — Kokoro inserts a prosodic drop + long pause at
+        # comma boundaries that sounds robotic in short phrases.
+        text = text.replace(",", "")
+
         aplay = None
         total_samples = 0
         first_chunk_time = None
@@ -423,6 +442,7 @@ class TextToSpeech:
                 text, voice=self._kokoro_voice, speed=self._kokoro_speed
             ):
                 audio_np = self._np.asarray(audio)
+                audio_np = self._trim_trailing_silence(audio_np)
                 pcm = (audio_np * 32767).astype(self._np.int16).tobytes()
 
                 # Lazy open: defer aplay until first audio is ready.

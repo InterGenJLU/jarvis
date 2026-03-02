@@ -207,6 +207,17 @@ class ProfileManager:
         profile = self.get_profile(user_id)
         return profile["honorific"] if profile else "sir"
 
+    def get_formal_address_for(self, user_id: str):
+        """Get a formal address like 'Ms. Guest' for non-primary users, or None."""
+        profile = self.get_profile(user_id)
+        if not profile or user_id == "primary_user":
+            return None
+        name = profile.get("name", "")
+        honorific = profile.get("honorific", "")
+        if honorific == "ma'am" and name:
+            return f"Ms. {name}"
+        return None
+
     def get_profiles_with_embeddings(self) -> List[Dict[str, Any]]:
         """Get all profiles that have speaker embeddings enrolled."""
         with self._db_lock:

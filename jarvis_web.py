@@ -973,6 +973,15 @@ async def websocket_handler(request):
                             # the response as a gold announcement banner)
                             tts_proxy.get_pending_announcements()
 
+                            # Speak LLM responses via TTS when voice is enabled
+                            # (skills already speak internally; this covers LLM fallback)
+                            if result.get('used_llm') and result['response'] and tts_proxy.hybrid and tts_proxy.real_tts:
+                                threading.Thread(
+                                    target=tts_proxy.real_tts.speak,
+                                    args=(result['response'],),
+                                    daemon=True,
+                                ).start()
+
                             # Check for structured health data from developer_tools
                             health_data = _extract_health_data(components['skill_manager'])
 
@@ -1059,14 +1068,15 @@ async def websocket_handler(request):
                 elif msg_type == 'set_user':
                     uid = data.get('user_id', 'christopher')
                     conversation.current_user = uid
-                    # Update honorific for the switched user
+                    # Update honorific + formal address for the switched user
                     from core.honorific import set_honorific
                     try:
                         from core.user_profile import ProfileManager
                         pm = ProfileManager(config)
-                        set_honorific(pm.get_honorific_for(uid))
+                        set_honorific(pm.get_honorific_for(uid), pm.get_formal_address_for(uid))
                     except Exception:
-                        set_honorific("ma'am" if uid == "secondary_user" else "sir")
+                        formal = "Ms. Guest" if uid == "secondary_user" else None
+                        set_honorific("ma'am" if uid == "secondary_user" else "sir", formal)
                     logger.info(f"User switched to: {uid}")
                     await ws.send_json({'type': 'user_changed', 'user_id': uid})
 
