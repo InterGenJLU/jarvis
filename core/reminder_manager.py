@@ -296,9 +296,10 @@ class ReminderManager:
             finally:
                 conn.close()
 
-        # Remove from Google Calendar
+        # Remove from Google Calendar (strip composite offset suffix)
         if reminder and self._calendar_manager and reminder.get("google_event_id"):
-            self._calendar_manager.delete_event(reminder["google_event_id"])
+            base_id = self._base_google_event_id(reminder["google_event_id"])
+            self._calendar_manager.delete_event(base_id)
 
         return True
 
@@ -469,14 +470,19 @@ class ReminderManager:
     # ------------------------------------------------------------------
 
     def _check_due_reminders(self) -> List[Dict]:
-        """Get all pending reminders whose time has arrived."""
+        """Get all pending reminders whose time has arrived.
+
+        Capped at 3 per poll cycle to prevent notification floods
+        (e.g., historical calendar sync importing hundreds of past events).
+        """
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self._db_lock:
             conn = self._conn()
             try:
                 rows = conn.execute(
                     "SELECT * FROM reminders WHERE status = 'pending' "
-                    "AND reminder_time <= ? ORDER BY priority ASC, reminder_time ASC",
+                    "AND reminder_time <= ? ORDER BY priority ASC, reminder_time ASC "
+                    "LIMIT 3",
                     (now_str,)
                 ).fetchall()
                 return [dict(r) for r in rows]
@@ -644,9 +650,10 @@ class ReminderManager:
             # Recurring: advance to next occurrence
             self._advance_recurring(reminder)
 
-        # Remove from Google Calendar
+        # Remove from Google Calendar (strip composite offset suffix)
         if self._calendar_manager and reminder.get("google_event_id"):
-            self._calendar_manager.delete_event(reminder["google_event_id"])
+            base_id = self._base_google_event_id(reminder["google_event_id"])
+            self._calendar_manager.delete_event(base_id)
 
         self.logger.info(f"Reminder #{reminder_id} acknowledged")
         return True
@@ -681,12 +688,11 @@ class ReminderManager:
         self._update_status(reminder_id, "snoozed", snooze_until=snooze_until)
         self.logger.info(f"Reminder #{reminder_id} snoozed until {snooze_until}")
 
-        # Update Google Calendar event to new time
+        # Update Google Calendar event to new time (strip composite offset suffix)
         reminder = self.get_reminder(reminder_id)
         if reminder and self._calendar_manager and reminder.get("google_event_id"):
-            self._calendar_manager.update_event(
-                reminder["google_event_id"], start_time=snooze_time
-            )
+            base_id = self._base_google_event_id(reminder["google_event_id"])
+            self._calendar_manager.update_event(base_id, start_time=snooze_time)
 
         return True
 
@@ -1322,7 +1328,15 @@ class ReminderManager:
 
         reminder_minutes: offset from Google Calendar reminders (e.g., 30 = fire 30 min before).
         When set, reminder_time = start_time - offset, and event_time = start_time.
+
+        Composite key: google_event_id is stored as "base_id:offset" (e.g., "abc123:60")
+        so multiple notifications for the same event each get their own reminder row.
         """
+        # Skip past events — prevents notification storms from historical sync
+        if start_time < datetime.now() - timedelta(hours=1):
+            self.logger.debug(f"Skipping past Google event: '{title}' @ {start_time}")
+            return -1
+
         # Apply reminder offset: fire BEFORE the event, not at event time
         if reminder_minutes and reminder_minutes > 0:
             reminder_time = start_time - timedelta(minutes=reminder_minutes)
@@ -1331,8 +1345,11 @@ class ReminderManager:
             reminder_time = start_time
             event_time = None
 
-        # Check if we already have this event
-        existing = self._find_by_google_event_id(google_event_id)
+        # Composite key: base_event_id:offset — allows multiple reminders per event
+        composite_id = f"{google_event_id}:{reminder_minutes}" if reminder_minutes else google_event_id
+
+        # Check if we already have this specific reminder (event + offset combo)
+        existing = self._find_by_google_event_id(composite_id)
         if existing:
             # Update if time changed
             existing_time = datetime.strptime(existing["reminder_time"], "%Y-%m-%d %H:%M:%S")
@@ -1357,12 +1374,12 @@ class ReminderManager:
         # Create new local reminder
         rid = self.add_reminder(title, reminder_time, priority,
                                 _skip_calendar_push=True, event_time=event_time)
-        # Store the google_event_id
+        # Store the composite google_event_id
         with self._db_lock:
             conn = self._conn()
             try:
                 conn.execute("UPDATE reminders SET google_event_id = ? WHERE id = ?",
-                             (google_event_id, rid))
+                             (composite_id, rid))
                 conn.commit()
             finally:
                 conn.close()
@@ -1371,16 +1388,32 @@ class ReminderManager:
         return rid
 
     def _on_google_cancel_event(self, google_event_id: str) -> bool:
-        """Callback: an event was deleted on Google Calendar → cancel local reminder."""
-        reminder = self._find_by_google_event_id(google_event_id)
-        if reminder and reminder["status"] in ("pending", "fired"):
-            self._update_status(reminder["id"], "cancelled")
-            self.logger.info(f"Cancelled reminder #{reminder['id']} (Google event deleted)")
-            return True
-        return False
+        """Callback: an event was deleted on Google Calendar → cancel ALL local reminders.
+
+        Uses prefix match to find all reminders for this event (base_id:offset pattern).
+        """
+        reminders = self._find_all_by_google_event_id(google_event_id)
+        cancelled = 0
+        for reminder in reminders:
+            if reminder["status"] in ("pending", "fired"):
+                self._update_status(reminder["id"], "cancelled")
+                cancelled += 1
+        if cancelled:
+            self.logger.info(f"Cancelled {cancelled} reminder(s) for Google event {google_event_id}")
+        return cancelled > 0
+
+    @staticmethod
+    def _base_google_event_id(composite_id: str) -> str:
+        """Extract the base Google event ID from a composite key (strip ':offset' suffix)."""
+        idx = composite_id.rfind(":")
+        if idx > 0:
+            suffix = composite_id[idx + 1:]
+            if suffix.isdigit():
+                return composite_id[:idx]
+        return composite_id
 
     def _find_by_google_event_id(self, google_event_id: str) -> Optional[Dict]:
-        """Find a reminder by its Google Calendar event ID."""
+        """Find a reminder by its exact Google Calendar event ID (including composite key)."""
         with self._db_lock:
             conn = self._conn()
             try:
@@ -1389,6 +1422,24 @@ class ReminderManager:
                     (google_event_id,)
                 ).fetchone()
                 return dict(row) if row else None
+            finally:
+                conn.close()
+
+    def _find_all_by_google_event_id(self, google_event_id: str) -> List[Dict]:
+        """Find ALL reminders for a Google Calendar event (prefix match).
+
+        Matches both exact ID and composite keys (base_id:offset pattern).
+        Used by cancellation to remove all notification offsets for one event.
+        """
+        with self._db_lock:
+            conn = self._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM reminders WHERE google_event_id = ? "
+                    "OR google_event_id LIKE ?",
+                    (google_event_id, f"{google_event_id}:%")
+                ).fetchall()
+                return [dict(r) for r in rows]
             finally:
                 conn.close()
 

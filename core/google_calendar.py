@@ -542,22 +542,19 @@ class GoogleCalendarManager:
         except ValueError:
             return None
 
-        # Extract reminder offset (minutes before event)
+        # Extract ALL reminder offsets (minutes before event)
         # Google API: reminders.overrides = [{"method": "popup", "minutes": 15}, ...]
-        # Use the earliest (largest minutes value) so JARVIS reminds at first alert
-        reminder_minutes = None
+        # Each offset becomes a separate JARVIS reminder so all notifications fire.
+        reminder_minutes_list = []
         reminders_data = event.get("reminders", {})
         if reminders_data.get("useDefault"):
-            # Default reminders are typically 10-30 min; use 15 as safe default
-            reminder_minutes = 15
+            reminder_minutes_list = [15]
         else:
             overrides = reminders_data.get("overrides", [])
-            popup_minutes = [
+            reminder_minutes_list = sorted(set(
                 r["minutes"] for r in overrides
                 if r.get("method") in ("popup", "email") and "minutes" in r
-            ]
-            if popup_minutes:
-                reminder_minutes = max(popup_minutes)  # earliest alert
+            ), reverse=True)  # largest offset first (earliest notification)
 
         return {
             "title": clean_title,
@@ -565,7 +562,7 @@ class GoogleCalendarManager:
             "priority": priority,
             "description": event.get("description", ""),
             "google_event_id": event.get("id"),
-            "reminder_minutes": reminder_minutes,
+            "reminder_minutes_list": reminder_minutes_list,
         }
 
     def _tz_offset(self) -> str:
@@ -640,15 +637,29 @@ class GoogleCalendarManager:
                 changes = self.sync_from_google()
 
                 # Process new events from JARVIS calendar → create local reminders
+                # Each event may have multiple reminder offsets (e.g., 1 week + 30 min),
+                # so call the callback once per offset to create separate reminders.
                 if self._on_new_event:
                     for event in changes["new"]:
-                        self._on_new_event(
-                            title=event["title"],
-                            start_time=event["start_time"],
-                            priority=event["priority"],
-                            google_event_id=event["google_event_id"],
-                            reminder_minutes=event.get("reminder_minutes"),
-                        )
+                        offsets = event.get("reminder_minutes_list", [])
+                        if not offsets:
+                            # No explicit reminders — create one at event time
+                            self._on_new_event(
+                                title=event["title"],
+                                start_time=event["start_time"],
+                                priority=event["priority"],
+                                google_event_id=event["google_event_id"],
+                                reminder_minutes=None,
+                            )
+                        else:
+                            for offset in offsets:
+                                self._on_new_event(
+                                    title=event["title"],
+                                    start_time=event["start_time"],
+                                    priority=event["priority"],
+                                    google_event_id=event["google_event_id"],
+                                    reminder_minutes=offset,
+                                )
 
                 # Process deleted events → cancel local reminders
                 if self._on_cancel_event:
