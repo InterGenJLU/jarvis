@@ -57,6 +57,7 @@
 | 60 | **Mobile iOS app — COMING VERY SOON** — native Swift app with always-listening wake word + full chat UI + real-time voice | 5-8 days | JARVIS from anywhere via iPhone. Porcupine "Jarvis" wake word (on-device), WebRTC voice streaming to server (Whisper STT + Kokoro TTS), WKWebView chat UI, Tailscale VPN, Apple Shortcuts integration | Plan: `memory/plan_mobile_ios_app.md`. 6 phases. Requires Apple Developer account ($99/yr) + Mac with Xcode |
 | 61 | **Concurrent multi-user support** — handle two simultaneous mobile users (primary + secondary) | 4-8 hours | REQUIRED before dual-phone deployment. llama-server `--parallel 2`, per-user chat history, STT/TTS request queuing, session isolation, speaker-ID-based context separation | Depends on #60. Current bottlenecks: `--parallel 1`, single chat_history.jsonl, shared context window |
 | 62 | **Usage data pipeline + CI/CD** — nightly automated collection of interaction data → analysis → regression testing | 1-2 days | Two active mobile users = real usage data at scale. Automated: metric extraction, pattern analysis, test case generation, quality regression, routing accuracy tracking. Builds on existing metrics_tracker.py + chat_history.jsonl | Depends on #60 + #61. Cron/systemd timer for nightly runs. Output: daily report + auto-generated edge case tests |
+| 63 | **Active user selection — web UI + console** — web UI header toggle/dropdown sets current user for session (affects reminders, calendar routing, memory injection); console `--user <id>` flag at startup or `/user <id>` slash command mid-session | 1-2 hours | Needed for local non-voice use (web/console) until phone access is ready. Both frontends already have `current_user_fn` wired — this just makes it user-controllable rather than hardcoded | `jarvis_web.py` session state + HTML header widget; `jarvis_console.py` argparse + slash command |
 
 ---
 
@@ -88,6 +89,7 @@
 | 56 | **Plan templates** — cache successful plan structures for common compound patterns | 3-4 hours | Avoid re-planning identical requests. Currently negligible savings since plans are short and LLM generation is fast | When you notice repeated identical compound requests (e.g., same 3-step pattern daily). Check usage logs mid-March 2026 |
 | 57 | **Plan feedback** — post-execution LLM evaluation + store successful patterns | 4-6 hours | Learn from what worked. Already have per-step eval (Phase 4D); this adds whole-plan post-hoc pass + pattern storage | When per-step evaluation data shows recurring plan failures that a feedback loop could prevent. Mid-March 2026 |
 | 58 | **Parallel step execution** — ThreadPoolExecutor + dependency graph for concurrent steps | 6-8 hours | Execute independent steps simultaneously. Saves 2-3s on 3-step independent plans. Complex: concurrent TTS, error propagation, interrupt handling | When plans regularly exceed 4-5 independent steps OR latency becomes a user complaint. April 2026+ |
+| 64 | **4-user concurrent inference evaluation** — assess feasibility of expanding llama-server to 4 parallel slots for household expansion beyond the current 2-user setup | Research + 2-4 hours if viable | Current: `--parallel 2`, 2×32K slots, ~1.28GB KV at full load. 4 slots = ~2.56GB KV + scheduling complexity. Need VRAM headroom check + STT/TTS queue capacity analysis | Deferred until real 2-user usage data exists. Revisit mid-2026 once household usage patterns are established |
 
 ---
 
@@ -207,4 +209,4 @@
 
 ---
 
-**Total: 61 development ideas + 11 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
+**Total: 63 development ideas + 11 non-roadmap enhancements completed, sourced from 12+ documents across the entire project.**
