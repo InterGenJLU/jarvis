@@ -1,6 +1,24 @@
 # TODO — Next Session
 
-**Updated:** March 2, 2026 (session 119)
+**Updated:** March 2, 2026 (session 120)
+
+---
+
+## Session 120 Completed
+
+### DB Migration Wiring — Feature 1 Complete (COMMITTED — 2a45733)
+
+Completed the wiring half of the multi-user reminders DB migration (schema was already applied in session 118).
+
+**Changes:**
+- `add_reminder()` now accepts `created_by` (default `'christopher'`) and `origin_endpoint` (default `'voice'`) — both written to DB INSERT
+- `_on_google_new_event()` explicitly passes `created_by='christopher'`, `origin_endpoint='google_calendar'` (prevents push-back loop, correctly tags source)
+- `core/tools/manage_reminders.py` — added `current_user_fn` dependency; `_reminders_add()` gets `created_by` from it at call time
+- `core/tool_executor.py` — added `set_current_user_fn()` shim (parallel to `set_reminder_manager`)
+- All 3 frontends (`pipeline.py`, `jarvis_console.py`, `jarvis_web.py`) wire a lambda over `conversation.current_user`
+- DB fix: 780 existing Google Calendar rows updated from `origin_endpoint='voice'` (migration default) to `'google_calendar'` (correct source)
+
+**Also:** Added `secondary user's Apple` (bare form without suffix) to `redact.conf` — previous patterns only covered `secondary user's Apple ID`, `secondary user's Apple Calendar`, `secondary user's iCloud`. The plain form appeared in TODO session notes.
 
 ---
 
@@ -76,7 +94,7 @@ Three bugs in `core/reminder_manager.py`:
 
 ### Multi-User + Email + Memory Page (4-feature plan approved)
 - **Full plan:** `memory/plan_multiuser_email_memory.md` + `.claude/plans/serene-chasing-candle.md`
-- **DB migration PARTIAL:** `created_by`, `origin_endpoint`, `caldav_event_id` columns + indexes added to `_init_db()` in `core/reminder_manager.py`. Wiring (add_reminder params, push-back routing, tool/router passthrough) NOT done yet.
+- **DB migration COMPLETE (commit 2a45733):** `created_by`, `origin_endpoint`, `caldav_event_id` columns migrated. All wiring done: `add_reminder()` params, `_on_google_new_event()` explicit values, `manage_reminders` tool passes `created_by` via `current_user_fn` dependency, all 3 frontends wire the getter. 780 existing Google Calendar rows corrected to `origin_endpoint='google_calendar'`.
 - **Memory page:** Not started. Expanded from original plan — now includes DB health table for all data stores.
 - **CalDAV:** Not started. Needs secondary user's Apple ID validation (see prereqs in plan).
 - **Email skill:** Not started. Gmail (OAuth) + AOL (IMAP). Read-only Phase 1 with junk filtering.
