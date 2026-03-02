@@ -126,6 +126,18 @@ header h1 {
     color: var(--text-dim);
 }
 
+.user-select {
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    outline: none;
+}
+.user-select:hover { border-color: var(--accent); }
+
 .status {
     font-size: 0.75rem;
     padding: 2px 10px;

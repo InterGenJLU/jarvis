@@ -15,6 +15,7 @@
     const btnHelp = document.getElementById('btn-help');
     const statusEl = document.getElementById('connection-status');
     const voiceToggle = document.getElementById('voice-toggle');
+    const userSelect = document.getElementById('user-select');
     const btnRestart = document.getElementById('btn-restart');
     const docIndicator = document.getElementById('doc-indicator');
     const docInfo = document.getElementById('doc-info');
@@ -116,6 +117,10 @@
             const voicePref = localStorage.getItem('jarvis-voice') === 'true';
             voiceToggle.checked = voicePref;
             ws.send(JSON.stringify({ type: 'toggle_voice', enabled: voicePref }));
+            // Restore user preference
+            const savedUser = localStorage.getItem('jarvis-user') || 'christopher';
+            userSelect.value = savedUser;
+            ws.send(JSON.stringify({ type: 'set_user', user_id: savedUser }));
         };
 
         ws.onmessage = function (event) {
@@ -989,6 +994,15 @@
         localStorage.setItem('jarvis-voice', enabled);
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'toggle_voice', enabled: enabled }));
+        }
+    });
+
+    // --- User select ---
+    userSelect.addEventListener('change', function () {
+        const uid = userSelect.value;
+        localStorage.setItem('jarvis-user', uid);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'set_user', user_id: uid }));
         }
     });
 

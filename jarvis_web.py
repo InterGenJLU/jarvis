@@ -366,6 +366,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 tool_presence_penalty=result.tool_presence_penalty,
                 memory_manager=components.get('memory_manager'),
                 raw_command=command,
+                user_id=conversation.current_user,
             )
         else:
             response = await _llm_fallback(
@@ -434,7 +435,8 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           max_tokens=None, use_tools_list=None,
                           tool_temperature=None,
                           tool_presence_penalty=None,
-                          memory_manager=None, raw_command=None) -> tuple:
+                          memory_manager=None, raw_command=None,
+                          user_id=None) -> tuple:
     """Stream LLM response over WebSocket with quality gate and tool calling.
 
     Returns (response_text, streamed_bool).
@@ -645,6 +647,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                         "research", raw_command, cleaned,
                         detail=search_query,
                         metadata={"result_urls": result_urls},
+                        user_id=user_id or 'christopher',
                     )
             except NameError:
                 pass  # No web search results — non-research tool call
@@ -667,6 +670,12 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     conversation_history=history,
                 )
                 return (retry or "", False)
+        # Persist pure LLM conversation for cross-session awareness
+        if memory_manager and full_response:
+            memory_manager.persist_interaction(
+                "conversation", raw_command, full_response,
+                user_id=user_id or 'christopher',
+            )
         # Short enough to send as non-streaming response
         return (full_response, False)
 
@@ -689,6 +698,13 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
         'type': 'stream_end',
         'full_response': cleaned,
     })
+
+    # Persist pure LLM conversation for cross-session awareness
+    if memory_manager and cleaned:
+        memory_manager.persist_interaction(
+            "conversation", raw_command, cleaned,
+            user_id=user_id or 'christopher',
+        )
     return (cleaned, True)
 
 
@@ -1039,6 +1055,20 @@ async def websocket_handler(request):
                         'type': 'voice_status',
                         'enabled': tts_proxy.hybrid,
                     })
+
+                elif msg_type == 'set_user':
+                    uid = data.get('user_id', 'christopher')
+                    conversation.current_user = uid
+                    # Update honorific for the switched user
+                    from core.honorific import set_honorific
+                    try:
+                        from core.user_profile import ProfileManager
+                        pm = ProfileManager(config)
+                        set_honorific(pm.get_honorific_for(uid))
+                    except Exception:
+                        set_honorific("ma'am" if uid == "secondary_user" else "sir")
+                    logger.info(f"User switched to: {uid}")
+                    await ws.send_json({'type': 'user_changed', 'user_id': uid})
 
                 elif msg_type == 'restart':
                     logger.info("Restart requested via web UI")
@@ -1951,7 +1981,7 @@ async def memory_timeseries_handler(request):
                     if uid not in users_map:
                         users_map[uid] = {}
                     if d not in users_map[uid]:
-                        users_map[uid][d] = {'date': d, 'research': 0, 'tool_call': 0, 'document': 0, 'skill': 0, 'total': 0}
+                        users_map[uid][d] = {'date': d, 'research': 0, 'tool_call': 0, 'conversation': 0, 'document': 0, 'skill': 0, 'total': 0}
                     users_map[uid][d][r['type']] = users_map[uid][d].get(r['type'], 0) + r['cnt']
                     users_map[uid][d]['total'] += r['cnt']
                 series_by_user = {uid: sorted(dm.values(), key=lambda x: x['date'])

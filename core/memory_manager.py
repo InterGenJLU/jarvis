@@ -1175,7 +1175,7 @@ class MemoryManager:
                             user_id: str = "primary_user"):
         """Persist a significant interaction for cross-session recall.
 
-        Types: 'research', 'tool_call', 'document', 'skill'
+        Types: 'research', 'tool_call', 'conversation', 'document', 'skill'
         """
         import json
         import uuid

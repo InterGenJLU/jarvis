@@ -38,7 +38,7 @@ function statusBadge(status) {
 }
 
 function typeTag(t) {
-    const cls = { research: 'tag-research', tool_call: 'tag-tool', document: 'tag-doc', skill: 'tag-skill' }[t] || '';
+    const cls = { research: 'tag-research', tool_call: 'tag-tool', conversation: 'tag-conv', document: 'tag-doc', skill: 'tag-skill' }[t] || '';
     return `<span class="type-tag ${cls}">${t}</span>`;
 }
 
@@ -72,11 +72,12 @@ const CAT_FALLBACK = ['#64748b', '#334155'];
 
 // Per-type colors: { christopher: hex, erica: hex }
 const TYPE_COLORS_USER = {
-    research:  { christopher: '#38bdf8', erica: '#0284c7' },
-    tool_call: { christopher: '#34d399', erica: '#047857' },
-    document:  { christopher: '#a78bfa', erica: '#7c3aed' },
-    skill:     { christopher: '#fbbf24', erica: '#d97706' },
-    other:     { christopher: '#64748b', erica: '#334155' },
+    research:     { christopher: '#38bdf8', erica: '#0284c7' },
+    tool_call:    { christopher: '#34d399', erica: '#047857' },
+    conversation: { christopher: '#f472b6', erica: '#db2777' },
+    document:     { christopher: '#a78bfa', erica: '#7c3aed' },
+    skill:        { christopher: '#fbbf24', erica: '#d97706' },
+    other:        { christopher: '#64748b', erica: '#334155' },
 };
 
 function destroyChart(id) {
@@ -160,7 +161,7 @@ function renderTimeseriesChart(seriesByUser) {
     if (!users.length) return;
 
     const allDates = [...new Set(users.flatMap(u => seriesByUser[u].map(d => d.date)))].sort();
-    const types = ['research', 'tool_call', 'document', 'skill'];
+    const types = ['research', 'tool_call', 'conversation', 'document', 'skill'];
     const datasets = [];
 
     for (const user of users) {

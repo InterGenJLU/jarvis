@@ -270,7 +270,8 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         max_tokens=None, web_researcher=None,
                         use_tools_list=None, tool_temperature=None,
                         tool_presence_penalty=None,
-                        memory_manager=None, raw_command=None):
+                        memory_manager=None, raw_command=None,
+                        user_id=None):
     """Stream LLM response with typewriter output, web research, and quality gate.
 
     Returns the full accumulated response text, or empty string on failure.
@@ -400,12 +401,14 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         "research", raw_command, full_response,
                         detail=search_query,
                         metadata={"result_urls": result_urls},
+                        user_id=user_id or 'christopher',
                     )
                 elif first_tool_name:
                     memory_manager.persist_interaction(
                         "tool_call", raw_command, full_response,
                         detail=first_tool_name,
                         metadata={"tool_args": first_tool_args},
+                        user_id=user_id or 'christopher',
                     )
             return full_response
 
@@ -440,6 +443,13 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
     # End the typewriter line
     sys.stdout.write("\n\n")
     sys.stdout.flush()
+
+    # Persist pure LLM conversation for cross-session awareness
+    if memory_manager and full_response:
+        memory_manager.persist_interaction(
+            "conversation", raw_command, full_response,
+            user_id=user_id or 'christopher',
+        )
 
     # Speak full response in hybrid mode
     if mode == "hybrid" and real_tts and full_response:
@@ -689,7 +699,7 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
         return True
 
 
-def run_console(config, mode):
+def run_console(config, mode, user_id="user"):
     """Main REPL loop."""
     console = Console()
 
@@ -702,7 +712,16 @@ def run_console(config, mode):
 
     # Core components
     conversation = ConversationManager(config)
-    conversation.current_user = "user"  # Console defaults to primary user
+    conversation.current_user = user_id
+    # Set honorific based on user profile
+    if user_id != "primary_user":
+        from core.honorific import set_honorific
+        from core.user_profile import ProfileManager
+        try:
+            pm = ProfileManager(config)
+            set_honorific(pm.get_honorific_for(user_id))
+        except Exception:
+            set_honorific("ma'am" if user_id == "secondary_user" else "sir")
     responses = get_response_library()
     llm = LLMRouter(config)
     skill_manager = SkillManager(config, conversation, tts_proxy, responses, llm)
@@ -1035,6 +1054,7 @@ def run_console(config, mode):
                     tool_presence_penalty=result.tool_presence_penalty,
                     memory_manager=memory_manager,
                     raw_command=command,
+                    user_id=conversation.current_user,
                 )
                 if not response:
                     response = "I'm sorry, I'm having trouble processing that right now."
@@ -1109,6 +1129,7 @@ def main():
     group.add_argument("--text", action="store_true", default=True, help="Text mode (default)")
     group.add_argument("--speech", action="store_true", help="Launch voice mode")
     group.add_argument("--hybrid", action="store_true", help="Text input, spoken + printed output")
+    parser.add_argument("--user", default="primary_user", help="User identity (default: christopher)")
     args = parser.parse_args()
 
     if args.speech:
@@ -1121,7 +1142,7 @@ def main():
 
     mode = "hybrid" if args.hybrid else "text"
     config = load_config()
-    run_console(config, mode)
+    run_console(config, mode, user_id=args.user)
 
 
 if __name__ == "__main__":

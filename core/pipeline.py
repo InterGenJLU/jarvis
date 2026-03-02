@@ -1266,6 +1266,7 @@ class Coordinator:
 
             # Persist interaction for cross-session awareness
             if hasattr(self, 'memory_manager') and self.memory_manager:
+                _uid = getattr(self.conversation, 'current_user', None) or 'christopher'
                 tool_name = tool_call_request.name
                 if tool_name == "web_search":
                     search_query = tool_call_request.arguments.get("query", raw_command)
@@ -1277,13 +1278,23 @@ class Coordinator:
                         "research", raw_command, full_response,
                         detail=search_query,
                         metadata={"result_urls": result_urls},
+                        user_id=_uid,
                     )
                 else:
                     self.memory_manager.persist_interaction(
                         "tool_call", raw_command, full_response,
                         detail=tool_name,
                         metadata={"tool_args": tool_call_request.arguments},
+                        user_id=_uid,
                     )
+        else:
+            # Log pure LLM conversation for proactive surfacing
+            if hasattr(self, 'memory_manager') and self.memory_manager and full_response:
+                _uid = getattr(self.conversation, 'current_user', None) or 'christopher'
+                self.memory_manager.persist_interaction(
+                    "conversation", raw_command, full_response,
+                    user_id=_uid,
+                )
 
         return full_response
 
