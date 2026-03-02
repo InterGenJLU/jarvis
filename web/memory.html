@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. — Memory & System Health</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/dashboard.css">
+    <link rel="stylesheet" href="/memory.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-left">
+            <h1>J.A.R.V.I.S. <span class="header-sub">MEMORY</span></h1>
+        </div>
+        <div class="header-right">
+            <select id="user-select">
+                <option value="primary_user" selected>Primary User</option>
+                <option value="secondary_user">Secondary User</option>
+            </select>
+            <button id="btn-refresh" class="btn-refresh">Refresh</button>
+            <a href="/dashboard" class="back-link">Metrics</a>
+            <a href="/" class="back-link">Back to Chat</a>
+        </div>
+    </header>
+
+    <!-- Summary Cards -->
+    <section id="summary-cards">
+        <div class="card" id="card-facts">
+            <div class="card-label">Active Facts</div>
+            <div class="card-value" id="val-facts">--</div>
+        </div>
+        <div class="card" id="card-interactions">
+            <div class="card-label">Interactions (7d)</div>
+            <div class="card-value" id="val-interactions">--</div>
+        </div>
+        <div class="card" id="card-faiss">
+            <div class="card-label">FAISS Vectors</div>
+            <div class="card-value" id="val-faiss">--</div>
+        </div>
+        <div class="card" id="card-context">
+            <div class="card-label">Context Used</div>
+            <div class="card-value" id="val-context">--</div>
+        </div>
+        <div class="card" id="card-db-size">
+            <div class="card-label">Total DB Size</div>
+            <div class="card-value" id="val-db-size">--</div>
+        </div>
+        <div class="card" id="card-ctx-tokens">
+            <div class="card-label">Context Tokens</div>
+            <div class="card-value" id="val-ctx-tokens">--</div>
+        </div>
+    </section>
+
+    <!-- Charts -->
+    <section id="charts">
+        <div class="chart-box">
+            <h3>Facts by Category</h3>
+            <canvas id="chart-facts-cat"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Interactions Over Time (30d)</h3>
+            <canvas id="chart-interactions-time"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Context Budget</h3>
+            <canvas id="chart-context-gauge"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Interactions by Type (7d)</h3>
+            <canvas id="chart-interaction-types"></canvas>
+        </div>
+    </section>
+
+    <!-- DB Health Table -->
+    <section id="db-health">
+        <h3>Data Store Health</h3>
+        <div class="table-wrap">
+            <table id="health-table">
+                <thead>
+                    <tr>
+                        <th>Store</th>
+                        <th>Size</th>
+                        <th>Records</th>
+                        <th>Last Modified</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="health-body"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Data Explorer Tabs -->
+    <section id="explorer">
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="facts">Facts</button>
+            <button class="tab-btn" data-tab="interactions">Interaction Log</button>
+        </div>
+
+        <!-- Facts Tab -->
+        <div id="tab-facts" class="tab-panel active">
+            <div class="explorer-header">
+                <div class="explorer-controls">
+                    <select id="filter-category">
+                        <option value="">All Categories</option>
+                        <option value="preference">preference</option>
+                        <option value="general">general</option>
+                        <option value="relationship">relationship</option>
+                        <option value="work">work</option>
+                        <option value="location">location</option>
+                        <option value="health">health</option>
+                        <option value="habit">habit</option>
+                    </select>
+                    <select id="filter-sort">
+                        <option value="last_referenced">Last Referenced</option>
+                        <option value="created_at">Created</option>
+                        <option value="confidence">Confidence</option>
+                        <option value="times_referenced">Times Referenced</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table id="facts-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Subject</th>
+                            <th>Content</th>
+                            <th>Source</th>
+                            <th>Confidence</th>
+                            <th>Refs</th>
+                            <th>Created</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="facts-body"></tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <button id="facts-prev" class="btn-page" disabled>Prev</button>
+                <span id="facts-page-info">--</span>
+                <button id="facts-next" class="btn-page" disabled>Next</button>
+            </div>
+        </div>
+
+        <!-- Interactions Tab -->
+        <div id="tab-interactions" class="tab-panel hidden">
+            <div class="explorer-header">
+                <div class="explorer-controls">
+                    <select id="filter-type">
+                        <option value="">All Types</option>
+                        <option value="research">research</option>
+                        <option value="tool_call">tool_call</option>
+                        <option value="document">document</option>
+                        <option value="skill">skill</option>
+                    </select>
+                    <select id="filter-days">
+                        <option value="7">Last 7 days</option>
+                        <option value="14">Last 14 days</option>
+                        <option value="30" selected>Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table id="ilog-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Type</th>
+                            <th>Query</th>
+                            <th>Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ilog-body"></tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <button id="ilog-prev" class="btn-page" disabled>Prev</button>
+                <span id="ilog-page-info">--</span>
+                <button id="ilog-next" class="btn-page" disabled>Next</button>
+            </div>
+        </div>
+    </section>
+
+    <script src="/memory.js"></script>
+</body>
+</html>

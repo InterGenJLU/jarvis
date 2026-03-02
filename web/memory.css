@@ -1,0 +1,215 @@
+/* JARVIS Memory & System Health Page — extends dashboard.css */
+
+/* User selector + refresh button in header */
+#user-select {
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+#user-select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.btn-refresh {
+    background: var(--bg-input);
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.btn-refresh:hover {
+    border-color: var(--accent);
+}
+
+/* DB Health section */
+#db-health {
+    margin: 0 24px 32px;
+}
+
+#db-health h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+}
+
+.store-name {
+    font-family: monospace;
+    font-size: 0.82rem;
+    color: var(--accent);
+}
+
+.record-counts {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+/* Status badges */
+.status-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-ok { background: #064e3b; color: var(--success); }
+.status-warn { background: #451a03; color: var(--warning); }
+.status-err { background: #450a0a; color: var(--error); }
+.status-missing { background: var(--bg-tertiary); color: var(--text-dim); }
+
+/* Explorer tabs */
+#explorer {
+    margin: 0 24px 40px;
+}
+
+.tab-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-panel { display: block; }
+.tab-panel.hidden { display: none; }
+
+/* Explorer controls */
+.explorer-header {
+    margin-bottom: 12px;
+}
+
+.explorer-controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.explorer-controls select {
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+
+.explorer-controls select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Category badges */
+.cat-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.cat-preference { background: #0c4a6e; color: #38bdf8; }
+.cat-general    { background: #064e3b; color: #34d399; }
+.cat-relationship { background: #3b0764; color: #a78bfa; }
+.cat-work       { background: #451a03; color: #fbbf24; }
+.cat-location   { background: #431407; color: #fb923c; }
+.cat-health     { background: #450a0a; color: #f87171; }
+.cat-habit      { background: #1e1b4b; color: #818cf8; }
+
+/* Type tags */
+.type-tag {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.tag-research { background: #0c4a6e; color: #38bdf8; }
+.tag-tool     { background: #064e3b; color: #34d399; }
+.tag-doc      { background: #3b0764; color: #a78bfa; }
+.tag-skill    { background: #451a03; color: #fbbf24; }
+
+/* Table cells */
+.cell-subject {
+    font-weight: 500;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cell-content, .cell-summary, .cell-query {
+    max-width: 260px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cell-source, .cell-time {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+}
+
+/* Delete button */
+.btn-delete {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.btn-delete:hover {
+    color: var(--error);
+    border-color: var(--error);
+}
+
+/* Empty state */
+.empty-row {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 32px;
+    font-size: 0.85rem;
+}

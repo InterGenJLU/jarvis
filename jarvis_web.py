@@ -1695,6 +1695,386 @@ async def metrics_export_handler(request):
     )
 
 
+async def memory_page_handler(request):
+    """Serve memory.html for /memory."""
+    return web.FileResponse(Path(__file__).parent / 'web' / 'memory.html')
+
+
+async def memory_summary_handler(request):
+    """GET /api/memory/summary — Fact counts, context stats, FAISS size."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    memory_manager = components.get('memory_manager')
+    context_window = components.get('context_window')
+
+    result = {}
+
+    # Facts by category (all users combined for summary)
+    if memory_manager:
+        try:
+            counts_primary = await asyncio.to_thread(
+                memory_manager.get_fact_count, 'christopher'
+            )
+            # Sum all categories for the total
+            total_facts = sum(counts_primary.values())
+            result['facts'] = {
+                'total': total_facts,
+                'by_category': counts_primary,
+            }
+        except Exception as e:
+            result['facts'] = {'total': 0, 'by_category': {}, 'error': str(e)}
+
+        # Recent interaction log stats (7 days)
+        try:
+            interactions_7d = await asyncio.to_thread(
+                memory_manager.get_recent_interactions,
+                limit=500, days=7
+            )
+            by_type: dict = {}
+            for row in interactions_7d:
+                t = row.get('type', 'unknown')
+                by_type[t] = by_type.get(t, 0) + 1
+            result['interactions'] = {
+                'total_7d': len(interactions_7d),
+                'by_type': by_type,
+            }
+        except Exception as e:
+            result['interactions'] = {'total_7d': 0, 'by_type': {}, 'error': str(e)}
+
+        # FAISS index size
+        try:
+            faiss_vectors = memory_manager.faiss_index.ntotal if memory_manager.faiss_index else 0
+            faiss_dir = memory_manager.faiss_index_path
+            faiss_size = sum(f.stat().st_size for f in faiss_dir.iterdir() if f.is_file()) if faiss_dir.is_dir() else 0
+            result['faiss'] = {'vectors': faiss_vectors, 'size_bytes': faiss_size}
+        except Exception as e:
+            result['faiss'] = {'vectors': 0, 'size_bytes': 0, 'error': str(e)}
+    else:
+        result['facts'] = {'total': 0, 'by_category': {}}
+        result['interactions'] = {'total_7d': 0, 'by_type': {}}
+        result['faiss'] = {'vectors': 0, 'size_bytes': 0}
+
+    # Context window stats
+    if context_window:
+        try:
+            ctx_stats = await asyncio.to_thread(context_window.get_stats)
+            ctx_pct = await asyncio.to_thread(context_window.get_usage_percentage)
+            result['context'] = {
+                'usage_pct': round(ctx_pct, 1),
+                'segments': ctx_stats.get('segments', 0),
+                'estimated_tokens': ctx_stats.get('estimated_tokens', 0),
+            }
+        except Exception as e:
+            result['context'] = {'usage_pct': 0.0, 'segments': 0, 'estimated_tokens': 0, 'error': str(e)}
+    else:
+        result['context'] = {'usage_pct': 0.0, 'segments': 0, 'estimated_tokens': 0}
+
+    return web.json_response(result)
+
+
+async def memory_facts_handler(request):
+    """GET /api/memory/facts?category=&user_id=&sort=&offset=0&limit=50 — Paginated facts."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    memory_manager = components.get('memory_manager')
+    if not memory_manager:
+        return web.json_response({'error': 'Memory not enabled'}, status=503)
+
+    category = request.query.get('category', '') or None
+    user_id = request.query.get('user_id', 'christopher')
+    offset = max(0, int(request.query.get('offset', 0)))
+    limit = min(int(request.query.get('limit', 50)), 200)
+    sort = request.query.get('sort', 'last_referenced')
+
+    def _fetch_facts():
+        allowed_sorts = {'last_referenced', 'created_at', 'confidence', 'times_referenced'}
+        sort_col = sort if sort in allowed_sorts else 'last_referenced'
+        import sqlite3
+        with memory_manager._db_lock:
+            conn = sqlite3.connect(str(memory_manager.db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                base = "FROM facts WHERE user_id = ? AND deleted = 0 AND superseded_by IS NULL"
+                args = [user_id]
+                if category:
+                    base += " AND category = ?"
+                    args.append(category)
+                total = conn.execute(f"SELECT COUNT(*) {base}", args).fetchone()[0]
+                rows = conn.execute(
+                    f"SELECT * {base} ORDER BY {sort_col} DESC LIMIT ? OFFSET ?",
+                    args + [limit, offset]
+                ).fetchall()
+                facts = []
+                for r in rows:
+                    facts.append({
+                        'fact_id': r['fact_id'],
+                        'category': r['category'],
+                        'subject': r['subject'],
+                        'content': r['content'],
+                        'source': r['source'],
+                        'confidence': r['confidence'],
+                        'times_referenced': r['times_referenced'],
+                        'created_at': r['created_at'],
+                        'last_referenced': r['last_referenced'],
+                    })
+                return {'facts': facts, 'total': total, 'offset': offset, 'limit': limit}
+            finally:
+                conn.close()
+
+    data = await asyncio.to_thread(_fetch_facts)
+    return web.json_response(data)
+
+
+async def memory_fact_delete_handler(request):
+    """DELETE /api/memory/facts/{fact_id} — Soft-delete a fact."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    memory_manager = components.get('memory_manager')
+    if not memory_manager:
+        return web.json_response({'error': 'Memory not enabled'}, status=503)
+
+    fact_id = request.match_info['fact_id']
+    ok = await asyncio.to_thread(memory_manager.delete_fact, fact_id, True)
+    if ok:
+        return web.json_response({'deleted': fact_id})
+    return web.json_response({'error': 'Not found'}, status=404)
+
+
+async def memory_interactions_handler(request):
+    """GET /api/memory/interactions?type=&days=7&offset=0&limit=50 — Paginated interaction log."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    memory_manager = components.get('memory_manager')
+    if not memory_manager:
+        return web.json_response({'error': 'Memory not enabled'}, status=503)
+
+    type_filter = request.query.get('type', '') or None
+    days = int(request.query.get('days', 7))
+    offset = max(0, int(request.query.get('offset', 0)))
+    limit = min(int(request.query.get('limit', 50)), 200)
+    user_id = request.query.get('user_id', 'christopher')
+
+    def _fetch_interactions():
+        import sqlite3, time
+        cutoff = time.time() - (days * 86400)
+        with memory_manager._db_lock:
+            conn = sqlite3.connect(str(memory_manager.db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                base = "FROM interaction_log WHERE user_id = ? AND created_at > ?"
+                args = [user_id, cutoff]
+                if type_filter:
+                    base += " AND type = ?"
+                    args.append(type_filter)
+                total = conn.execute(f"SELECT COUNT(*) {base}", args).fetchone()[0]
+                rows = conn.execute(
+                    f"SELECT interaction_id, user_id, type, query, detail, answer_summary, created_at "
+                    f"{base} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    args + [limit, offset]
+                ).fetchall()
+                interactions = [dict(r) for r in rows]
+                return {'interactions': interactions, 'total': total, 'offset': offset, 'limit': limit}
+            finally:
+                conn.close()
+
+    data = await asyncio.to_thread(_fetch_interactions)
+    return web.json_response(data)
+
+
+async def memory_timeseries_handler(request):
+    """GET /api/memory/timeseries?days=30 — Interaction counts over time by type."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    memory_manager = components.get('memory_manager')
+    if not memory_manager:
+        return web.json_response({'error': 'Memory not enabled'}, status=503)
+
+    days = min(int(request.query.get('days', 30)), 365)
+    user_id = request.query.get('user_id', 'christopher')
+
+    def _fetch_timeseries():
+        import sqlite3, time, datetime
+        cutoff = time.time() - (days * 86400)
+        with memory_manager._db_lock:
+            conn = sqlite3.connect(str(memory_manager.db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """SELECT date(created_at, 'unixepoch', 'localtime') AS day,
+                              type, COUNT(*) AS cnt
+                       FROM interaction_log
+                       WHERE user_id = ? AND created_at > ?
+                       GROUP BY day, type ORDER BY day""",
+                    (user_id, cutoff)
+                ).fetchall()
+                # Pivot into list of {date, research, tool_call, document, skill, total}
+                days_map: dict = {}
+                for r in rows:
+                    d = r['day']
+                    if d not in days_map:
+                        days_map[d] = {'date': d, 'research': 0, 'tool_call': 0, 'document': 0, 'skill': 0, 'total': 0}
+                    days_map[d][r['type']] = days_map[d].get(r['type'], 0) + r['cnt']
+                    days_map[d]['total'] += r['cnt']
+                series = sorted(days_map.values(), key=lambda x: x['date'])
+                return {'series': series}
+            finally:
+                conn.close()
+
+    data = await asyncio.to_thread(_fetch_timeseries)
+    return web.json_response(data)
+
+
+async def memory_db_health_handler(request):
+    """GET /api/memory/db-health — All data store sizes, row counts, and status."""
+    import sqlite3, time as _time, datetime
+
+    data_dir = Path('/mnt/storage/jarvis/data')
+    conversations_dir = data_dir / 'conversations'
+
+    stores_config = [
+        {
+            'name': 'memory.db',
+            'path': str(data_dir / 'memory.db'),
+            'tables': {'facts': 'SELECT COUNT(*) FROM facts WHERE deleted = 0',
+                       'interaction_log': 'SELECT COUNT(*) FROM interaction_log'},
+        },
+        {
+            'name': 'reminders.db',
+            'path': str(data_dir / 'reminders.db'),
+            'tables': {'reminders': 'SELECT COUNT(*) FROM reminders WHERE status = "pending"',
+                       'reminders_total': 'SELECT COUNT(*) FROM reminders'},
+        },
+        {
+            'name': 'metrics.db',
+            'path': str(data_dir / 'metrics.db'),
+            'tables': {'llm_interactions': 'SELECT COUNT(*) FROM llm_interactions'},
+        },
+        {
+            'name': 'news_headlines.db',
+            'path': str(data_dir / 'news_headlines.db'),
+            'tables': {'news_headlines': 'SELECT COUNT(*) FROM news_headlines'},
+        },
+        {
+            'name': 'people.db',
+            'path': str(data_dir / 'people.db'),
+            'tables': {'people': 'SELECT COUNT(*) FROM people'},
+        },
+        {
+            'name': 'web_queries.db',
+            'path': str(data_dir / 'web_queries.db'),
+            'tables': {'web_queries': 'SELECT COUNT(*) FROM web_queries'},
+        },
+        {
+            'name': 'profiles.db',
+            'path': str(data_dir / 'profiles' / 'profiles.db'),
+            'tables': {'profiles': 'SELECT COUNT(*) FROM profiles'},
+        },
+    ]
+
+    def _check_stores():
+        results = []
+        now = _time.time()
+
+        for cfg in stores_config:
+            p = Path(cfg['path'])
+            entry = {
+                'name': cfg['name'],
+                'path': cfg['path'],
+                'size_bytes': 0,
+                'row_counts': {},
+                'last_modified': None,
+                'status': 'missing',
+            }
+            if p.exists():
+                stat = p.stat()
+                entry['size_bytes'] = stat.st_size
+                entry['last_modified'] = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+                stale = (now - stat.st_mtime) > 86400 * 2  # >2 days old = warn
+                try:
+                    conn = sqlite3.connect(str(p))
+                    row_counts = {}
+                    for label, sql in cfg.get('tables', {}).items():
+                        try:
+                            row_counts[label] = conn.execute(sql).fetchone()[0]
+                        except Exception:
+                            row_counts[label] = None
+                    conn.close()
+                    entry['row_counts'] = row_counts
+                    entry['status'] = 'warning' if stale else 'ok'
+                except Exception as e:
+                    entry['status'] = 'error'
+                    entry['error'] = str(e)
+            results.append(entry)
+
+        # chat_history.jsonl
+        jsonl = conversations_dir / 'chat_history.jsonl'
+        jsonl_entry = {
+            'name': 'chat_history.jsonl',
+            'path': str(jsonl),
+            'size_bytes': 0,
+            'row_counts': {'messages': 0},
+            'last_modified': None,
+            'status': 'missing',
+        }
+        if jsonl.exists():
+            stat = jsonl.stat()
+            jsonl_entry['size_bytes'] = stat.st_size
+            jsonl_entry['last_modified'] = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+            try:
+                with open(jsonl, 'r', encoding='utf-8') as f:
+                    jsonl_entry['row_counts']['messages'] = sum(1 for line in f if line.strip())
+                jsonl_entry['status'] = 'ok'
+            except Exception as e:
+                jsonl_entry['status'] = 'error'
+                jsonl_entry['error'] = str(e)
+        results.append(jsonl_entry)
+
+        # FAISS index directory
+        faiss_dir = data_dir / 'memory_faiss'
+        faiss_entry = {
+            'name': 'FAISS index',
+            'path': str(faiss_dir),
+            'size_bytes': 0,
+            'row_counts': {'vectors': 0},
+            'last_modified': None,
+            'status': 'missing',
+        }
+        if faiss_dir.is_dir():
+            files = list(faiss_dir.iterdir())
+            total_size = sum(f.stat().st_size for f in files if f.is_file())
+            faiss_entry['size_bytes'] = total_size
+            meta = faiss_dir / 'default_meta.jsonl'
+            if meta.exists():
+                faiss_entry['last_modified'] = datetime.datetime.fromtimestamp(meta.stat().st_mtime).strftime('%Y-%m-%d %H:%M')
+                try:
+                    with open(meta, 'r', encoding='utf-8') as f:
+                        faiss_entry['row_counts']['vectors'] = sum(1 for line in f if line.strip())
+                    faiss_entry['status'] = 'ok'
+                except Exception as e:
+                    faiss_entry['status'] = 'error'
+                    faiss_entry['error'] = str(e)
+            else:
+                faiss_entry['status'] = 'ok'
+        results.append(faiss_entry)
+
+        # Total size
+        total_bytes = sum(s['size_bytes'] for s in results)
+        return {'stores': results, 'total_bytes': total_bytes}
+
+    data = await asyncio.to_thread(_check_stores)
+    return web.json_response(data)
+
+
 async def dashboard_ws_handler(request):
     """WebSocket endpoint for live dashboard metric updates."""
     ws = web.WebSocketResponse()
@@ -1743,6 +2123,13 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/metrics/interactions', metrics_interactions_handler)
     app.router.add_get('/api/metrics/filters', metrics_filters_handler)
     app.router.add_get('/api/metrics/export', metrics_export_handler)
+    app.router.add_get('/memory', memory_page_handler)
+    app.router.add_get('/api/memory/summary', memory_summary_handler)
+    app.router.add_get('/api/memory/facts', memory_facts_handler)
+    app.router.add_delete('/api/memory/facts/{fact_id}', memory_fact_delete_handler)
+    app.router.add_get('/api/memory/interactions', memory_interactions_handler)
+    app.router.add_get('/api/memory/timeseries', memory_timeseries_handler)
+    app.router.add_get('/api/memory/db-health', memory_db_health_handler)
     app.router.add_get('/', index_handler)
     app.router.add_static('/', web_dir)
 
