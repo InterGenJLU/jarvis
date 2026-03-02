@@ -1,42 +1,37 @@
 # TODO — Next Session
 
-**Updated:** March 1, 2026 (session 115)
+**Updated:** March 1, 2026 (session 116)
 
 ---
+
+## Session 116 Completed
+
+### Google Calendar Multi-Notification Support (COMMITTED)
+- **Context:** User migrating ALL recurring events (birthdays, anniversaries, meetings, appointments) to the JARVIS calendar. Most events have 2 notification offsets (e.g., 1 week + 4 days, or 1 hour + 30 min).
+- **Problem:** Previous code only honored the earliest notification (`max(popup_minutes)`), silently dropping all other offsets. Also, the loop fix from session 115 was uncommitted.
+- **Changes in `core/google_calendar.py`:**
+  - `_parse_google_event()` now returns `reminder_minutes_list` (all offsets) instead of single `reminder_minutes`
+  - Poll loop calls `_on_new_event()` once per offset, creating separate JARVIS reminders for each
+- **Changes in `core/reminder_manager.py`:**
+  - Composite key `base_event_id:offset` in `google_event_id` column for per-offset dedup
+  - `_find_all_by_google_event_id()` — prefix match for cancellation (cancels all offsets at once)
+  - `_base_google_event_id()` — strips `:offset` suffix before Google API calls (delete, update, snooze)
+  - Past-event guard (>1hr) and LIMIT 3 firing cap from session 115 now committed
+- **Verified:** 250 events → 530 reminders (2 per event), all composite keys, zero errors, no firing loop
+- **DB cleaned:** Deleted 605 old-format reminders, deleted sync token, fresh re-sync with new format
 
 ## Session 115 Completed
 
 ### Bug Fixes (both were live-affecting)
 
-**1. Calendar Notification Loop — FIXED**
-- **Symptom:** JARVIS stuck firing "Chris - Paycheck" every ~6 seconds in an endless TTS loop (reached reminder #107+ before we killed it)
-- **Root cause:** Moving a recurring Google Calendar event into the JARVIS calendar triggered `singleEvents=True` sync, which expanded ALL instances back to 2019. `_on_google_new_event()` had no time filter — it created 175 local reminders with past dates. `_check_due_reminders()` found all 154 pending ones as "due" and fired them sequentially.
-- **Fix 1:** Added past-event guard in `_on_google_new_event()` — skips events with `start_time > 1hr in the past`
-- **Fix 2:** Added `LIMIT 3` cap in `_check_due_reminders()` as safety net against future floods
-- **Data cleanup:** Marked 188 historical reminders as completed. 74 future reminders (birthday through 2099) left intact.
-- **Files:** `core/reminder_manager.py` (lines 1335-1338, 488)
+**1. Calendar Notification Loop — FIXED (committed in session 116)**
+- **Symptom:** JARVIS stuck firing reminders every ~6 seconds in an endless TTS loop
+- **Root cause:** `singleEvents=True` expanded ALL recurring instances (including past). No time filter.
+- **Fix:** Past-event guard + LIMIT 3 cap + multi-notification composite keys (see session 116)
 
 **2. Volume Slider Unresponsive — PERMANENTLY FIXED (3rd occurrence)**
-- **Symptom:** GNOME volume slider did nothing. Only HDMI sink in PipeWire, no analog output.
-- **Root cause:** Realtek ALCS1200A has broken jack detect. PipeWire/WirePlumber sees output ports as "not available" and auto-selects `input:analog-stereo` profile (no output sink). Previous fixes were ephemeral `pactl` commands.
-- **Permanent fix:** Created WirePlumber config `~/.config/wireplumber/wireplumber.conf.d/51-realtek-analog-output.conf` that forces `output:analog-stereo+input:analog-stereo` profile. Verified it survives WirePlumber restart.
-- **Note:** JARVIS TTS always worked (direct ALSA `plughw:2,0` bypasses PipeWire). This only affected the system volume slider.
-
-### Memory Notes Saved
-- `memory/fix_realtek_audio_sink.md` — full diagnosis, quick fix, permanent fix, verification steps
-- `memory/MEMORY.md` — added "Known Recurring Issues" section with both bugs
-- `memory/codebase_cheat_sheet.md` — gotchas #17 (calendar sync) and #18 (Realtek sink)
-
-### Code Changes (uncommitted)
-- `core/reminder_manager.py` — past-event guard + LIMIT 3 safety cap
-- `~/.config/wireplumber/wireplumber.conf.d/51-realtek-analog-output.conf` — permanent audio fix (not in git, system config)
-
-### ⚠️ CRITICAL: Session ended with recurring loop NOT fully resolved
-- The first fix (past-event guard + LIMIT 3) was correct but the service wasn't actually restarted after the edit — PID 167850 was the SAME process from before the code change.
-- "Dogs due for Simparica" triggered a second loop. Cleaned 8 more historical reminders and restarted service (should now have the fix loaded).
-- **VERIFY ON NEXT SESSION**: Check `journalctl --user -u jarvis.service -n 30` to confirm no looping. If it loops again, the Google Calendar sync_token may need to be invalidated so it stops re-syncing old events. File: `/mnt/storage/jarvis/data/google_sync_token.json`
-- The root problem is `sync_from_google()` with `singleEvents=True` expanding ALL instances of recurring events. The past-event guard in `_on_google_new_event()` should filter them, but verify it's working.
-- If still broken: delete sync token to force full re-sync (which uses `timeMin=now` and won't return past events), then the incremental sync should only return future changes.
+- **Permanent fix:** WirePlumber config `~/.config/wireplumber/wireplumber.conf.d/51-realtek-analog-output.conf` forces duplex profile
+- **Note:** JARVIS TTS unaffected (direct ALSA `plughw:2,0` bypasses PipeWire)
 
 ---
 

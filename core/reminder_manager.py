@@ -1345,6 +1345,13 @@ class ReminderManager:
             reminder_time = start_time
             event_time = None
 
+        # Skip if the computed reminder_time is already past (e.g., future event
+        # with a large offset like 1 week — the notification window already passed)
+        if reminder_time < datetime.now() - timedelta(hours=1):
+            self.logger.debug(f"Skipping past reminder time for '{title}': "
+                              f"reminder={reminder_time}, event={start_time}")
+            return -1
+
         # Composite key: base_event_id:offset — allows multiple reminders per event
         composite_id = f"{google_event_id}:{reminder_minutes}" if reminder_minutes else google_event_id
 
