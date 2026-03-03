@@ -16,6 +16,11 @@
     const statusEl = document.getElementById('connection-status');
     const voiceToggle = document.getElementById('voice-toggle');
     const userSelect = document.getElementById('user-select');
+
+    function getUserDisplayName() {
+        const opt = userSelect.options[userSelect.selectedIndex];
+        return opt ? opt.textContent.toUpperCase() : 'YOU';
+    }
     const btnRestart = document.getElementById('btn-restart');
     const docIndicator = document.getElementById('doc-indicator');
     const docInfo = document.getElementById('doc-info');
@@ -95,10 +100,30 @@
     let sidebarOpen = false;
     let sessionsHasMore = false;
 
-    // Command history
-    const commandHistory = [];
+    // Command history (persisted per-user in localStorage)
+    let commandHistory = [];
     let historyIndex = -1;
     let pendingInput = '';
+    const MAX_HISTORY = 100;
+
+    function loadCommandHistory() {
+        const uid = userSelect.value || 'default';
+        try {
+            commandHistory = JSON.parse(localStorage.getItem('jarvis-cmd-history-' + uid)) || [];
+        } catch (e) {
+            commandHistory = [];
+        }
+        historyIndex = -1;
+        pendingInput = '';
+    }
+
+    function saveCommandHistory() {
+        const uid = userSelect.value || 'default';
+        const trimmed = commandHistory.slice(-MAX_HISTORY);
+        localStorage.setItem('jarvis-cmd-history-' + uid, JSON.stringify(trimmed));
+    }
+
+    loadCommandHistory();
 
     // --- WebSocket ---
     function connect() {
@@ -282,7 +307,7 @@
         if (role !== 'error') {
             const sender = document.createElement('div');
             sender.className = 'message-sender';
-            sender.textContent = role === 'user' ? 'YOU' : 'J.A.R.V.I.S.';
+            sender.textContent = role === 'user' ? getUserDisplayName() : 'J.A.R.V.I.S.';
             messageDiv.appendChild(sender);
         }
 
@@ -590,6 +615,7 @@
         // Record in command history (avoid duplicating last entry)
         if (commandHistory.length === 0 || commandHistory[commandHistory.length - 1] !== text) {
             commandHistory.push(text);
+            saveCommandHistory();
         }
         historyIndex = -1;
         pendingInput = '';
@@ -1006,6 +1032,7 @@
     userSelect.addEventListener('change', function () {
         const uid = userSelect.value;
         localStorage.setItem('jarvis-user', uid);
+        loadCommandHistory();
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'set_user', user_id: uid }));
         }
@@ -1030,7 +1057,7 @@
 
             var sender = document.createElement('div');
             sender.className = 'message-sender';
-            sender.textContent = role === 'user' ? 'YOU' : 'J.A.R.V.I.S.';
+            sender.textContent = role === 'user' ? getUserDisplayName() : 'J.A.R.V.I.S.';
             messageDiv.appendChild(sender);
 
             var bubble = document.createElement('div');
@@ -1273,7 +1300,7 @@
 
                         var sender = document.createElement('div');
                         sender.className = 'message-sender';
-                        sender.textContent = role === 'user' ? 'YOU' : 'J.A.R.V.I.S.';
+                        sender.textContent = role === 'user' ? getUserDisplayName() : 'J.A.R.V.I.S.';
                         messageDiv.appendChild(sender);
 
                         var bubble = document.createElement('div');

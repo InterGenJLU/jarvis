@@ -949,7 +949,9 @@ class ConversationRouter:
         """
         tools = self._select_tools_for_command(command)
         if not tools:
+            logger.info(f"P4-LLM: no tools selected for: {command[:80]}")
             return None
+        logger.info(f"P4-LLM: selected {len(tools)} tools, routing to LLM")
 
         # Prepare the same LLM context as _prepare_llm_context()
         result = self._prepare_llm_context(
@@ -1004,6 +1006,7 @@ class ConversationRouter:
         # Score ALL skills (migrated and non-migrated) to find the best match
         best_migrated_score = 0.0
         best_non_migrated_score = 0.0
+        web_nav_score = 0.0
         matched_tools = []  # [(score, tool_schema), ...]
 
         for skill_name, skill in sm.skills.items():
@@ -1022,6 +1025,8 @@ class ConversationRouter:
                 if max_sim > skill_best:
                     skill_best = max_sim
 
+            logger.info(f"  Tool pruning: {skill_name} = {skill_best:.2f}")
+
             if skill_name in self._TOOL_SKILL_MAP:
                 # Migrated skill — track for tool selection
                 if skill_best > best_migrated_score:
@@ -1031,16 +1036,24 @@ class ConversationRouter:
                     tool_schema = SKILL_TOOLS.get(tool_name)
                     if tool_schema:
                         matched_tools.append((skill_best, tool_schema))
-                        logger.debug(
-                            f"Tool pruning: {tool_name} matched "
-                            f"(score={skill_best:.2f})"
-                        )
             else:
-                # Non-migrated skill — track best score for guard check
-                if skill_best > best_non_migrated_score:
+                # Non-migrated skill — track best score for guard check.
+                if skill_name == 'web_navigation':
+                    web_nav_score = skill_best
+                elif skill_best > best_non_migrated_score:
                     best_non_migrated_score = skill_best
 
         if not matched_tools:
+            # No domain tools matched, but if web_navigation scored well,
+            # route through LLM with web_search instead of letting P4 open
+            # a browser (which makes no sense in web UI, and web_search gives
+            # better in-chat results for informational queries).
+            if web_nav_score >= self._TOOL_PRUNE_THRESHOLD:
+                logger.info(
+                    f"Tool pruning: no domain tools, but web_navigation scored "
+                    f"{web_nav_score:.2f} — routing to LLM with web_search"
+                )
+                return [WEB_SEARCH_TOOL]
             return None
 
         # Guard: if a non-migrated skill scores higher, defer to P4

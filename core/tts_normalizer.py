@@ -85,6 +85,9 @@ class TTSNormalizer:
             "urls": self.normalize_urls,
             "paths": self.normalize_paths,
             "filenames": self.normalize_filenames,  # Standalone filenames (after paths)
+            "measurements": self.normalize_measurements,  # 150g → grams, 2 tbsp → tablespoons (before file_sizes!)
+            "fractions": self.normalize_fractions,  # 1/2 → one-half, 3 1/3 → three and one-third (AFTER measurements, BEFORE paths)
+            "temperatures": self.normalize_temperatures,  # 475°F → 475 degrees Fahrenheit
             "currency": self.normalize_currency,  # $3.8 billion → spoken (before decimals)
             "decimals": self.normalize_decimals,  # 30.1 → thirty point one (before numbers)
             "technical_terms": self.normalize_technical_terms,
@@ -130,8 +133,11 @@ class TTSNormalizer:
         text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
         # Bullet markers at start of line: - item or * item → item
         text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
-        # Numbered list: 1. item → item
-        text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+        # Numbered list: "1. item" → "Step 1... item" (preserve step context for spoken delivery)
+        def _numbered_list(match):
+            num = match.group(1)
+            return f"Step {num}... "
+        text = re.sub(r'^(\d+)\.\s+', _numbered_list, text, flags=re.MULTILINE)
         return text
 
     # ========== Pauses / Punctuation ==========
@@ -559,7 +565,7 @@ class TTSNormalizer:
             # Keep the number as-is for natural speech
             return f"{number} {unit_word}"
         
-        return re.sub(size_pattern, size_to_spoken, text, flags=re.IGNORECASE)
+        return re.sub(size_pattern, size_to_spoken, text)
     
     # ========== Timestamps ==========
     def normalize_timestamps(self, text: str) -> str:
@@ -662,7 +668,7 @@ class TTSNormalizer:
         /home/user/.local/bin → 'slash home slash user slash dot local slash bin'
         Speaks slashes so paths are unambiguous.
         """
-        path_pattern = r"/(?:[\w\-\.]+/)*[\w\-\.]+(?:\.\w+)?"
+        path_pattern = r"(?<!\d)/(?:[\w\-\.]+/)*[\w\-\.]+(?:\.\w+)?"
 
         def path_to_spoken(match):
             path = match.group(0)
@@ -716,6 +722,117 @@ class TTSNormalizer:
             return f"{name} dot {ext}"
 
         return re.sub(pattern, filename_to_spoken, text, flags=re.IGNORECASE)
+
+    # ========== Cooking / Physical Measurements ==========
+    def normalize_measurements(self, text: str) -> str:
+        """Convert cooking and physical measurement units to spoken form.
+
+        Runs BEFORE file_sizes to prevent 150g → '150 gigabytes'.
+
+        Examples:
+            150g → '150 grams'
+            2 tbsp → '2 tablespoons'
+            1 tsp → '1 teaspoon'
+            500ml → '500 milliliters'
+            8oz → '8 ounces'
+            2lb → '2 pounds'
+            1kg → '1 kilogram'
+        """
+        # Multi-char units first (no file-size conflicts, case-insensitive OK)
+        multi_units = [
+            (r'tbsp', 'tablespoon', 'tablespoons'),
+            (r'tsp', 'teaspoon', 'teaspoons'),
+            (r'fl\.?\s*oz', 'fluid ounce', 'fluid ounces'),
+            (r'oz', 'ounce', 'ounces'),
+            (r'lbs', 'pounds', 'pounds'),   # lbs before lb
+            (r'lb', 'pound', 'pounds'),
+            (r'kg', 'kilogram', 'kilograms'),
+            (r'mg', 'milligram', 'milligrams'),
+            (r'ml', 'milliliter', 'milliliters'),
+        ]
+
+        for unit_pat, singular, plural in multi_units:
+            pattern = rf'(\d+(?:\.\d+)?)\s*{unit_pat}\b'
+
+            def repl(m, s=singular, p=plural):
+                return f'{m.group(1)} {s if m.group(1) == "1" else p}'
+
+            text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
+
+        # Lowercase 'g' only — case-sensitive so 5G/5GB still hit file_sizes
+        def _grams_repl(m):
+            return f'{m.group(1)} {"gram" if m.group(1) == "1" else "grams"}'
+
+        text = re.sub(r'(\d+(?:\.\d+)?)\s*g\b', _grams_repl, text)
+
+        return text
+
+    # ========== Fractions ==========
+    _FRACTION_WORDS = {
+        (1, 2): "one-half", (1, 3): "one-third", (2, 3): "two-thirds",
+        (1, 4): "one-quarter", (3, 4): "three-quarters",
+        (1, 5): "one-fifth", (2, 5): "two-fifths", (3, 5): "three-fifths",
+        (4, 5): "four-fifths",
+        (1, 6): "one-sixth", (5, 6): "five-sixths",
+        (1, 8): "one-eighth", (3, 8): "three-eighths",
+        (5, 8): "five-eighths", (7, 8): "seven-eighths",
+    }
+
+    def normalize_fractions(self, text: str) -> str:
+        """Convert fractions to spoken form.
+
+        Handles:
+            3 1/3  → 'three and one-third'
+            1/2    → 'one-half'
+            1/4    → 'one-quarter'
+            2 3/4  → 'two and three-quarters'
+        """
+        # Mixed fractions first: "3 1/3", "2 3/4" (whole number + space + fraction)
+        def _mixed_repl(match):
+            whole = int(match.group(1))
+            num = int(match.group(2))
+            den = int(match.group(3))
+            frac = self._FRACTION_WORDS.get((num, den))
+            if frac is None:
+                return match.group(0)
+            whole_word = self._number_to_words(whole)
+            return f"{whole_word} and {frac}"
+
+        text = re.sub(r'\b(\d+)\s+(\d+)/(\d+)\b', _mixed_repl, text)
+
+        # Standalone fractions: "1/2", "3/4"
+        def _frac_repl(match):
+            num = int(match.group(1))
+            den = int(match.group(2))
+            frac = self._FRACTION_WORDS.get((num, den))
+            if frac is None:
+                return match.group(0)
+            return frac
+
+        text = re.sub(r'\b(\d+)/(\d+)\b', _frac_repl, text)
+
+        return text
+
+    # ========== Temperatures ==========
+    def normalize_temperatures(self, text: str) -> str:
+        """Convert temperature notation to spoken form.
+
+        475°F → '475 degrees Fahrenheit'
+        200°C → '200 degrees Celsius'
+        98.6°F → '98.6 degrees Fahrenheit'
+        -40°C → 'negative 40 degrees Celsius'
+        """
+        def temp_to_spoken(match):
+            num = match.group(1)
+            unit = match.group(2).upper()
+            unit_word = "Fahrenheit" if unit == "F" else "Celsius"
+            return f"{num} degrees {unit_word}"
+
+        # Match: optional negative, digits with optional decimal, °, F or C
+        text = re.sub(r'(-?\d+(?:\.\d+)?)\s*°\s*([FfCc])\b', temp_to_spoken, text)
+        # Also catch the word "degrees" already written: "475 degrees F"
+        text = re.sub(r'(\d+(?:\.\d+)?)\s+degrees\s+([FfCc])\b', temp_to_spoken, text)
+        return text
 
     # ========== Currency ==========
     def normalize_currency(self, text: str) -> str:

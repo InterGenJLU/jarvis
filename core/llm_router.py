@@ -22,7 +22,7 @@ from pathlib import Path
 
 from datetime import date, datetime
 from core.logger import get_logger
-from core.honorific import get_honorific
+from core.honorific import get_honorific, get_formal_address
 import requests
 import json
 
@@ -108,7 +108,7 @@ class LLMRouter:
             r"\s*I'm here (?:to help|if you need).*$",
             r"\s*How (?:can|may) I (?:assist|help) you (?:further|today).*$",
             r"\s*Is there anything else (?:you )?(?:need|want|would like|I can).*$",
-            r"\s*Would you like (?:to know|me to|anything).*$",
+            r"\s*Would you like (?:to know|anything else|more details|further).*$",
             r"\s*(?:Do you )?[Nn]eed (?:anything|something) else.*$",
             r"\s*What else (?:can|may|would) (?:I|you).*$",
         ]
@@ -923,7 +923,11 @@ class LLMRouter:
                 "'you might want to check', or tell the user to look it up themselves. "
                 "If you don't know, SEARCH.\n"
                 "4. When in doubt: SEARCH. An unnecessary search is harmless. "
-                "A wrong answer is unacceptable.\n\n"
+                "A wrong answer is unacceptable.\n"
+                "5. When building search queries, extract ONLY the informational need. "
+                "Strip conversational filler ('can you find me', 'I need', 'please', "
+                "'I'm hungry'). Example: 'Can you find me a good homemade pizza recipe?' "
+                "→ query: 'best homemade pizza recipe'.\n\n"
                 "ONLY skip the search for:\n"
                 "- Greetings ('hello', 'how are you', 'thanks')\n"
                 "- Creative requests (jokes, stories, poems)\n"
@@ -1178,35 +1182,60 @@ class LLMRouter:
         now = datetime.now()
         today = now.strftime("%B %d, %Y")
         current_time = now.strftime("%I:%M %p").lstrip("0")
+        h = get_honorific()
+        formal = get_formal_address()
+        if formal:
+            honorific_rule = (
+                f"The user is {formal}. If your response is a greeting or farewell, "
+                f"YOU MUST use '{formal}'. For mid-conversation replies, YOU MUST use '{h}'. "
+                f"YOU MUST check your previous response — if you used '{formal}' last time, use '{h}' this time, and vice versa."
+            )
+        else:
+            honorific_rule = f"YOU MUST address the user as '{h}' naturally in your response."
         if tools:
             # Multi-tool mode: allow LLM to call remaining tools before answering
             messages.append({
                 "role": "user",
                 "content": (
-                    f"Today's date is {today}. Current time: {current_time}. "
-                    "You have one tool result above. Check the user's ORIGINAL request — "
-                    "if they asked for multiple things (e.g. 'time AND weather'), "
-                    "call the next tool NOW. No location is needed for get_weather. "
-                    "Only give a final answer when you have ALL requested information. "
-                    "Do NOT start with 'Sir' — jump straight into the answer."
+                    f"Today's date is {today}. Current time: {current_time}.\n"
+                    "RULES — follow these EXACTLY:\n"
+                    "1. Check the user's ORIGINAL request. If they asked for multiple things "
+                    "(e.g. 'time AND weather'), YOU MUST call the next tool NOW. "
+                    "DO NOT give a final answer until you have ALL requested information.\n"
+                    "2. If the user asked for a recipe, instructions, how-to, or steps: "
+                    "YOU MUST pick the single best result from the search results. "
+                    "Describe it briefly (title, source, why it's a good pick) "
+                    "AND THEN ASK 'Would you like me to read through it all for you?' and then STOP. "
+                    "DO NOT list ingredients or steps. DO NOT list multiple results.\n"
+                    f"3. {honorific_rule}\n"
+                    "4. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
+                    "YOU MUST jump straight into the answer."
                 ),
             })
         else:
             messages.append({
                 "role": "user",
                 "content": (
-                    f"Today's date is {today}. Current time: {current_time}. "
-                    "Based on the search results above, give a direct, concise answer. "
-                    "Include specific details like scores, dates, and numbers when available. "
-                    "Maintain strict political neutrality — present facts objectively without "
-                    "editorial bias, emphasis on controversies, or opinionated framing. "
-                    "CRITICAL: Compare any event dates in the results against today's date. "
-                    "If an event is scheduled for a FUTURE date, clearly state it hasn't "
-                    "happened yet — do NOT report predictions, odds, or speculation as fact. "
-                    "If the results do NOT contain a clear answer, say so honestly. "
-                    "NEVER fabricate or guess. "
-                    "Do NOT start with 'Sir' — jump straight into the answer. "
-                    "NEVER tell the user to check another website or look elsewhere. "
+                    f"Today's date is {today}. Current time: {current_time}.\n"
+                    "RULES — follow these EXACTLY:\n"
+                    "1. If the user asked for a recipe, instructions, how-to, or steps: "
+                    "YOU MUST describe what you found (title, source, why it's good) "
+                    "AND THEN ASK 'Would you like me to read through it all for you?' and then STOP. "
+                    "DO NOT list ingredients or steps unless the user gives you an affirmative answer.\n"
+                    "2. YOU MUST give a direct answer based on the search results above. "
+                    "YOU MUST include specific details like scores, dates, and numbers when available. "
+                    "YOU MUST pick the best result and present it as your own answer.\n"
+                    "3. YOU MUST maintain strict political neutrality — present facts objectively. "
+                    "DO NOT add editorial bias, emphasis on controversies, or opinionated framing.\n"
+                    "4. YOU MUST compare any event dates in the results against today's date. "
+                    "If an event is scheduled for a FUTURE date, YOU MUST clearly state it hasn't "
+                    "happened yet. DO NOT report predictions, odds, or speculation as fact.\n"
+                    "5. If the results DO NOT contain a clear answer, YOU MUST say so honestly. "
+                    "DO NOT fabricate or guess.\n"
+                    f"6. {honorific_rule}\n"
+                    "7. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
+                    "YOU MUST jump straight into the answer. "
+                    "DO NOT tell the user to check another website or look elsewhere. "
                     "You ARE their source of information."
                 ),
             })

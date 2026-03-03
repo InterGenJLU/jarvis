@@ -419,6 +419,45 @@ class TextToSpeech:
         trim_point = min(last_sound + keep_samples, len(audio_np))
         return audio_np[:trim_point]
 
+    def _compress_pauses(self, audio_np, max_silence_ms=50, threshold=0.015):
+        """Squeeze mid-utterance silences to max_silence_ms.
+
+        Kokoro inserts prosodic pauses at clause boundaries (commas, titles,
+        etc.) that sound robotic.  This keeps the natural prosody but caps
+        how long any interior silence can last.
+        """
+        np = self._np
+        sr = self.sample_rate
+        window = int(sr * 0.01)  # 10ms analysis window
+        max_silence_samples = int(sr * max_silence_ms / 1000)
+        n_windows = len(audio_np) // window
+        if n_windows < 2:
+            return audio_np
+
+        rms = np.array([
+            np.sqrt(np.mean(audio_np[i * window:(i + 1) * window] ** 2))
+            for i in range(n_windows)
+        ])
+        voiced = np.where(rms >= threshold)[0]
+        if len(voiced) < 2:
+            return audio_np
+        first_voiced = voiced[0]
+        last_voiced = voiced[-1]
+
+        result = [audio_np[:first_voiced * window]]
+        silent_run = 0
+        for i in range(first_voiced, last_voiced + 1):
+            chunk = audio_np[i * window:(i + 1) * window]
+            if rms[i] < threshold:
+                silent_run += window
+                if silent_run <= max_silence_samples:
+                    result.append(chunk)
+            else:
+                silent_run = 0
+                result.append(chunk)
+        result.append(audio_np[(last_voiced + 1) * window:])
+        return np.concatenate(result)
+
     def _speak_kokoro(self, text: str) -> bool:
         """Generate and play audio via Kokoro — streaming with lazy aplay.
 
@@ -430,10 +469,6 @@ class TextToSpeech:
         """
         t0 = time.time()
 
-        # Strip commas — Kokoro inserts a prosodic drop + long pause at
-        # comma boundaries that sounds robotic in short phrases.
-        text = text.replace(",", "")
-
         aplay = None
         total_samples = 0
         first_chunk_time = None
@@ -442,7 +477,6 @@ class TextToSpeech:
                 text, voice=self._kokoro_voice, speed=self._kokoro_speed
             ):
                 audio_np = self._np.asarray(audio)
-                audio_np = self._trim_trailing_silence(audio_np)
                 pcm = (audio_np * 32767).astype(self._np.int16).tobytes()
 
                 # Lazy open: defer aplay until first audio is ready.

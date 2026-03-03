@@ -13,6 +13,7 @@ _last_research_exchange) that were spread across pipeline.py.
 from dataclasses import dataclass, field
 from typing import Optional
 import time
+import uuid
 
 
 @dataclass
@@ -32,6 +33,7 @@ class ConversationState:
     # --- Research context (replaces pipeline._last_research_*) ---
     research_results: Optional[list] = None    # Cached web search results
     research_exchange: Optional[dict] = None   # {"query": ..., "answer": ...}
+    last_tool_result_text: str = ""            # Full formatted tool result for follow-up reads
 
     # --- Conversation depth ---
     turn_count: int = 0                    # Number of user turns in current window
@@ -39,6 +41,9 @@ class ConversationState:
     # --- Task planner ---
     active_plan: Optional[dict] = None   # Active multi-step plan (set by task planner)
     pending_plan_confirmation: bool = False  # Waiting for yes/no on destructive plan
+
+    # --- Artifact cache ---
+    window_id: str = ""                  # Conversation window scope for artifact cache
 
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
@@ -70,6 +75,7 @@ class ConversationState:
         """Mark conversation window as active."""
         self.conversation_active = True
         self.window_opened_at = time.time()
+        self.window_id = uuid.uuid4().hex[:12]
 
     def close_window(self):
         """Reset all turn state on conversation window close."""
@@ -77,6 +83,7 @@ class ConversationState:
         self.jarvis_asked_question = False
         self.research_results = None
         self.research_exchange = None
+        self.last_tool_result_text = ""
         self.active_plan = None
         self.pending_plan_confirmation = False
         self.last_intent = ""
@@ -84,6 +91,7 @@ class ConversationState:
         self.last_response_text = ""
         self.last_command = ""
         self.turn_count = 0
+        self.window_id = ""
 
     def set_research_context(self, results: list, exchange: dict):
         """Store research results for follow-up queries."""

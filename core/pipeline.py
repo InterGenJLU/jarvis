@@ -519,6 +519,10 @@ class Coordinator:
         # Centralized conversation state (Phase 2 of conversational flow refactor)
         self.conv_state = ConversationState()
 
+        # Interaction artifact cache
+        from core.interaction_cache import get_interaction_cache
+        self.interaction_cache = get_interaction_cache(config=config)
+
         self.running = True
         self.state = PipelineState.IDLE
         self.wake_word = config.get("system.wake_word", "jarvis").lower()
@@ -1142,6 +1146,32 @@ class Coordinator:
 
                     tool_result = format_search_results(results) + page_content
                     print(f"📋 Found {len(results)} results")
+
+                    # Artifact cache (dual-write alongside conv_state)
+                    if self.interaction_cache:
+                        from core.interaction_cache import Artifact
+                        import uuid as _uuid
+                        _wid = self.interaction_cache.ensure_window_id(self.conv_state)
+                        _uid = getattr(self.conversation, 'current_user', None) or 'christopher'
+                        self.interaction_cache.store(Artifact(
+                            artifact_id=_uuid.uuid4().hex[:16],
+                            turn_id=self.conv_state.turn_count,
+                            item_index=0,
+                            artifact_type="search_result_set",
+                            content=tool_result,
+                            summary=f"Web search: {query} ({len(results)} results)",
+                            source="web_search",
+                            provenance={"query": query, "result_urls": [
+                                {"title": r.get("title", ""), "url": r.get("url", "")}
+                                for r in results
+                            ]},
+                            metadata={"result_count": len(results)},
+                            parent_id=None,
+                            user_id=_uid,
+                            window_id=_wid,
+                            tier="hot",
+                            created_at=time.time(),
+                        ))
                 else:
                     from core.tool_executor import execute_tool
                     print(f"🔧 Running: {tool_call_request.name}")
@@ -1484,6 +1514,9 @@ class Coordinator:
             self.awareness.reset_window()
         if self.context_window:
             self.context_window.reset()
+        # Demote artifacts to warm tier before clearing window_id
+        if self.interaction_cache and self.conv_state.window_id:
+            self.interaction_cache.demote_window(self.conv_state.window_id)
         # Reset centralized conversation state (clears research cache,
         # jarvis_asked_question, last intent/response tracking)
         self.conv_state.close_window()
@@ -1504,6 +1537,9 @@ class Coordinator:
             self.awareness.reset_window()
         if self.context_window:
             self.context_window.reset()
+        # Demote artifacts to warm tier before clearing window_id
+        if self.interaction_cache and self.conv_state.window_id:
+            self.interaction_cache.demote_window(self.conv_state.window_id)
         self.conv_state.close_window()
         if self.web_researcher:
             self.web_researcher.clear_cache()

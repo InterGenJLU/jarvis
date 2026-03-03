@@ -857,6 +857,10 @@ def run_console(config, mode, user_id="user"):
     except Exception as e:
         console.print(f"[dim]Awareness assembler init failed (non-fatal): {e}[/dim]")
 
+    # Interaction artifact cache
+    from core.interaction_cache import get_interaction_cache
+    interaction_cache = get_interaction_cache(config=config)
+
     # Conversation state + shared router (Phase 2-3 of conversational flow refactor)
     conv_state = ConversationState()
     router = ConversationRouter(
@@ -953,9 +957,9 @@ def run_console(config, mode, user_id="user"):
             # --- Process command ---
             # Strip wake word prefixes (voice mode does this in continuous_listener)
             import re
+            # Strip wake word prefix (leading only — preserve trailing
+            # "Jarvis" so greetings like "Good afternoon, Jarvis" stay intact)
             command = re.sub(r'^(?:hey\s+)?jarvis[\s,.:!]*', '', command, flags=re.IGNORECASE).strip()
-            # Also strip trailing wake word: "what time is it, jarvis"
-            command = re.sub(r'[\s,.:!]*jarvis[\s,.:!]*$', '', command, flags=re.IGNORECASE).strip()
             if not command:
                 command = "jarvis_only"
 

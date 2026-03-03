@@ -54,6 +54,13 @@ from core.speech_chunker import SpeechChunker
 from core.metrics_tracker import get_metrics_tracker
 from core.self_awareness import SelfAwareness
 from core.task_planner import TaskPlanner
+from core.interaction_cache import get_interaction_cache, Artifact
+
+
+def _make_artifact_id() -> str:
+    """Generate a short unique artifact ID."""
+    import uuid
+    return uuid.uuid4().hex[:16]
 
 logger = logging.getLogger("jarvis.web")
 
@@ -186,6 +193,10 @@ def init_components(config, tts_proxy):
     # Document buffer
     components['doc_buffer'] = DocumentBuffer()
 
+    # Interaction artifact cache
+    from core.interaction_cache import get_interaction_cache
+    components['interaction_cache'] = get_interaction_cache(config=config)
+
     # LLM metrics tracking
     components['metrics'] = get_metrics_tracker(config)
 
@@ -254,6 +265,148 @@ def init_components(config, tts_proxy):
 
 
 # ---------------------------------------------------------------------------
+# Readback offer follow-up (recipes, instructions, how-to, steps)
+# ---------------------------------------------------------------------------
+
+_AFFIRM_WORDS = {"yes", "yeah", "yep", "yup", "sure", "please", "go ahead",
+                 "yes please", "go for it", "read it", "absolutely", "ok",
+                 "okay", "definitely"}
+
+
+def _is_readback_affirm(command: str, last_response: str) -> bool:
+    """Check if user is affirming an offer to read (recipe, instructions, steps, etc.)."""
+    cmd = command.strip().lower().rstrip(".,!?")
+    if cmd not in _AFFIRM_WORDS:
+        return False
+    # Verify last response contained a recipe offer
+    offer_phrases = ["would you like me to read", "want me to read",
+                     "shall i read", "like me to go through"]
+    lower_resp = last_response.lower()
+    return any(p in lower_resp for p in offer_phrases)
+
+
+async def _stream_readback(ws, llm, cached_tool_result: str,
+                                   conv_state=None,
+                                   prior_synthesis: str = None) -> tuple:
+    """Stream full content (recipe, instructions, steps) from cached search results."""
+    import requests as _requests
+    from core.honorific import get_honorific, get_formal_address
+
+    h = get_honorific()
+    formal = get_formal_address()
+    if formal:
+        honorific_rule = f"YOU MUST address the user as '{h}' or '{formal}'."
+    else:
+        honorific_rule = f"YOU MUST address the user as '{h}'."
+
+    # Tell readback which result was picked — prefer cache artifact over conv_state
+    prior_pick = ""
+    _pick_source = prior_synthesis or (conv_state.last_response_text if conv_state else "")
+    if _pick_source:
+        prior_pick = (
+            f"\nIn your previous response you recommended this:\n"
+            f'"{_pick_source}"\n'
+            "YOU MUST read from the SAME source you recommended above.\n"
+        )
+
+    # Build a simple messages list: system + tool result + read instruction
+    messages = [
+        {"role": "system", "content": "You are JARVIS, a personal AI assistant."},
+        {"role": "user", "content": (
+            f"Here are search results:\n\n{cached_tool_result}\n\n"
+            f"{prior_pick}"
+            "The user has asked you to read the full content (recipe, instructions, steps, etc.).\n"
+            "RULES — follow these EXACTLY:\n"
+            "1. YOU MUST read from the SAME source you recommended in your previous response. "
+            "DO NOT switch to a different source. DO NOT combine, consolidate, or merge "
+            "content from multiple sources.\n"
+            "2. Read ALL of the content from that single result in full. If it is a recipe, "
+            "list ALL ingredients with exact quantities, then ALL steps in order. If it is "
+            "instructions or a how-to, read every step. DO NOT summarize or skip anything.\n"
+            f"3. {honorific_rule}\n"
+            "4. DO NOT start with filler. Jump straight into the content.\n"
+            "5. Present it clearly and in logical order.\n"
+            "6. DO NOT explain your reasoning about which rules you are following. "
+            "Just deliver the content naturally."
+        )},
+    ]
+
+    # --- Debug logging (temporary — remove after readback tuning) ---
+    logger.info("READBACK: cached_tool_result length = %d chars", len(cached_tool_result))
+    logger.info("READBACK: cached_tool_result (first 500):\n%s", cached_tool_result[:500])
+    logger.info("READBACK: prior_pick context:\n%s", prior_pick[:300] if prior_pick else "(none)")
+    logger.info("READBACK: max_tokens = 4096")
+
+    await ws.send_json({'type': 'stream_start'})
+    full_response = ""
+    loop = asyncio.get_event_loop()
+    queue = asyncio.Queue()
+
+    def _producer():
+        try:
+            resp = _requests.post(
+                "http://127.0.0.1:8080/v1/chat/completions",
+                json={
+                    "messages": messages,
+                    "temperature": llm.temperature,
+                    "top_p": llm.top_p,
+                    "top_k": llm.top_k,
+                    "max_tokens": 4096,
+                    "stream": True,
+                },
+                timeout=120,
+                stream=True,
+            )
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                line = line.decode("utf-8")
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    break
+                try:
+                    import json as _json
+                    chunk = _json.loads(data)
+                    token = chunk["choices"][0].get("delta", {}).get("content", "")
+                    if token:
+                        asyncio.run_coroutine_threadsafe(
+                            queue.put(('item', token)), loop
+                        )
+                except (KeyError, _json.JSONDecodeError):
+                    continue
+        except Exception as e:
+            logger.error("Recipe readback streaming error: %s", e)
+        finally:
+            asyncio.run_coroutine_threadsafe(
+                queue.put(('done', None)), loop
+            )
+
+    thread = threading.Thread(target=_producer, daemon=True)
+    thread.start()
+
+    while True:
+        try:
+            tag, value = await asyncio.wait_for(queue.get(), timeout=60)
+        except asyncio.TimeoutError:
+            break
+        if tag == 'done':
+            break
+        if tag == 'item':
+            full_response += value
+            await ws.send_json({'type': 'stream_token', 'token': value})
+
+    cleaned = llm.strip_filler(full_response) if full_response else ""
+    # --- Debug logging (temporary — remove after readback tuning) ---
+    logger.info("READBACK: raw response length = %d chars", len(full_response))
+    logger.info("READBACK: full response:\n%s", full_response)
+    await ws.send_json({'type': 'stream_end', 'full_response': cleaned})
+    return (cleaned, True)
+
+
+# ---------------------------------------------------------------------------
 # Command processing — shared router (Phase 3 of conversational flow refactor)
 # ---------------------------------------------------------------------------
 
@@ -270,9 +423,9 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     web_researcher = components['web_researcher']
     conv_state = components['conv_state']
 
-    # Strip wake word prefixes
+    # Strip wake word prefix (leading only — preserve trailing
+    # "Jarvis" so greetings like "Good afternoon, Jarvis" stay intact)
     command = re.sub(r'^(?:hey\s+)?jarvis[\s,.:!]*', '', command, flags=re.IGNORECASE).strip()
-    command = re.sub(r'[\s,.:!]*jarvis[\s,.:!]*$', '', command, flags=re.IGNORECASE).strip()
     if not command:
         command = "jarvis_only"
 
@@ -352,6 +505,40 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                     args=(response,),
                     daemon=True,
                 ).start()
+    # --- Readback follow-up: user said "yes" to "Would you like me to read?" ---
+    elif (not result.handled
+          and conv_state.jarvis_asked_question
+          and _is_readback_affirm(command, conv_state.last_response_text)):
+
+        # Cache-first retrieval, fall back to conv_state
+        _cache = get_interaction_cache()
+        _cached_text = None
+        _prior_synthesis = None
+
+        if _cache and conv_state.window_id:
+            _art = _cache.get_latest(
+                conv_state.window_id, artifact_type="search_result_set",
+            )
+            if _art:
+                _cached_text = _art.content
+            _synth = _cache.get_latest(
+                conv_state.window_id, artifact_type="synthesis",
+            )
+            if _synth:
+                _prior_synthesis = _synth.content
+
+        # Fallback to old conv_state path
+        if not _cached_text:
+            _cached_text = conv_state.last_tool_result_text
+
+        if _cached_text:
+            used_llm = True
+            response, streamed = await _stream_readback(
+                ws, llm, _cached_text, conv_state=conv_state,
+                prior_synthesis=_prior_synthesis,
+            )
+            conv_state.last_tool_result_text = ""
+
     else:
         # LLM fallback (streaming over WebSocket when ws is available)
         used_llm = True
@@ -367,6 +554,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 memory_manager=components.get('memory_manager'),
                 raw_command=command,
                 user_id=conversation.current_user,
+                conv_state=conv_state,
             )
         else:
             response = await _llm_fallback(
@@ -436,7 +624,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           tool_temperature=None,
                           tool_presence_penalty=None,
                           memory_manager=None, raw_command=None,
-                          user_id=None) -> tuple:
+                          user_id=None, conv_state=None) -> tuple:
     """Stream LLM response over WebSocket with quality gate and tool calling.
 
     Returns (response_text, streamed_bool).
@@ -452,6 +640,8 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
     def _producer():
         """Sync thread: run LLM streaming, push items to async queue."""
         try:
+            logger.info(f"LLM input (first 200): {command[:200]}")
+            logger.info(f"Tools: {[t['function']['name'] for t in use_tools_list] if use_tools_list else 'none'}")
             source = (
                 llm.stream_with_tools(
                     user_message=command,
@@ -547,6 +737,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
 
+            logger.info(f"Tool call: {tool_call_request.name}({tool_call_request.arguments})")
             if tool_call_request.name == 'web_search':
                 query = tool_call_request.arguments.get('query', command)
                 await ws.send_json({
@@ -562,6 +753,36 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     page_content = ("\n\nFull article content:\n\n"
                                     + "\n\n---\n\n".join(page_sections))
                 tool_result = format_search_results(results) + page_content
+                # Cache for recipe-offer follow-ups
+                if conv_state is not None:
+                    conv_state.last_tool_result_text = tool_result
+                    conv_state.research_results = results
+
+                # Artifact cache (dual-write alongside conv_state)
+                _cache = get_interaction_cache()
+                if _cache is not None and conv_state is not None:
+                    _wid = _cache.ensure_window_id(conv_state)
+                    _uid = user_id or 'christopher'
+                    _cache.store(Artifact(
+                        artifact_id=_make_artifact_id(),
+                        turn_id=conv_state.turn_count,
+                        item_index=0,
+                        artifact_type="search_result_set",
+                        content=tool_result,
+                        summary=f"Web search: {query} ({len(results)} results)",
+                        source="web_search",
+                        provenance={"query": query, "result_urls": [
+                            {"title": r.get("title", ""), "url": r.get("url", "")}
+                            for r in results
+                        ]},
+                        metadata={"result_count": len(results)},
+                        parent_id=None,
+                        user_id=_uid,
+                        window_id=_wid,
+                        tier="hot",
+                        created_at=time.time(),
+                    ))
+
                 await ws.send_json({
                     'type': 'info',
                     'content': f'Found {len(results)} results',
@@ -651,6 +872,28 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     )
             except NameError:
                 pass  # No web search results — non-research tool call
+
+        # Artifact cache: store synthesis
+        _cache = get_interaction_cache()
+        if _cache is not None and conv_state is not None and cleaned:
+            _wid = _cache.ensure_window_id(conv_state)
+            _uid = user_id or 'christopher'
+            _cache.store(Artifact(
+                artifact_id=_make_artifact_id(),
+                turn_id=conv_state.turn_count,
+                item_index=1,
+                artifact_type="synthesis",
+                content=cleaned,
+                summary=cleaned[:100] + ("..." if len(cleaned) > 100 else ""),
+                source="llm_synthesis",
+                provenance={"tool_chain_count": tool_chain_count},
+                metadata={},
+                parent_id=None,
+                user_id=_uid,
+                window_id=_wid,
+                tier="hot",
+                created_at=time.time(),
+            ))
 
         return (cleaned, True)
 

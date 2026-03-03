@@ -655,6 +655,7 @@ class SkillManager:
                                     fb_skill = self.skills.get(fb_skill_name)
                                     if fb_skill and hasattr(fb_skill, 'semantic_intents') and fb_intent_id in fb_skill.semantic_intents:
                                         fb_entities['original_text'] = user_text  # Use original, not normalized (preserves periods in filenames)
+                                        fb_skill._last_user_text = user_text  # Required by _extract_query() in web_navigation etc.
                                         handler = fb_skill.semantic_intents[fb_intent_id]['handler']
                                         self._last_match_info = {
                                             "layer": "keyword_global_semantic",
