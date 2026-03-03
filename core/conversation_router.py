@@ -462,8 +462,29 @@ class ConversationRouter:
             )
 
         if mm.is_recall_query(command):
-            recall_context = mm.handle_recall(command, user_id)
-            if recall_context:
+            recall_result = mm.handle_recall(command, user_id)
+            if recall_result:
+                recall_context = recall_result["context"]
+                artifact_ids = recall_result.get("artifact_ids", [])
+
+                # Rehydrate cold artifacts into current window for P3.5
+                # navigation (readback, step-through, section drill)
+                rehydrated_count = 0
+                if artifact_ids:
+                    from core.interaction_cache import get_interaction_cache
+                    cache = get_interaction_cache()
+                    wid = self.conv_state.window_id
+                    if cache and wid:
+                        rehydrated = cache.rehydrate(artifact_ids, wid)
+                        rehydrated_count = len(rehydrated)
+                        if rehydrated:
+                            recall_context += (
+                                f"\n\n[{rehydrated_count} artifact(s) loaded "
+                                f"from a prior session. The user can navigate "
+                                f"them with voice commands like 'read it to me', "
+                                f"'skip to step 3', etc.]"
+                            )
+
                 history = self.conversation.format_history_for_llm(
                     include_system_prompt=False
                 )
@@ -473,14 +494,21 @@ class ConversationRouter:
                         f"in your memory:\n\n{recall_context}\n\n"
                         f"Now answer their question naturally based on this context. "
                         f"Be specific about dates and details."
+                        + (f" Mention that you've loaded the content and they can "
+                           f"ask you to read it or navigate through it."
+                           if rehydrated_count else "")
                     ),
                     conversation_history=history,
-                    max_tokens=200,
+                    max_tokens=250,
                 )
-                logger.info("Handled by memory recall")
+                logger.info(
+                    "Handled by memory recall (artifacts_rehydrated=%d)",
+                    rehydrated_count,
+                )
                 return RouteResult(
                     text=response, intent="memory_recall",
                     source="memory", handled=True, used_llm=True,
+                    open_window=30.0,
                 )
             # Nothing found — fall through to LLM
         return None

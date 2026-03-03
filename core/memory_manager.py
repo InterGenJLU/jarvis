@@ -378,21 +378,38 @@ class MemoryManager:
         history = self.search_history(query, user_id)
         return {"facts": facts, "history": history}
 
-    def format_recall_context(self, results: dict) -> str:
-        """Format search results into natural context for LLM response generation."""
+    def format_recall_context(self, results: dict) -> dict:
+        """Format search results into natural context for LLM response generation.
+
+        Returns dict with 'context' (str for LLM) and 'artifact_ids' (list
+        of cold-tier artifact IDs for rehydration by the router).
+        """
         from datetime import datetime
         lines = []
-        if results["facts"]:
+        if results.get("facts"):
             lines.append("Facts about the user:")
             for f in results["facts"][:5]:
                 phrase = self._fact_to_phrase(f) or f['content']
                 lines.append(f"  - {phrase} (confidence: {f['confidence']:.0%})")
-        if results["history"]:
+        if results.get("history"):
             lines.append("Relevant past conversations:")
             for h in results["history"][:5]:
                 ts = datetime.fromtimestamp(h["timestamp"]).strftime("%b %d, %I:%M %p")
                 lines.append(f"  [{ts}] {h['role'].upper()}: {h['content'][:200]}")
-        return "\n".join(lines)
+        if results.get("interactions"):
+            lines.append("Relevant past sessions:")
+            for ix in results["interactions"][:5]:
+                ts = datetime.fromtimestamp(ix["created_at"]).strftime("%b %d, %I:%M %p")
+                summary = ix.get("answer_summary", "")[:200]
+                ix_type = ix.get("type", "interaction")
+                meta = json.loads(ix.get("metadata_json") or "{}")
+                artifact_count = meta.get("artifact_count", 0)
+                suffix = f" ({artifact_count} artifact{'s' if artifact_count != 1 else ''})" if artifact_count else ""
+                lines.append(f"  [{ts}] {ix_type}: {summary}{suffix}")
+        return {
+            "context": "\n".join(lines),
+            "artifact_ids": results.get("artifact_ids", []),
+        }
 
     # ------------------------------------------------------------------
     # Recall detection (Phase 3)
@@ -408,6 +425,11 @@ class MemoryManager:
         r"(?:do you |can you )?recall",
         r"last time i (?:asked|mentioned|said|talked) about",
         r"what do you (?:know|remember) about",
+        # Phase 5: artifact-specific cross-session patterns
+        r"what did (?:we|i|you) (?:look up|search|research|find)\b",
+        r"(?:that|the) .+? from (?:yesterday|last (?:week|time|session))",
+        r"(?:pull up|bring up|show me) (?:that|the|those) .+? (?:from|we)",
+        r"what (?:were|was) (?:that|those) (?:results?|recipe|article|search)",
     ]
 
     FACT_REQUEST_PATTERNS = [
@@ -426,12 +448,30 @@ class MemoryManager:
         text_lower = text.lower().strip()
         return any(re.search(p, text_lower) for p in self.RECALL_PATTERNS)
 
-    def handle_recall(self, query: str, user_id: str = "primary_user") -> Optional[str]:
-        """Handle a recall-type query. Returns formatted context for LLM, or None."""
+    def handle_recall(self, query: str, user_id: str = "primary_user") -> Optional[dict]:
+        """Handle a recall-type query.
+
+        Returns dict with 'context' (str for LLM) and 'artifact_ids'
+        (list of cold-tier artifact IDs for rehydration), or None.
+        """
         search_topic = self._extract_recall_topic(query)
         results = self.search_combined(search_topic, user_id)
 
-        if not results["facts"] and not results["history"]:
+        # Also search interaction_log (session summaries, tool interactions)
+        interactions = self.recall_interactions(
+            search_topic, top_k=3, days=30, user_id=user_id,
+        )
+        # Extract artifact IDs from session summaries for rehydration
+        artifact_ids = []
+        for ix in interactions:
+            if ix.get("type") == "session_summary":
+                meta = json.loads(ix.get("metadata_json") or "{}")
+                artifact_ids.extend(meta.get("artifact_ids", []))
+
+        results["interactions"] = interactions
+        results["artifact_ids"] = artifact_ids
+
+        if not results["facts"] and not results["history"] and not interactions:
             return None  # Let LLM handle with "I don't have any record of that"
 
         return self.format_recall_context(results)
@@ -449,6 +489,10 @@ class MemoryManager:
         strip_patterns = [
             r"^(?:do you |can you )?(?:remember|recall)\s+(?:when\s+)?(?:we\s+|I\s+)?(?:talked|discussed|spoke|said|mentioned)?\s*(?:about\s+)?",
             r"^what did (?:I|we) (?:say|talk|discuss|mention) about\s+",
+            # Phase 5: artifact-specific strip patterns
+            r"^what did (?:we|I|you) (?:look up|search for|research|find out about)\s+",
+            r"^(?:pull up|bring up|show me)\s+(?:that|the|those)\s+",
+            r"^what (?:were|was) (?:that|those) (?:results?|recipe|article|search)\s+(?:about|for|on)\s+",
             r"^have (?:we|I) (?:ever )?(?:talked|discussed|spoken) about\s+",
             r"^did I (?:ever )?(?:mention|tell you|say)\s+(?:anything\s+)?(?:about\s+)?",
             r"^what (?:was|were) (?:that|those) (?:thing|things?) about\s+",

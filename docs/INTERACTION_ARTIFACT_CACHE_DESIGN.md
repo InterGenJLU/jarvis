@@ -1,7 +1,7 @@
 # Interaction Artifact Cache — Design Document
 
 > **Date:** March 3, 2026 (Session 131)
-> **Status:** Active design discussion — data model phase
+> **Status:** Phases 1-5 complete
 > **Research:** See `INTERACTION_ARTIFACT_CACHE_RESEARCH.md`
 > **Prior work this replaces:** Readback flow plan (`memory/plan_readback_flow.md`)
 
@@ -115,31 +115,37 @@ Response + Artifacts
 
 ## Implementation Approach (Incremental)
 
-**Phase 1 — The Cache Layer**
+**Phase 1 — The Cache Layer** ✅ `8a4f9f9`
 - Define the artifact data model
 - Build `InteractionCache` class (in-memory + SQLite warm tier)
 - Wire into conversation_router: every skill/tool/LLM response writes artifacts
 - Prove it works by making readback use the cache instead of ad-hoc conv_state
 
-**Phase 2 — Reference Resolution**
+**Phase 2 — Reference Resolution** ✅ `7effb5f`
 - Ordinal references (extend existing `_handle_research_followup`)
 - Type-based references ("that recipe", "the weather")
 - Build into router as a new priority level
 
-**Phase 3 — Sub-Item Navigation**
+**Phase 3 — Sub-Item Navigation** ✅ `3dcd375` + Phase 3.5 `2de0458`
 - On-demand decomposition (user asks for part of an artifact)
 - Voice navigation ("next step", "go back", "skip to ingredients")
 - TTS integration for sequential readback
+- Phase 3.5: Section-aware decomposition, drill-in/out, boundary awareness
 
-**Phase 4 — Memory Promotion**
-- Session-end summarization hook
-- Crystallize important artifacts into memory_manager
-- Ephemeral filtering (don't promote transient items)
+**Phase 4 — Memory Promotion** ✅ `d92ac5c`
+- Session-end summarization hook (background thread at window close)
+- Crystallize important artifacts into memory_manager (session_summary in interaction_log)
+- Ephemeral filtering (skip sub-items, short content, duplicates)
+- Tier progression: hot → warm → cold
 
-**Phase 5 — Cross-Session Retrieval**
-- "What did we look up yesterday?"
-- Warm tier becomes queryable across sessions
-- Integrate with existing interaction_log in memory_manager
+**Phase 5 — Cross-Session Retrieval** ✅
+- Extended P3 recall path: `handle_recall()` now searches interaction_log (session summaries) via `recall_interactions()` in addition to facts + FAISS history
+- `InteractionCache.search_cold()` — query cold-tier artifacts by keyword, type, date range, or artifact IDs across all windows
+- `InteractionCache.rehydrate()` — clone cold-tier artifacts into current window's hot tier with fresh IDs, making P3.5 navigation (readback, step-through, section drill) work on recalled content
+- Artifact-specific recall patterns: "what did we look up?", "that recipe from last week", "pull up those results"
+- `format_recall_context()` returns `{context, artifact_ids}` dict for rehydration by router
+- New composite index `idx_artifacts_cold_user_date` for efficient cross-session queries
+- Full rehydration: recalled artifacts are navigable via existing P3.5 sub-item navigation
 
 ---
 

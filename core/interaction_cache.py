@@ -155,6 +155,10 @@ class InteractionCache:
                     CREATE INDEX IF NOT EXISTS idx_artifacts_tier_window
                     ON artifacts(tier, window_id)
                 """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_artifacts_cold_user_date
+                    ON artifacts(tier, user_id, created_at DESC)
+                """)
                 conn.commit()
             finally:
                 conn.close()
@@ -695,6 +699,123 @@ class InteractionCache:
             len(promoted), window_id, skipped,
         )
         return promoted
+
+    # ------------------------------------------------------------------
+    # Cross-session retrieval (Phase 5)
+    # ------------------------------------------------------------------
+
+    def search_cold(self, *, keyword: str = None,
+                    artifact_type: str = None,
+                    user_id: str = "primary_user",
+                    days: int = 30, limit: int = 10,
+                    artifact_ids: list = None) -> list[Artifact]:
+        """Search cold-tier artifacts across all windows.
+
+        Two modes:
+        - By artifact_ids: direct lookup (for rehydrating from session summary metadata)
+        - By keyword/type/date: filtered scan across cold tier
+
+        Keyword search checks summary, content[:500], and provenance.query
+        (case-insensitive).
+        """
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                if artifact_ids:
+                    # Direct lookup by ID — any tier (cold artifacts may have
+                    # been rehydrated to hot in a previous recall)
+                    placeholders = ",".join("?" for _ in artifact_ids)
+                    rows = conn.execute(
+                        f"""SELECT * FROM artifacts
+                            WHERE artifact_id IN ({placeholders})
+                            ORDER BY created_at DESC""",
+                        artifact_ids,
+                    ).fetchall()
+                    return [_row_to_artifact(r) for r in rows]
+
+                # Filtered search across cold tier
+                cutoff = time.time() - (days * 86400)
+                conditions = ["tier = 'cold'", "user_id = ?",
+                              "created_at > ?", "parent_id IS NULL"]
+                params: list = [user_id, cutoff]
+
+                if artifact_type:
+                    conditions.append("artifact_type = ?")
+                    params.append(artifact_type)
+
+                where = " AND ".join(conditions)
+                rows = conn.execute(
+                    f"""SELECT * FROM artifacts
+                        WHERE {where}
+                        ORDER BY created_at DESC
+                        LIMIT ?""",
+                    params + [limit * 3],  # over-fetch for keyword filter
+                ).fetchall()
+
+                if not keyword:
+                    return [_row_to_artifact(r) for r in rows[:limit]]
+
+                # Apply keyword filter in Python (summary, content, provenance)
+                kw = keyword.lower()
+                results = []
+                for row in rows:
+                    art = _row_to_artifact(row)
+                    if self._keyword_match(art, kw):
+                        results.append(art)
+                        if len(results) >= limit:
+                            break
+                return results
+            finally:
+                conn.close()
+
+    def rehydrate(self, artifact_ids: list[str],
+                  window_id: str) -> list[Artifact]:
+        """Load cold-tier artifacts and clone them into the current window.
+
+        Creates new hot-tier copies with fresh IDs so P3.5 navigation
+        (readback, step-through, section drill) works on recalled content.
+        Returns the rehydrated artifacts (new copies).
+        """
+        if not artifact_ids or not window_id:
+            return []
+
+        originals = self.search_cold(artifact_ids=artifact_ids)
+        if not originals:
+            return []
+
+        rehydrated = []
+        for orig in originals:
+            # Skip sub-items — parent will be decomposed on demand
+            if orig.parent_id:
+                continue
+
+            clone = Artifact(
+                artifact_id=uuid.uuid4().hex[:16],
+                turn_id=orig.turn_id,
+                item_index=orig.item_index,
+                artifact_type=orig.artifact_type,
+                content=orig.content,
+                summary=orig.summary,
+                source=orig.source,
+                provenance={**orig.provenance,
+                            "rehydrated_from": orig.artifact_id},
+                metadata={**orig.metadata,
+                          "rehydrated": True,
+                          "original_window": orig.window_id},
+                parent_id=None,
+                user_id=orig.user_id,
+                window_id=window_id,
+                tier="hot",
+            )
+            self.store(clone)
+            rehydrated.append(clone)
+
+        if rehydrated:
+            self.logger.info(
+                "Rehydrated %d artifacts into window %s from cold tier",
+                len(rehydrated), window_id,
+            )
+        return rehydrated
 
     def ensure_window_id(self, conv_state) -> str:
         """Ensure conv_state has a window_id; generate one if empty.
