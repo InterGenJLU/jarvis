@@ -679,16 +679,25 @@ class ConversationRouter:
         if not children:
             return None
 
-        # Collect all children matching the section keyword
-        matching = []
-        first_idx = None
+        # Two-pass matching: prefer summary/label hits, fall back to content
+        label_matches = []
+        content_matches = []
+        label_first_idx = None
+        content_first_idx = None
         for i, child in enumerate(children):
             label = child.summary.lower()
-            content_start = child.content[:80].lower()
-            if section_keyword in label or section_keyword in content_start:
-                matching.append(child)
-                if first_idx is None:
-                    first_idx = i
+            if section_keyword in label:
+                label_matches.append(child)
+                if label_first_idx is None:
+                    label_first_idx = i
+            elif section_keyword in child.content[:80].lower():
+                content_matches.append(child)
+                if content_first_idx is None:
+                    content_first_idx = i
+
+        # Prefer label matches; fall back to content matches
+        matching = label_matches or content_matches
+        first_idx = label_first_idx if label_matches else content_first_idx
 
         if not matching:
             return None  # No matching section — fall through
@@ -1429,9 +1438,9 @@ class ConversationRouter:
         """
         tools = self._select_tools_for_command(command)
         if not tools:
-            logger.info(f"P4-LLM: no tools selected for: {command[:80]}")
+            logger.debug(f"P4-LLM: no tools selected for: {command[:80]}")
             return None
-        logger.info(f"P4-LLM: selected {len(tools)} tools, routing to LLM")
+        logger.debug(f"P4-LLM: selected {len(tools)} tools, routing to LLM")
 
         # Prepare the same LLM context as _prepare_llm_context()
         result = self._prepare_llm_context(
@@ -1445,7 +1454,7 @@ class ConversationRouter:
         result.intent = "tool_calling"
 
         tool_names = [t["function"]["name"] for t in tools]
-        logger.info(
+        logger.debug(
             f"P4-LLM: routing via tool-calling with {len(tools)} tools: "
             f"{', '.join(tool_names)}"
         )
@@ -1505,7 +1514,7 @@ class ConversationRouter:
                 if max_sim > skill_best:
                     skill_best = max_sim
 
-            logger.info(f"  Tool pruning: {skill_name} = {skill_best:.2f}")
+            logger.debug(f"  Tool pruning: {skill_name} = {skill_best:.2f}")
 
             if skill_name in self._TOOL_SKILL_MAP:
                 # Migrated skill — track for tool selection

@@ -274,11 +274,22 @@ _AFFIRM_WORDS = {"yes", "yeah", "yep", "yup", "sure", "please", "go ahead",
 
 
 def _is_readback_affirm(command: str, last_response: str) -> bool:
-    """Check if user is affirming an offer to read (recipe, instructions, steps, etc.)."""
+    """Check if user is affirming an offer to read (recipe, instructions, steps, etc.).
+
+    Uses prefix matching so "yes read it to me", "sure go ahead", etc. all work
+    without needing to enumerate every possible phrase.
+    """
     cmd = command.strip().lower().rstrip(".,!?")
-    if cmd not in _AFFIRM_WORDS:
+    # Exact match (fast path)
+    matched = cmd in _AFFIRM_WORDS
+    if not matched:
+        # Prefix match: command starts with an affirm word
+        # Sort longest-first to avoid "yes" matching before "yes please"
+        sorted_affirms = sorted(_AFFIRM_WORDS, key=len, reverse=True)
+        matched = any(cmd.startswith(a) for a in sorted_affirms)
+    if not matched:
         return False
-    # Verify last response contained a recipe offer
+    # Verify last response contained a readback offer
     offer_phrases = ["would you like me to read", "want me to read",
                      "shall i read", "like me to go through"]
     lower_resp = last_response.lower()
@@ -659,8 +670,8 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
     def _producer():
         """Sync thread: run LLM streaming, push items to async queue."""
         try:
-            logger.info(f"LLM input (first 200): {command[:200]}")
-            logger.info(f"Tools: {[t['function']['name'] for t in use_tools_list] if use_tools_list else 'none'}")
+            logger.debug(f"LLM input (first 200): {command[:200]}")
+            logger.debug(f"Tools: {[t['function']['name'] for t in use_tools_list] if use_tools_list else 'none'}")
             source = (
                 llm.stream_with_tools(
                     user_message=command,
