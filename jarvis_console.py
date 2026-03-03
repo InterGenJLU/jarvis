@@ -271,7 +271,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         use_tools_list=None, tool_temperature=None,
                         tool_presence_penalty=None,
                         memory_manager=None, raw_command=None,
-                        user_id=None):
+                        user_id=None, conv_state=None):
     """Stream LLM response with typewriter output, web research, and quality gate.
 
     Returns the full accumulated response text, or empty string on failure.
@@ -361,12 +361,47 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
 
                 tool_result = format_search_results(results) + page_content
                 console.print(f"[dim]Found {len(results)} results[/dim]")
+
+                # Artifact cache — web search results
+                from core.interaction_cache import get_interaction_cache, Artifact
+                import uuid as _uuid
+                _cache = get_interaction_cache()
+                if _cache and conv_state:
+                    _wid = _cache.ensure_window_id(conv_state)
+                    _cache.store(Artifact(
+                        artifact_id=_uuid.uuid4().hex[:16],
+                        turn_id=conv_state.turn_count,
+                        item_index=0,
+                        artifact_type="search_result_set",
+                        content=tool_result,
+                        summary=f"Web search: {query} ({len(results)} results)",
+                        source="web_search",
+                        provenance={"query": query, "result_urls": [
+                            {"title": r.get("title", ""), "url": r.get("url", "")}
+                            for r in results
+                        ]},
+                        metadata={"result_count": len(results)},
+                        parent_id=None,
+                        user_id=user_id or 'christopher',
+                        window_id=_wid,
+                        tier="hot",
+                    ))
             else:
                 from core.tool_executor import execute_tool
                 console.print(f"\n[dim]Running: {tool_call_request.name}[/dim]")
                 tool_result = execute_tool(
                     tool_call_request.name, tool_call_request.arguments
                 )
+
+                # Artifact cache — non-web-search tool results
+                from core.interaction_cache import get_interaction_cache, store_tool_artifact
+                _cache = get_interaction_cache()
+                if _cache and conv_state:
+                    store_tool_artifact(
+                        tool_call_request.name, tool_call_request.arguments,
+                        tool_result, _cache, conv_state,
+                        user_id=user_id or 'christopher',
+                    )
 
             # Stream synthesis — may yield text or another ToolCallRequest
             if not header_printed:
@@ -1060,6 +1095,7 @@ def run_console(config, mode, user_id="user"):
                     memory_manager=memory_manager,
                     raw_command=command,
                     user_id=conversation.current_user,
+                    conv_state=conv_state,
                 )
                 if not response:
                     response = "I'm sorry, I'm having trouble processing that right now."

@@ -615,9 +615,20 @@ class ConversationRouter:
         (re.compile(r'\b(?:that|the)\s+recipe\b', re.I),
          None, "recipe"),
         (re.compile(r'\b(?:that|the)\s+(?:weather|forecast)\b', re.I),
-         None, "weather"),
+         "weather_report", None),
         (re.compile(r'\b(?:that|the)\s+article\b', re.I),
          None, "article"),
+        # Tool artifact types
+        (re.compile(r'\b(?:those|the)\s+files?\b', re.I),
+         "file_search", None),
+        (re.compile(r'\b(?:that|the)\s+(?:system|hardware)\s+info\b', re.I),
+         "system_info", None),
+        (re.compile(r'\b(?:that|the)\s+(?:git\s+)?(?:status|diff|log)\b', re.I),
+         "dev_tool_output", None),
+        (re.compile(r'\b(?:my|the|those)\s+reminders?\b', re.I),
+         "reminder_result", None),
+        (re.compile(r'\b(?:those|the)\s+(?:news|headlines?)\b', re.I),
+         "news_headlines", None),
     ]
 
     # Recency references → return the latest synthesis

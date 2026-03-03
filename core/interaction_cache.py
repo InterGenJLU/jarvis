@@ -829,6 +829,93 @@ class InteractionCache:
 
 
 # ----------------------------------------------------------------------
+# Tool artifact storage helper
+# ----------------------------------------------------------------------
+
+_TOOL_ARTIFACT_META = {
+    "get_weather": (
+        "weather_report",
+        lambda args, _: "Weather {}{}".format(
+            args.get("query_type", "report"),
+            f" for {args['location']}" if args.get("location") else "",
+        ),
+    ),
+    "get_system_info": (
+        "system_info",
+        lambda args, _: f"System info: {args.get('category', 'general')}",
+    ),
+    "find_files": (
+        "file_search",
+        lambda args, _: "File {}{}".format(
+            args.get("action", "search"),
+            f": {args['pattern']}" if args.get("pattern") else "",
+        ),
+    ),
+    "developer_tools": (
+        "dev_tool_output",
+        lambda args, _: f"Developer: {args.get('action', 'unknown')}",
+    ),
+    "manage_reminders": (
+        "reminder_result",
+        lambda args, _: f"Reminders: {args.get('action', 'unknown')}",
+    ),
+    "get_news": (
+        "news_headlines",
+        lambda args, _: "News: {}{}".format(
+            args.get("action", "read"),
+            f" ({args['category']})" if args.get("category") else "",
+        ),
+    ),
+}
+
+# Results starting with these prefixes are transient — don't cache
+_SKIP_PREFIXES = ("Error", "BLOCKED", "CONFIRMATION REQUIRED")
+
+
+def store_tool_artifact(tool_name: str, tool_args: dict, tool_result: str,
+                        cache: 'InteractionCache', conv_state,
+                        user_id: str = 'christopher') -> Optional[str]:
+    """Create and store an artifact from a tool execution result.
+
+    Returns the artifact_id if stored, None if skipped.
+    """
+    if not cache or not conv_state or not tool_result:
+        return None
+
+    # Skip errors, blocked results, and trivially short output
+    if any(tool_result.startswith(p) for p in _SKIP_PREFIXES):
+        return None
+    if len(tool_result) < 30:
+        return None
+
+    meta = _TOOL_ARTIFACT_META.get(tool_name)
+    if not meta:
+        return None
+
+    artifact_type, summary_fn = meta
+    summary = summary_fn(tool_args, tool_result)
+
+    wid = cache.ensure_window_id(conv_state)
+    art = Artifact(
+        artifact_id=uuid.uuid4().hex[:16],
+        turn_id=conv_state.turn_count,
+        item_index=0,
+        artifact_type=artifact_type,
+        content=tool_result,
+        summary=summary,
+        source=tool_name,
+        provenance={"tool_args": tool_args},
+        metadata={"tool_name": tool_name},
+        parent_id=None,
+        user_id=user_id,
+        window_id=wid,
+        tier="hot",
+        created_at=time.time(),
+    )
+    return cache.store(art)
+
+
+# ----------------------------------------------------------------------
 # Singleton factory
 # ----------------------------------------------------------------------
 

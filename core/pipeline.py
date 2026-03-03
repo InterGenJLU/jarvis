@@ -1180,6 +1180,15 @@ class Coordinator:
                     )
                     self.logger.info(f"Tool result: {tool_result[:100]}")
 
+                    # Artifact cache — store non-web-search tool results
+                    if self.interaction_cache:
+                        from core.interaction_cache import store_tool_artifact
+                        store_tool_artifact(
+                            tool_call_request.name, tool_call_request.arguments,
+                            tool_result, self.interaction_cache, self.conv_state,
+                            user_id=getattr(self.conversation, 'current_user', None) or 'christopher',
+                        )
+
                     # "Show me" display hook for developer_tools
                     if tool_call_request.name == "developer_tools":
                         show_me = _detect_show_me(command)

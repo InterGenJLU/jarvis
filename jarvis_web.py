@@ -1312,6 +1312,16 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     tool_call_request.arguments,
                 )
 
+                # Artifact cache — store non-web-search tool results
+                _cache = get_interaction_cache()
+                if _cache and conv_state:
+                    from core.interaction_cache import store_tool_artifact
+                    store_tool_artifact(
+                        tool_call_request.name, tool_call_request.arguments,
+                        tool_result, _cache, conv_state,
+                        user_id=user_id or 'christopher',
+                    )
+
             # Stream synthesis — may yield text tokens or another ToolCallRequest
             synthesis_queue = asyncio.Queue()
             _current_tcr = tool_call_request
@@ -1509,6 +1519,16 @@ async def _llm_fallback(llm, command, history, web_researcher,
                 tool_result = await asyncio.to_thread(
                     execute_tool, tool_call_request.name, tool_call_request.arguments
                 )
+
+                # Artifact cache — store non-web-search tool results
+                _cache = get_interaction_cache()
+                if _cache and conv_state:
+                    from core.interaction_cache import store_tool_artifact
+                    store_tool_artifact(
+                        tool_call_request.name, tool_call_request.arguments,
+                        tool_result, _cache, conv_state,
+                        user_id=user_id or 'christopher',
+                    )
 
             # Collect synthesis response
             synthesis = ""
