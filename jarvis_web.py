@@ -331,12 +331,6 @@ async def _stream_readback(ws, llm, cached_tool_result: str,
         )},
     ]
 
-    # --- Debug logging (temporary — remove after readback tuning) ---
-    logger.info("READBACK: cached_tool_result length = %d chars", len(cached_tool_result))
-    logger.info("READBACK: cached_tool_result (first 500):\n%s", cached_tool_result[:500])
-    logger.info("READBACK: prior_pick context:\n%s", prior_pick[:300] if prior_pick else "(none)")
-    logger.info("READBACK: max_tokens = 4096")
-
     await ws.send_json({'type': 'stream_start'})
     full_response = ""
     loop = asyncio.get_event_loop()
@@ -399,9 +393,34 @@ async def _stream_readback(ws, llm, cached_tool_result: str,
             await ws.send_json({'type': 'stream_token', 'token': value})
 
     cleaned = llm.strip_filler(full_response) if full_response else ""
-    # --- Debug logging (temporary — remove after readback tuning) ---
-    logger.info("READBACK: raw response length = %d chars", len(full_response))
-    logger.info("READBACK: full response:\n%s", full_response)
+
+    # Store synthesis artifact for Phase 3 sub-item navigation
+    _readback_art_id = None
+    if cleaned and conv_state and conv_state.window_id:
+        from core.interaction_cache import get_interaction_cache, Artifact
+        import uuid as _uuid
+        import time as _time
+        _icache = get_interaction_cache()
+        if _icache:
+            _readback_art_id = _uuid.uuid4().hex[:16]
+            _icache.store(Artifact(
+                artifact_id=_readback_art_id,
+                turn_id=conv_state.turn_count,
+                item_index=0,
+                artifact_type="synthesis",
+                content=cleaned,
+                summary="Readback content",
+                source="readback",
+                provenance={},
+                metadata={},
+                window_id=conv_state.window_id,
+                created_at=_time.time(),
+            ))
+            # Arm navigation session
+            conv_state.nav_artifact_id = _readback_art_id
+            conv_state.nav_cursor = 0
+            conv_state.nav_total = 0
+
     await ws.send_json({'type': 'stream_end', 'full_response': cleaned})
     return (cleaned, True)
 

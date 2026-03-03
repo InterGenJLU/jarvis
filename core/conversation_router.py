@@ -214,6 +214,13 @@ class ConversationRouter:
         if result:
             return result
 
+        # --- Clear navigation session on topic change ---
+        # If we reach here, P3.5 did not handle it — user is on a new topic.
+        if self.conv_state.nav_artifact_id:
+            self.conv_state.nav_artifact_id = None
+            self.conv_state.nav_cursor = 0
+            self.conv_state.nav_total = 0
+
         # --- Pre-P4: Multi-step task planning ---
         if not (doc_buffer and doc_buffer.active):
             result = self._handle_task_planning(command)
@@ -504,14 +511,47 @@ class ConversationRouter:
         r')\b', re.I,
     )
 
+    # --- Sub-item navigation patterns (Phase 3) ---
+    _NAV_STEP_PATTERNS = re.compile(
+        r'\b(?:skip\s+to|go\s+to|jump\s+to|read)\s+step\s+(\d+)\b', re.I,
+    )
+    _NAV_SECTION_PATTERNS = re.compile(
+        r'\b(?:just\s+the|only\s+the|show\s+me\s+the|give\s+me\s+the|'
+        r'read\s+(?:me\s+)?the)\s+'
+        r'(ingredients?|steps?|instructions?|directions?|method|tips?|notes?)\b',
+        re.I,
+    )
+    _NAV_NEXT_PATTERNS = re.compile(
+        r'\b(?:next\s+step|next\s+one|continue\s+reading|read\s+the\s+next)\b',
+        re.I,
+    )
+    _NAV_PREV_PATTERNS = re.compile(
+        r'\b(?:go\s+back|previous\s+step|previous\s+one|back\s+up|'
+        r'repeat\s+(?:that|this)\s+step)\b', re.I,
+    )
+    _NAV_RESET_PATTERNS = re.compile(
+        r'\b(?:start\s+over|from\s+the\s+beginning|read\s+(?:it\s+)?'
+        r'from\s+the\s+(?:start|top))\b', re.I,
+    )
+    _NAV_POSITION_PATTERNS = re.compile(
+        r'\b(?:where\s+(?:was\s+I|am\s+I)|what\s+step\s+(?:am\s+I|are\s+we)|'
+        r'which\s+step)\b', re.I,
+    )
+
     def _handle_artifact_reference(self, command: str) -> RouteResult | None:
         """P3.5: Artifact reference resolution.
 
-        Resolves ordinal ("result 2"), type-based ("that recipe"),
+        Resolves sub-item navigation ("skip to step 4", "next step"),
+        ordinal ("result 2"), type-based ("that recipe"),
         and recency ("repeat that") references against the artifact cache,
         with conv_state fallback for backwards compatibility.
         """
         cmd = command.strip().lower()
+
+        # --- Sub-item navigation: "skip to step 4", "next step" ---
+        result = self._resolve_navigation_command(command, cmd)
+        if result:
+            return result
 
         # --- Ordinal references: "result 2", "number 3", "#1", "the second one" ---
         result = self._resolve_ordinal_reference(command, cmd)
@@ -534,6 +574,224 @@ class ConversationRouter:
             return result
 
         return None
+
+    # -------------------------------------------------------------------
+    # Sub-item navigation (Phase 3)
+    # -------------------------------------------------------------------
+
+    def _resolve_navigation_command(self, command: str,
+                                    cmd: str) -> RouteResult | None:
+        """Resolve sub-item navigation: step jumps, section filters, next/back.
+
+        Only fires for next/back/reset/position when a navigation session
+        is active (conv_state.nav_artifact_id set). Step jumps and section
+        filters auto-arm a session against the latest synthesis artifact.
+        """
+        from core.interaction_cache import get_interaction_cache
+
+        wid = self.conv_state.window_id
+        cache = get_interaction_cache()
+        if not cache or not wid:
+            return None
+
+        # 1. Direct step jump: "skip to step 4" — works with or without session
+        step_match = self._NAV_STEP_PATTERNS.search(cmd)
+        if step_match:
+            target = int(step_match.group(1)) - 1  # 0-based
+            return self._nav_jump_to(cache, wid, target)
+
+        # 2. Section filter: "just the ingredients" — auto-arms
+        section_match = self._NAV_SECTION_PATTERNS.search(cmd)
+        if section_match:
+            keyword = section_match.group(1).lower().rstrip("s")
+            return self._nav_jump_to_section(cache, wid, keyword)
+
+        # Below this point, active navigation session required
+        if not self.conv_state.nav_artifact_id:
+            return None
+
+        # 3. Next step
+        if self._NAV_NEXT_PATTERNS.search(cmd):
+            return self._nav_advance(cache, wid)
+
+        # 4. Previous step
+        if self._NAV_PREV_PATTERNS.search(cmd):
+            return self._nav_retreat(cache, wid)
+
+        # 5. Start over
+        if self._NAV_RESET_PATTERNS.search(cmd):
+            return self._nav_reset(cache, wid)
+
+        # 6. Position query
+        if self._NAV_POSITION_PATTERNS.search(cmd):
+            return self._nav_position()
+
+        return None
+
+    def _nav_get_or_decompose(self, cache, wid: str):
+        """Get active parent artifact and its children, decomposing if needed.
+
+        Returns (parent_id, children). Auto-arms session against latest
+        synthesis if no active session.
+        """
+        parent_id = self.conv_state.nav_artifact_id
+
+        if not parent_id:
+            # Auto-detect: use latest synthesis artifact
+            art = cache.get_latest(wid, artifact_type="synthesis")
+            if not art:
+                return None, []
+            parent_id = art.artifact_id
+
+        children = cache.decompose(parent_id, wid, llm=self.llm)
+        if children:
+            self.conv_state.nav_artifact_id = parent_id
+            self.conv_state.nav_total = len(children)
+        return parent_id, children
+
+    def _nav_jump_to(self, cache, wid: str,
+                     target_idx: int) -> RouteResult | None:
+        """Handle 'skip to step N'."""
+        parent_id, children = self._nav_get_or_decompose(cache, wid)
+        if not children:
+            return None  # No navigable content — fall through
+
+        if target_idx < 0 or target_idx >= len(children):
+            return RouteResult(
+                text=f"There are only {len(children)} steps. "
+                     f"Which step would you like?",
+                intent="nav_out_of_range", source="cache",
+                handled=True, open_window=EXTENDED_WINDOW,
+            )
+
+        self.conv_state.nav_cursor = target_idx
+        child = children[target_idx]
+        return RouteResult(
+            text=self._nav_format(child, target_idx, len(children)),
+            intent="nav_jump", source="cache",
+            handled=True, open_window=EXTENDED_WINDOW,
+        )
+
+    def _nav_jump_to_section(self, cache, wid: str,
+                             section_keyword: str) -> RouteResult | None:
+        """Handle 'just the ingredients' — find section by keyword match."""
+        parent_id, children = self._nav_get_or_decompose(cache, wid)
+        if not children:
+            return None
+
+        # Collect all children matching the section keyword
+        matching = []
+        first_idx = None
+        for i, child in enumerate(children):
+            label = child.summary.lower()
+            content_start = child.content[:80].lower()
+            if section_keyword in label or section_keyword in content_start:
+                matching.append(child)
+                if first_idx is None:
+                    first_idx = i
+
+        if not matching:
+            return None  # No matching section — fall through
+
+        # If multiple items match (e.g., all "ingredient" items), join them
+        if len(matching) > 1:
+            text = " ".join(c.content for c in matching)
+        else:
+            text = matching[0].content
+
+        self.conv_state.nav_cursor = first_idx
+        return RouteResult(
+            text=text, intent="nav_section", source="cache",
+            handled=True, open_window=EXTENDED_WINDOW,
+        )
+
+    def _nav_advance(self, cache, wid: str) -> RouteResult | None:
+        """Handle 'next step'."""
+        parent_id = self.conv_state.nav_artifact_id
+        children = cache.get_children(parent_id, wid)
+        if not children:
+            return None
+
+        next_idx = self.conv_state.nav_cursor + 1
+        if next_idx >= len(children):
+            return RouteResult(
+                text="That's the last step. Would you like me to start over?",
+                intent="nav_end", source="cache",
+                handled=True, open_window=EXTENDED_WINDOW,
+            )
+
+        self.conv_state.nav_cursor = next_idx
+        child = children[next_idx]
+        return RouteResult(
+            text=self._nav_format(child, next_idx, len(children)),
+            intent="nav_next", source="cache",
+            handled=True, open_window=EXTENDED_WINDOW,
+        )
+
+    def _nav_retreat(self, cache, wid: str) -> RouteResult | None:
+        """Handle 'go back'."""
+        parent_id = self.conv_state.nav_artifact_id
+        children = cache.get_children(parent_id, wid)
+        if not children:
+            return None
+
+        prev_idx = self.conv_state.nav_cursor - 1
+        if prev_idx < 0:
+            return RouteResult(
+                text="You're already at the beginning.",
+                intent="nav_start", source="cache",
+                handled=True, open_window=EXTENDED_WINDOW,
+            )
+
+        self.conv_state.nav_cursor = prev_idx
+        child = children[prev_idx]
+        return RouteResult(
+            text=self._nav_format(child, prev_idx, len(children)),
+            intent="nav_prev", source="cache",
+            handled=True, open_window=EXTENDED_WINDOW,
+        )
+
+    def _nav_reset(self, cache, wid: str) -> RouteResult:
+        """Handle 'start over'."""
+        parent_id = self.conv_state.nav_artifact_id
+        children = cache.get_children(parent_id, wid)
+        self.conv_state.nav_cursor = 0
+        if not children:
+            return RouteResult(
+                text="I couldn't find the content to restart.",
+                intent="nav_reset", source="cache", handled=True,
+            )
+        child = children[0]
+        return RouteResult(
+            text=self._nav_format(child, 0, len(children)),
+            intent="nav_reset", source="cache",
+            handled=True, open_window=EXTENDED_WINDOW,
+        )
+
+    def _nav_position(self) -> RouteResult:
+        """Handle 'where was I?'."""
+        cursor = self.conv_state.nav_cursor
+        total = self.conv_state.nav_total
+        step_num = cursor + 1
+        if total:
+            text = f"You're on step {step_num} of {total}."
+        else:
+            text = f"You're on step {step_num}."
+        return RouteResult(
+            text=text, intent="nav_position", source="cache",
+            handled=True, open_window=EXTENDED_WINDOW,
+        )
+
+    @staticmethod
+    def _nav_format(child, idx: int, total: int) -> str:
+        """Format a sub-item for TTS delivery with position context."""
+        label = child.summary
+        content = child.content
+        if total > 1 and not label.startswith("Section"):
+            prefix = f"{label} of {total}."
+        else:
+            prefix = f"{label}."
+        return f"{prefix} {content}"
 
     def _get_search_result_urls(self) -> list[dict] | None:
         """Get search result URLs from cache, falling back to conv_state.

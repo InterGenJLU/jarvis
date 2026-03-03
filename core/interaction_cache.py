@@ -8,6 +8,7 @@ See docs/INTERACTION_ARTIFACT_CACHE_DESIGN.md for the full vision.
 """
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -145,6 +146,10 @@ class InteractionCache:
                 conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_artifacts_user
                     ON artifacts(user_id)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_artifacts_parent
+                    ON artifacts(parent_id)
                 """)
                 conn.commit()
             finally:
@@ -341,6 +346,151 @@ class InteractionCache:
         if kw in art.content[:500].lower():
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # Sub-item decomposition (Phase 3)
+    # ------------------------------------------------------------------
+
+    # Regex patterns for structured content extraction
+    _NUMBERED_STEP = re.compile(
+        r'(?:^|\n)(\d+)\.\s+(.*?)(?=\n\d+\.\s|\Z)', re.DOTALL,
+    )
+    _BULLET_ITEM = re.compile(
+        r'(?:^|\n)[-*]\s+(.*?)(?=\n[-*]\s|\n\n|\Z)', re.DOTALL,
+    )
+    _MD_SECTION = re.compile(
+        r'(?:^|\n)(#{1,3})\s+(.+?)\n(.*?)(?=\n#{1,3}\s|\Z)', re.DOTALL,
+    )
+
+    _DECOMPOSE_PROMPT = (
+        "Break the following text into navigable sub-items for a voice assistant.\n"
+        "Identify the natural items (steps, ingredients, sections, tips, etc.).\n\n"
+        "Text:\n{content}\n\n"
+        "Respond with ONLY a JSON array. Each item: {{\"label\": \"...\", \"text\": \"...\"}}.\n"
+        "\"label\" is a short spoken identifier (e.g. \"Step 1\", \"Ingredients\").\n"
+        "\"text\" is the full content of that item.\n"
+        "No markdown fences, no explanation — just the JSON array."
+    )
+
+    def get_children(self, parent_id: str,
+                     window_id: str) -> list[Artifact]:
+        """Get all child sub-items of a parent artifact, ordered by item_index."""
+        # Hot tier first
+        results = [
+            a for a in self._hot.get(window_id, [])
+            if a.parent_id == parent_id
+        ]
+        if results:
+            return sorted(results, key=lambda a: a.item_index)
+
+        # SQLite fallback
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                rows = conn.execute(
+                    """SELECT * FROM artifacts
+                       WHERE parent_id = ? AND window_id = ?
+                       ORDER BY item_index""",
+                    (parent_id, window_id),
+                ).fetchall()
+                return [_row_to_artifact(r) for r in rows]
+            finally:
+                conn.close()
+
+    def decompose(self, parent_id: str, window_id: str,
+                  llm=None) -> list[Artifact]:
+        """Decompose a parent artifact into child sub-item artifacts.
+
+        Idempotent — returns existing children if already decomposed.
+        Regex-first (numbered steps, bullets, sections), LLM fallback.
+        """
+        existing = self.get_children(parent_id, window_id)
+        if existing:
+            return existing
+
+        parent = self.get_by_id(parent_id)
+        if not parent:
+            self.logger.warning("decompose: parent %s not found", parent_id)
+            return []
+
+        items = self._extract_sub_items(parent.content)
+
+        if not items and llm:
+            items = self._llm_decompose(parent.content, llm)
+
+        if not items:
+            self.logger.info("decompose: no sub-items found for %s", parent_id)
+            return []
+
+        children = []
+        for idx, (label, text) in enumerate(items):
+            child = Artifact(
+                artifact_id=uuid.uuid4().hex[:16],
+                turn_id=parent.turn_id,
+                item_index=idx,
+                artifact_type="sub_item",
+                content=text.strip(),
+                summary=label,
+                source=parent.source,
+                provenance={"parent_id": parent_id},
+                metadata={"label": label},
+                parent_id=parent_id,
+                user_id=parent.user_id,
+                window_id=window_id,
+                tier="hot",
+            )
+            self.store(child)
+            children.append(child)
+
+        self.logger.info(
+            "Decomposed artifact %s into %d sub-items", parent_id, len(children),
+        )
+        return children
+
+    @classmethod
+    def _extract_sub_items(cls, content: str) -> list[tuple[str, str]]:
+        """Regex extraction of sub-items from structured content.
+
+        Priority: numbered steps > bullet items > markdown sections.
+        Returns list of (label, text) tuples. Empty if nothing matched.
+        """
+        # 1. Numbered steps: "1. Preheat oven..." / "2. Mix flour..."
+        matches = cls._NUMBERED_STEP.findall(content)
+        if len(matches) >= 2:
+            return [(f"Step {num}", text.strip()) for num, text in matches]
+
+        # 2. Bullet items: "- 2 cups flour" / "* 1 tsp salt"
+        matches = cls._BULLET_ITEM.findall(content)
+        if len(matches) >= 2:
+            return [(f"Item {i+1}", text.strip())
+                    for i, text in enumerate(matches)]
+
+        # 3. Markdown sections: "## Ingredients\n..."
+        matches = cls._MD_SECTION.findall(content)
+        if len(matches) >= 2:
+            return [(f"Section: {header.strip()}", body.strip())
+                    for _hashes, header, body in matches if body.strip()]
+
+        return []
+
+    def _llm_decompose(self, content: str,
+                       llm) -> list[tuple[str, str]]:
+        """LLM-based decomposition fallback for unstructured content."""
+        try:
+            prompt = self._DECOMPOSE_PROMPT.format(content=content[:3000])
+            raw = llm.chat(user_message=prompt, max_tokens=800)
+            # Strip markdown code fences if present
+            raw = re.sub(r'^```(?:json)?\n?', '', raw.strip())
+            raw = re.sub(r'\n?```$', '', raw)
+            items_data = json.loads(raw)
+            if not isinstance(items_data, list):
+                return []
+            return [(item["label"], item["text"])
+                    for item in items_data
+                    if isinstance(item, dict) and "label" in item and "text" in item]
+        except Exception as e:
+            self.logger.warning("LLM decompose failed: %s", e)
+            return []
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -45,6 +45,11 @@ class ConversationState:
     # --- Artifact cache ---
     window_id: str = ""                  # Conversation window scope for artifact cache
 
+    # --- Sub-item navigation (Phase 3 artifact cache) ---
+    nav_artifact_id: Optional[str] = None   # Parent artifact being navigated
+    nav_cursor: int = 0                      # 0-based current sub-item index
+    nav_total: int = 0                       # Total sub-items (set on decompose)
+
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
     window_opened_at: float = 0.0        # When the conversation window opened
@@ -92,6 +97,9 @@ class ConversationState:
         self.last_command = ""
         self.turn_count = 0
         self.window_id = ""
+        self.nav_artifact_id = None
+        self.nav_cursor = 0
+        self.nav_total = 0
 
     def set_research_context(self, results: list, exchange: dict):
         """Store research results for follow-up queries."""
