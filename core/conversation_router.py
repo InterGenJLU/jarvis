@@ -140,6 +140,7 @@ class ConversationRouter:
             P2.6      — Introduction state machine (social introductions)
             P2.7      — Dismissal detection (conversation window only)
             P2.8      — Bare acknowledgment filter (conversation window only)
+            P3.1      — Active readback session (conversation window only)
             P3        — Memory operations (forget, transparency, fact, recall)
             P3.5      — Artifact reference resolution (conversation window only)
             P3.7      — News article pull-up
@@ -195,6 +196,12 @@ class ConversationRouter:
         # --- Priority 2.8: Bare acknowledgment filter ---
         if in_conversation:
             result = self._handle_bare_ack(command)
+            if result:
+                return result
+
+        # --- Priority 3.1: Active readback session ---
+        if in_conversation and self.conv_state.readback_session:
+            result = self._handle_readback_session(command)
             if result:
                 return result
 
@@ -403,6 +410,88 @@ class ConversationRouter:
             f"(jarvis_asked_question={self.conv_state.jarvis_asked_question})"
         )
         return RouteResult(skip=True)
+
+    # ------------------------------------------------------------------
+    # P3.1 — Active readback session
+    # ------------------------------------------------------------------
+
+    _READBACK_CONTINUE = frozenset({
+        "yes", "yeah", "yep", "yup", "sure", "continue", "go ahead",
+        "next", "go on", "keep going", "carry on", "please", "ok",
+        "okay", "ready",
+    })
+    _READBACK_STOP = frozenset({
+        "stop", "no", "nope", "that's enough", "enough", "nevermind",
+        "never mind", "i'm good", "that's all", "that'll do", "done",
+    })
+
+    def _handle_readback_session(self, command: str) -> RouteResult | None:
+        """P3.1: Intercept commands during an active structured readback."""
+        session = self.conv_state.readback_session
+        if not session or not session.is_active():
+            return None
+
+        cmd = command.strip().lower().rstrip(".,!?")
+
+        # Continue / affirm
+        if cmd in self._READBACK_CONTINUE:
+            return RouteResult(
+                handled=True, intent="readback_continue",
+                text="__READBACK_CONTINUE__",
+                open_window=120.0,
+            )
+
+        # Stop / end
+        if cmd in self._READBACK_STOP:
+            summary = session.get_summary()
+            session.end()
+            return RouteResult(
+                handled=True, intent="readback_stop",
+                text=summary,
+            )
+
+        # Step recall: "what was step 3", "step 3", "repeat step 5"
+        step_match = re.search(r'step\s*(\d+)', cmd)
+        if step_match:
+            n = int(step_match.group(1))
+            answer = session.get_step(n)
+            if answer:
+                return RouteResult(
+                    handled=True, intent="readback_recall",
+                    text=answer, open_window=120.0,
+                )
+
+        # Ingredient search: "how much flour", "how much yeast"
+        ingr_match = re.search(r'how (?:much|many) (.+)', cmd)
+        if ingr_match:
+            query = ingr_match.group(1).strip().rstrip("?")
+            answer = session.search_ingredients(query)
+            if answer:
+                return RouteResult(
+                    handled=True, intent="readback_recall",
+                    text=answer, open_window=120.0,
+                )
+
+        # Section recall: "go back to ingredients", "repeat the ingredients"
+        for section_name in ("ingredients", "equipment", "instructions", "notes"):
+            if section_name in cmd and ("back" in cmd or "repeat" in cmd or "again" in cmd):
+                return RouteResult(
+                    handled=True, intent="readback_section",
+                    text=f"__READBACK_SECTION__{section_name}",
+                    open_window=120.0,
+                )
+
+        # "repeat that" / "say that again"
+        if any(p in cmd for p in ("repeat that", "say that again", "one more time", "repeat the last")):
+            chunk = session.get_last_delivered()
+            if chunk:
+                return RouteResult(
+                    handled=True, intent="readback_repeat",
+                    text=chunk.content, open_window=120.0,
+                )
+
+        # Unrecognized during readback — fall through to LLM with recipe context
+        return None
 
     def _handle_memory_ops(self, command: str) -> RouteResult | None:
         """P3: Memory operations (forget, transparency, fact store, recall).

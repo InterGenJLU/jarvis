@@ -10,10 +10,15 @@ Replaces scattered booleans (_jarvis_asked_question, _last_research_results,
 _last_research_exchange) that were spread across pipeline.py.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import time
 import uuid
+
+if TYPE_CHECKING:
+    from core.readback_session import ReadbackSession
 
 
 @dataclass
@@ -50,6 +55,9 @@ class ConversationState:
     nav_root_id: Optional[str] = None        # Top-level artifact (for drill-out)
     nav_cursor: int = 0                      # 0-based current sub-item index
     nav_total: int = 0                       # Total sub-items (set on decompose)
+
+    # --- Structured readback ---
+    readback_session: Optional[ReadbackSession] = None
 
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
@@ -102,6 +110,7 @@ class ConversationState:
         self.nav_root_id = None
         self.nav_cursor = 0
         self.nav_total = 0
+        self.readback_session = None
 
     def set_research_context(self, results: list, exchange: dict):
         """Store research results for follow-up queries."""

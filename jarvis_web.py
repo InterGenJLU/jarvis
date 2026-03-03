@@ -55,6 +55,7 @@ from core.metrics_tracker import get_metrics_tracker
 from core.self_awareness import SelfAwareness
 from core.task_planner import TaskPlanner
 from core.interaction_cache import get_interaction_cache, Artifact
+from core.readback_session import ReadbackSession
 
 
 def _make_artifact_id() -> str:
@@ -438,6 +439,165 @@ async def _stream_readback(ws, llm, cached_tool_result: str,
 
 
 # ---------------------------------------------------------------------------
+# Structured readback — section-based interactive delivery
+# ---------------------------------------------------------------------------
+
+async def _start_structured_readback(ws, llm, conv_state, tts_proxy) -> tuple:
+    """Parse content into structured JSON, then begin section-based delivery.
+
+    Falls back to _stream_readback() if parse fails.
+    """
+    # Retrieve cached tool result (same logic as the old readback trigger)
+    _cache = get_interaction_cache()
+    _cached_text = None
+    _prior_synthesis = None
+
+    if _cache and conv_state.window_id:
+        _art = _cache.get_latest(
+            conv_state.window_id, artifact_type="search_result_set",
+        )
+        if _art:
+            _cached_text = _art.content
+        _synth = _cache.get_latest(
+            conv_state.window_id, artifact_type="synthesis",
+        )
+        if _synth:
+            _prior_synthesis = _synth.content
+
+    if not _cached_text:
+        _cached_text = conv_state.last_tool_result_text
+
+    if not _cached_text:
+        return ("I don't have any content to read back.", False)
+
+    # Try structured parse
+    session = ReadbackSession()
+    prior_pick = _prior_synthesis or conv_state.last_response_text or ""
+    parse_ok = await asyncio.to_thread(
+        session.parse_content, _cached_text, prior_pick, llm,
+    )
+
+    if not parse_ok:
+        # Fall back to unstructured streaming
+        logger.info("Structured readback parse failed — falling back to stream")
+        result = await _stream_readback(
+            ws, llm, _cached_text, conv_state=conv_state,
+            prior_synthesis=_prior_synthesis,
+        )
+        conv_state.last_tool_result_text = ""
+        return result
+
+    # Parse succeeded — store session and begin delivery
+    conv_state.readback_session = session
+    conv_state.last_tool_result_text = ""
+
+    # Send preface
+    size = session.get_size()
+    preface = persona.readback_preface(session.source_title, size)
+
+    if ws:
+        await ws.send_json({"type": "stream_start"})
+        await ws.send_json({"type": "stream_token", "token": preface + "\n\n"})
+
+    # Speak preface
+    if tts_proxy.hybrid and tts_proxy.real_tts:
+        threading.Thread(
+            target=tts_proxy.real_tts.speak,
+            args=(preface,),
+            daemon=True,
+        ).start()
+
+    # Deliver first chunk (and possibly more until a pause)
+    full_text = preface + "\n\n"
+    chunk_text = await _deliver_readback_chunks(ws, conv_state, tts_proxy)
+    full_text += chunk_text
+
+    if ws:
+        await ws.send_json({"type": "stream_end", "full_response": full_text})
+
+    return (full_text, True)
+
+
+async def _deliver_readback_chunks(ws, conv_state, tts_proxy) -> str:
+    """Deliver chunks until a pause point or completion.  Returns delivered text."""
+    session = conv_state.readback_session
+    if not session:
+        return ""
+
+    delivered_text = ""
+    while True:
+        chunk = session.next_chunk()
+        if chunk is None:
+            # Session complete
+            complete_msg = persona.readback_complete(session.source_title)
+            if ws:
+                await ws.send_json({"type": "stream_token", "token": complete_msg + "\n"})
+            if tts_proxy.hybrid and tts_proxy.real_tts:
+                threading.Thread(
+                    target=tts_proxy.real_tts.speak,
+                    args=(complete_msg,),
+                    daemon=True,
+                ).start()
+            delivered_text += complete_msg
+            break
+
+        # Stream this chunk
+        if ws:
+            await ws.send_json({"type": "stream_token", "token": chunk.content + "\n\n"})
+
+        # TTS this chunk (speak() normalizes by default)
+        if tts_proxy.hybrid and tts_proxy.real_tts:
+            threading.Thread(
+                target=tts_proxy.real_tts.speak,
+                args=(chunk.content,),
+                daemon=True,
+            ).start()
+
+        delivered_text += chunk.content + "\n\n"
+
+        # If this chunk triggers a pause, send pause prompt and stop delivering
+        if chunk.pause_after and session.state == "paused":
+            pause_msg = persona.readback_pause(after_type=chunk.section_type)
+            if ws:
+                await ws.send_json({"type": "stream_token", "token": pause_msg + "\n"})
+            if tts_proxy.hybrid and tts_proxy.real_tts:
+                threading.Thread(
+                    target=tts_proxy.real_tts.speak,
+                    args=(pause_msg,),
+                    daemon=True,
+                ).start()
+            delivered_text += pause_msg
+            break
+
+    return delivered_text
+
+
+async def _deliver_readback_section(ws, conv_state, tts_proxy, section_name: str) -> tuple:
+    """Re-deliver a specific section by name.  Returns (text, streamed)."""
+    session = conv_state.readback_session
+    if not session:
+        return ("I don't have an active readback.", False)
+
+    chunk = session.get_section(section_name)
+    if not chunk:
+        return (f"I don't have a {section_name} section in the current content.", False)
+
+    if ws:
+        await ws.send_json({"type": "stream_start"})
+        await ws.send_json({"type": "stream_token", "token": chunk.content + "\n"})
+        await ws.send_json({"type": "stream_end", "full_response": chunk.content})
+
+    if tts_proxy.hybrid and tts_proxy.real_tts:
+        threading.Thread(
+            target=tts_proxy.real_tts.speak,
+            args=(chunk.content,),
+            daemon=True,
+        ).start()
+
+    return (chunk.content, True)
+
+
+# ---------------------------------------------------------------------------
 # Command processing — shared router (Phase 3 of conversational flow refactor)
 # ---------------------------------------------------------------------------
 
@@ -536,39 +696,64 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                     args=(response,),
                     daemon=True,
                 ).start()
+
+        # --- Readback session dispatch (P3.1 intents) ---
+        elif result.intent == "readback_continue":
+            if ws:
+                await ws.send_json({"type": "stream_start"})
+            chunk_text = await _deliver_readback_chunks(ws, conv_state, tts_proxy)
+            response = chunk_text
+            streamed = True
+            if ws:
+                await ws.send_json({"type": "stream_end", "full_response": response})
+
+        elif result.intent == "readback_section":
+            section_name = result.text.replace("__READBACK_SECTION__", "")
+            response, streamed = await _deliver_readback_section(
+                ws, conv_state, tts_proxy, section_name,
+            )
+
+        elif result.intent == "readback_repeat":
+            # result.text already has the content
+            if ws:
+                await ws.send_json({"type": "stream_start"})
+                await ws.send_json({"type": "stream_token", "token": result.text})
+                await ws.send_json({"type": "stream_end", "full_response": result.text})
+            streamed = True
+            if tts_proxy.hybrid and tts_proxy.real_tts:
+                threading.Thread(
+                    target=tts_proxy.real_tts.speak,
+                    args=(result.text,),
+                    daemon=True,
+                ).start()
+
+        elif result.intent == "readback_recall":
+            # Step or ingredient lookup — result.text has the answer
+            if tts_proxy.hybrid and tts_proxy.real_tts:
+                threading.Thread(
+                    target=tts_proxy.real_tts.speak,
+                    args=(result.text,),
+                    daemon=True,
+                ).start()
+
+        elif result.intent == "readback_stop":
+            # Session already ended by router — speak summary
+            if tts_proxy.hybrid and tts_proxy.real_tts:
+                threading.Thread(
+                    target=tts_proxy.real_tts.speak,
+                    args=(result.text,),
+                    daemon=True,
+                ).start()
+
     # --- Readback follow-up: user said "yes" to "Would you like me to read?" ---
     elif (not result.handled
           and conv_state.jarvis_asked_question
           and _is_readback_affirm(command, conv_state.last_response_text)):
 
-        # Cache-first retrieval, fall back to conv_state
-        _cache = get_interaction_cache()
-        _cached_text = None
-        _prior_synthesis = None
-
-        if _cache and conv_state.window_id:
-            _art = _cache.get_latest(
-                conv_state.window_id, artifact_type="search_result_set",
-            )
-            if _art:
-                _cached_text = _art.content
-            _synth = _cache.get_latest(
-                conv_state.window_id, artifact_type="synthesis",
-            )
-            if _synth:
-                _prior_synthesis = _synth.content
-
-        # Fallback to old conv_state path
-        if not _cached_text:
-            _cached_text = conv_state.last_tool_result_text
-
-        if _cached_text:
-            used_llm = True
-            response, streamed = await _stream_readback(
-                ws, llm, _cached_text, conv_state=conv_state,
-                prior_synthesis=_prior_synthesis,
-            )
-            conv_state.last_tool_result_text = ""
+        used_llm = True
+        response, streamed = await _start_structured_readback(
+            ws, llm, conv_state, tts_proxy,
+        )
 
     else:
         # LLM fallback (streaming over WebSocket when ws is available)

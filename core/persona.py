@@ -192,6 +192,50 @@ _POOLS = {
         "I don't have a {name} on file, {h}. Shall I make their acquaintance?",
     ],
 
+    # Readback preface — small content (no pauses planned)
+    "readback_preface_small": [
+        "Here's the recipe from {source}, {h}.",
+        "Right, the {source} recipe, {h}. Here it is.",
+        "From {source}, {h}.",
+    ],
+
+    # Readback preface — medium content (pauses planned)
+    "readback_preface_medium": [
+        "Here's the recipe from {source}, {h}. I'll read the ingredients first, then walk you through the steps.",
+        "Right, {h}. I'll start with what you'll need from {source}, then cover the steps.",
+        "The {source} recipe, {h}. I'll go through the ingredients, then the instructions.",
+    ],
+
+    # Readback preface — large content (multiple pauses)
+    "readback_preface_large": [
+        "This is a rather detailed recipe from {source}, {h}. I'll pause as we go to make sure I'm not losing you.",
+        "Quite a thorough recipe from {source}, {h}. I'll take it in sections so you can follow along.",
+        "This one's fairly involved, {h}. I'll break it into parts and check in as we go.",
+    ],
+
+    # Readback pause prompts (between sections)
+    "readback_pause": [
+        "Ready for the next part, {h}?",
+        "Got all that? Shall I continue, {h}?",
+        "Still with me, {h}?",
+        "Shall I carry on, {h}?",
+        "Ready when you are, {h}.",
+    ],
+
+    # Readback pause — specifically after ingredients, before instructions
+    "readback_pause_instructions": [
+        "That's everything you'll need. Ready for the instructions, {h}?",
+        "Those are your ingredients, {h}. Shall I walk you through the steps?",
+        "Got all that down? The steps are next, {h}.",
+    ],
+
+    # Readback complete
+    "readback_complete": [
+        "That's everything from {source}, {h}. Need me to go over anything again?",
+        "And that's the lot, {h}. Anything you'd like me to repeat?",
+        "That covers it, {h}. Any part you'd like me to go back to?",
+    ],
+
     # TTS ack cache (no honorific — synthesized at startup)
     # Each entry is (phrase, style_tag).  Style tags:
     #   "neutral"  — generic, used as fallback for any style
@@ -420,6 +464,31 @@ def task_resumed() -> str:
     """Announce plan resume."""
     template = random.choice(_POOLS["task_resumed"])
     return template.format(h=get_honorific())
+
+
+def readback_preface(source: str, size: str) -> str:
+    """Pick a readback preface based on content size ('small', 'medium', 'large')."""
+    category = f"readback_preface_{size}"
+    if category not in _POOLS:
+        category = "readback_preface_medium"
+    template = random.choice(_POOLS[category])
+    return template.format(source=source, h=get_honorific())
+
+
+def readback_pause(after_type: str = "") -> str:
+    """Pick a readback pause prompt.  Use 'ingredients' for the specific variant."""
+    if after_type in ("ingredients", "equipment"):
+        category = "readback_pause_instructions"
+    else:
+        category = "readback_pause"
+    template = random.choice(_POOLS[category])
+    return template.format(h=get_honorific())
+
+
+def readback_complete(source: str) -> str:
+    """Pick a readback completion message."""
+    template = random.choice(_POOLS["readback_complete"])
+    return template.format(source=source, h=get_honorific())
 
 
 def rundown_defer() -> str:
