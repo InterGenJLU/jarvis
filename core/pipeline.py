@@ -1514,9 +1514,10 @@ class Coordinator:
             self.awareness.reset_window()
         if self.context_window:
             self.context_window.reset()
-        # Demote artifacts to warm tier before clearing window_id
+        # Demote artifacts to warm tier, then promote to long-term memory
         if self.interaction_cache and self.conv_state.window_id:
             self.interaction_cache.demote_window(self.conv_state.window_id)
+            self._promote_window_artifacts()
         # Reset centralized conversation state (clears research cache,
         # jarvis_asked_question, last intent/response tracking)
         self.conv_state.close_window()
@@ -1537,12 +1538,50 @@ class Coordinator:
             self.awareness.reset_window()
         if self.context_window:
             self.context_window.reset()
-        # Demote artifacts to warm tier before clearing window_id
+        # Demote artifacts to warm tier, then promote to long-term memory
         if self.interaction_cache and self.conv_state.window_id:
             self.interaction_cache.demote_window(self.conv_state.window_id)
+            self._promote_window_artifacts()
         self.conv_state.close_window()
         if self.web_researcher:
             self.web_researcher.clear_cache()
+
+    def _promote_window_artifacts(self):
+        """Promote meaningful artifacts to long-term memory in a background thread.
+
+        Captures window state before close_window() clears it, then runs
+        promotion + session summary persistence off the main thread.
+        """
+        if not self.interaction_cache or not self.memory_manager:
+            return
+
+        # Capture state before close_window() resets it
+        window_id = self.conv_state.window_id
+        user_id = (getattr(self.conversation, 'current_user', None)
+                   or 'christopher')
+        duration = 0.0
+        if self.conv_state.window_opened_at:
+            duration = time.time() - self.conv_state.window_opened_at
+
+        cache = self.interaction_cache
+        mm = self.memory_manager
+
+        def _promote():
+            try:
+                artifacts = cache.promote_window(window_id)
+                if artifacts:
+                    mm.promote_session_artifacts(
+                        artifacts, window_id,
+                        duration_seconds=duration,
+                        user_id=user_id,
+                    )
+            except Exception as e:
+                cache.logger.warning(
+                    "Background promotion failed for window %s: %s",
+                    window_id, e,
+                )
+
+        threading.Thread(target=_promote, daemon=True).start()
 
     def _manage_conversation_window(self, response: str, was_in_conversation: bool):
         """Decide whether to open/extend the conversation window.

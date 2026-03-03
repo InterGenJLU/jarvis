@@ -1218,6 +1218,78 @@ class MemoryManager:
             finally:
                 conn.close()
 
+    def promote_session_artifacts(self, artifacts: list,
+                                  window_id: str,
+                                  duration_seconds: float = 0.0,
+                                  user_id: str = "primary_user"):
+        """Crystallize a session's artifacts into a searchable interaction_log entry.
+
+        Called from a background thread at window close. Composes a session
+        summary from artifact metadata (no LLM needed) and persists it via
+        persist_interaction() for cross-session recall.
+
+        Args:
+            artifacts: Promoted Artifact objects from InteractionCache.promote_window()
+            window_id: The conversation window ID
+            duration_seconds: Window duration in seconds (for metadata)
+            user_id: User who owned the session
+        """
+        if not artifacts:
+            return
+
+        # Group artifacts by source for structured summary
+        from collections import defaultdict
+        groups: dict[str, list[str]] = defaultdict(list)
+        artifact_ids = []
+        type_counts: dict[str, int] = defaultdict(int)
+
+        for art in artifacts:
+            label = art.summary or art.content[:80]
+            groups[art.source].append(label)
+            artifact_ids.append(art.artifact_id)
+            type_counts[art.artifact_type] += 1
+
+        # Build human-readable session summary
+        # Format: "web_search: recipe summary; another result | llm: conversation topic"
+        parts = []
+        for source, summaries in groups.items():
+            joined = "; ".join(s[:80] for s in summaries[:5])
+            parts.append(f"{source}: {joined}")
+        session_summary = " | ".join(parts)
+        if len(session_summary) > 500:
+            session_summary = session_summary[:497] + "..."
+
+        # Build query string for semantic search (unique summaries)
+        seen = set()
+        query_parts = []
+        for art in artifacts:
+            s = art.summary or art.content[:80]
+            if s not in seen:
+                seen.add(s)
+                query_parts.append(s)
+        query_str = ". ".join(query_parts)
+        if len(query_str) > 500:
+            query_str = query_str[:497] + "..."
+
+        metadata = {
+            "artifact_count": len(artifacts),
+            "artifact_ids": artifact_ids[:20],  # cap at 20 to avoid bloat
+            "artifact_types": dict(type_counts),
+        }
+        if duration_seconds > 0:
+            metadata["duration_seconds"] = round(duration_seconds, 1)
+
+        self.persist_interaction(
+            "session_summary", query_str, session_summary,
+            detail=window_id,
+            metadata=metadata,
+            user_id=user_id,
+        )
+        self.logger.info(
+            "Promoted session summary for window %s: %d artifacts, types=%s",
+            window_id, len(artifacts), dict(type_counts),
+        )
+
     def recall_interactions(self, query: str, *, types: list = None,
                             top_k: int = 3, days: int = 30,
                             user_id: str = "primary_user") -> list[dict]:

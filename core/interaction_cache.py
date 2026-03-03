@@ -151,6 +151,10 @@ class InteractionCache:
                     CREATE INDEX IF NOT EXISTS idx_artifacts_parent
                     ON artifacts(parent_id)
                 """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_artifacts_tier_window
+                    ON artifacts(tier, window_id)
+                """)
                 conn.commit()
             finally:
                 conn.close()
@@ -608,6 +612,89 @@ class InteractionCache:
                 "Demoted %d artifacts for window %s to warm tier",
                 len(removed), window_id,
             )
+
+    def promote_window(self, window_id: str) -> list[Artifact]:
+        """Select promotable warm-tier artifacts and advance them to cold tier.
+
+        Called after demote_window() during window close. Filters out:
+        - Sub-items (parent_id set) — parent artifact is sufficient
+        - Very short content (<50 chars) — trivial/empty
+        - Duplicate content within the window (by content hash)
+
+        Returns the list of promoted Artifact objects for session summary.
+        """
+        if not window_id:
+            return []
+
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                rows = conn.execute(
+                    """SELECT * FROM artifacts
+                       WHERE tier = 'warm' AND window_id = ?
+                       ORDER BY turn_id, item_index""",
+                    (window_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+
+        if not rows:
+            return []
+
+        all_artifacts = [_row_to_artifact(r) for r in rows]
+
+        # Filter: skip sub-items, short content, duplicates
+        seen_hashes: set[int] = set()
+        promoted: list[Artifact] = []
+        skipped = 0
+
+        for art in all_artifacts:
+            # Skip sub-items — parent artifact carries enough context
+            if art.parent_id:
+                skipped += 1
+                continue
+            # Skip trivially short content
+            if len(art.content) < 50:
+                skipped += 1
+                continue
+            # Skip duplicate content (by hash of first 200 chars)
+            content_hash = hash(art.content[:200])
+            if content_hash in seen_hashes:
+                skipped += 1
+                continue
+            seen_hashes.add(content_hash)
+            promoted.append(art)
+
+        if not promoted:
+            self.logger.debug(
+                "promote_window %s: all %d artifacts filtered out",
+                window_id, len(all_artifacts),
+            )
+            return []
+
+        # Update promoted artifacts to cold tier
+        promoted_ids = [a.artifact_id for a in promoted]
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                placeholders = ",".join("?" for _ in promoted_ids)
+                conn.execute(
+                    f"""UPDATE artifacts SET tier = 'cold'
+                        WHERE artifact_id IN ({placeholders})""",
+                    promoted_ids,
+                )
+                conn.commit()
+            except Exception as e:
+                self.logger.warning("Failed to promote artifacts for %s: %s",
+                                    window_id, e)
+            finally:
+                conn.close()
+
+        self.logger.info(
+            "Promoted %d artifacts for window %s to cold tier (skipped %d)",
+            len(promoted), window_id, skipped,
+        )
+        return promoted
 
     def ensure_window_id(self, conv_state) -> str:
         """Ensure conv_state has a window_id; generate one if empty.
