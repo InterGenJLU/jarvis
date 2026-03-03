@@ -273,28 +273,112 @@ _AFFIRM_WORDS = {"yes", "yeah", "yep", "yup", "sure", "please", "go ahead",
                  "yes please", "go for it", "read it", "absolutely", "ok",
                  "okay", "definitely"}
 
+# Delivery mode keyword sets — checked after affirm prefix is stripped
+_DELIVERY_MODES = {
+    "read": {"read it", "read it to me", "read through it", "go through it",
+             "read it out", "read that"},
+    "display": {"display it", "show it in chat", "in the chat", "put it in chat",
+                "in chat", "display it in chat", "text it"},
+    "print": {"print it", "print it out", "send it to the printer",
+              "print that", "print that out"},
+    "browse": {"open it online", "see it online", "open the link",
+               "open the page", "open it in the browser", "open the url",
+               "pull it up"},
+}
+_DELIVERY_CLARIFY = {"show me", "show it to me", "can i see it", "let me see",
+                     "show it", "let me see it"}
 
-def _is_readback_affirm(command: str, last_response: str) -> bool:
-    """Check if user is affirming an offer to read (recipe, instructions, steps, etc.).
+# Phrases that resolve "show me X" to a specific mode (checked before clarify)
+_SHOW_ME_RESOLVERS = {
+    "display": {"in the chat", "in chat", "on screen", "on the screen",
+                "here", "in our chat"},
+    "print": {"on paper", "a printout", "a hard copy"},
+    "browse": {"online", "in the browser", "in my browser", "the link",
+               "the page", "the website"},
+}
 
-    Uses prefix matching so "yes read it to me", "sure go ahead", etc. all work
-    without needing to enumerate every possible phrase.
+# Phrases in JARVIS's last response that indicate a delivery offer
+_OFFER_PHRASES = ["would you like me to read", "want me to read",
+                  "shall i read", "like me to go through"]
+# Phrases that indicate JARVIS asked a clarification about delivery mode
+_CLARIFY_PHRASES = ["read it to you", "show it here", "display it in chat",
+                    "print it", "open the page", "pull it up in your browser",
+                    "send it to the printer", "open it online",
+                    "which works best", "what would you prefer"]
+
+
+def _detect_delivery_mode(command: str, last_response: str) -> str | None:
+    """Detect how the user wants content delivered.
+
+    Returns one of: "read", "display", "print", "browse", "clarify", or None.
+    Generic affirms ("yes", "yeah") default to "read" when following a readback offer.
     """
     cmd = command.strip().lower().rstrip(".,!?")
-    # Exact match (fast path)
+    lower_resp = (last_response or "").lower()
+
+    # 1) Check for explicit delivery mode keywords (no affirm needed)
+    for mode, phrases in _DELIVERY_MODES.items():
+        if cmd in phrases or any(cmd.startswith(p) for p in phrases):
+            return mode
+
+    # 2) Check for clarify phrases ("show me" without specifying how)
+    #    But first: "show me in the chat" → resolve to specific mode
+    clarify_match = cmd in _DELIVERY_CLARIFY or any(cmd.startswith(p) for p in _DELIVERY_CLARIFY)
+    if clarify_match:
+        # Strip the clarify prefix to check for a trailing mode resolver
+        remainder = cmd
+        for cp in sorted(_DELIVERY_CLARIFY, key=len, reverse=True):
+            if cmd.startswith(cp):
+                remainder = cmd[len(cp):].lstrip(" ,.")
+                break
+        if remainder:
+            for mode, resolvers in _SHOW_ME_RESOLVERS.items():
+                if remainder in resolvers or any(remainder.startswith(r) for r in resolvers):
+                    return mode
+        return "clarify"
+
+    # 3) Affirm-based: "yes" / "sure" etc. — need context from last response
     matched = cmd in _AFFIRM_WORDS
     if not matched:
-        # Prefix match: command starts with an affirm word
-        # Sort longest-first to avoid "yes" matching before "yes please"
         sorted_affirms = sorted(_AFFIRM_WORDS, key=len, reverse=True)
         matched = any(cmd.startswith(a) for a in sorted_affirms)
     if not matched:
-        return False
-    # Verify last response contained a readback offer
-    offer_phrases = ["would you like me to read", "want me to read",
-                     "shall i read", "like me to go through"]
-    lower_resp = last_response.lower()
-    return any(p in lower_resp for p in offer_phrases)
+        return None
+
+    # Affirm matched — check what JARVIS offered
+    # If JARVIS asked delivery clarification, parse the specific mode from command
+    if any(p in lower_resp for p in _CLARIFY_PHRASES):
+        # User said "yes" to clarification — strip affirm prefix, check remainder
+        remainder = cmd
+        for a in sorted(_AFFIRM_WORDS, key=len, reverse=True):
+            if remainder.startswith(a):
+                remainder = remainder[len(a):].lstrip(" ,.")
+                break
+        if remainder:
+            for mode, phrases in _DELIVERY_MODES.items():
+                if remainder in phrases or any(remainder.startswith(p) for p in phrases):
+                    return mode
+        # Bare affirm after clarification — default to "read"
+        return "read"
+
+    # If JARVIS offered a readback, affirm → "read"
+    if any(p in lower_resp for p in _OFFER_PHRASES):
+        # Check if affirm has a trailing delivery mode: "yes print it"
+        remainder = cmd
+        for a in sorted(_AFFIRM_WORDS, key=len, reverse=True):
+            if remainder.startswith(a):
+                remainder = remainder[len(a):].lstrip(" ,.")
+                break
+        if remainder:
+            for mode, phrases in _DELIVERY_MODES.items():
+                if remainder in phrases or any(remainder.startswith(p) for p in phrases):
+                    return mode
+            # Check clarify in remainder: "yes show me"
+            if remainder in _DELIVERY_CLARIFY or any(remainder.startswith(p) for p in _DELIVERY_CLARIFY):
+                return "clarify"
+        return "read"
+
+    return None
 
 
 async def _stream_readback(ws, llm, cached_tool_result: str,
@@ -598,6 +682,199 @@ async def _deliver_readback_section(ws, conv_state, tts_proxy, section_name: str
 
 
 # ---------------------------------------------------------------------------
+# Delivery mode handlers (display / print / browse)
+# ---------------------------------------------------------------------------
+
+def _get_cached_content(conv_state) -> tuple[str | None, dict | None]:
+    """Retrieve cached tool result text and artifact provenance.
+
+    Returns (content_text, provenance_dict) or (None, None).
+    """
+    _cache = get_interaction_cache()
+    _cached_text = None
+    _provenance = None
+
+    if _cache and conv_state.window_id:
+        _art = _cache.get_latest(
+            conv_state.window_id, artifact_type="search_result_set",
+        )
+        if _art:
+            _cached_text = _art.content
+            _provenance = _art.provenance
+
+    if not _cached_text:
+        _cached_text = conv_state.last_tool_result_text
+
+    return (_cached_text, _provenance)
+
+
+async def _display_in_chat(ws, llm, conv_state, tts_proxy) -> tuple:
+    """Display content as formatted text in chat — no TTS, no pauses."""
+    from core.readback_session import ReadbackSession
+
+    cached_text, _prov = _get_cached_content(conv_state)
+    if not cached_text:
+        return ("I don't have any content to display.", False)
+
+    # Try structured parse for nice formatting
+    session = ReadbackSession()
+    prior_pick = conv_state.last_response_text or ""
+    parse_ok = await asyncio.to_thread(
+        session.parse_content, cached_text, prior_pick, llm,
+    )
+
+    if parse_ok:
+        # Build formatted text from structured data
+        parts = []
+        title = session.source_title or "Content"
+        parts.append(f"**{title}**\n")
+        for chunk in session.chunks:
+            parts.append(f"\n### {chunk.title}\n")
+            parts.append(chunk.content)
+        formatted = "\n".join(parts)
+    else:
+        # Fall back to prior synthesis or raw content
+        formatted = conv_state.last_response_text or cached_text[:4000]
+
+    conv_state.last_tool_result_text = ""
+
+    # Stream to WebSocket (no TTS)
+    if ws:
+        await ws.send_json({"type": "stream_start"})
+        await ws.send_json({"type": "stream_token", "token": formatted})
+        await ws.send_json({"type": "stream_end", "full_response": formatted})
+
+    # Brief spoken acknowledgment only
+    ack = f"Here it is in the chat, {persona.get_honorific()}."
+    if tts_proxy.hybrid and tts_proxy.real_tts:
+        threading.Thread(
+            target=tts_proxy.real_tts.speak,
+            args=(ack,),
+            daemon=True,
+        ).start()
+
+    return (formatted, True)
+
+
+async def _print_content(ws, llm, conv_state, tts_proxy) -> tuple:
+    """Format content and send to the system printer."""
+    import subprocess
+    from core.readback_session import ReadbackSession
+
+    cached_text, _prov = _get_cached_content(conv_state)
+    if not cached_text:
+        return ("I don't have any content to print.", False)
+
+    # Parse for nice formatting
+    session = ReadbackSession()
+    prior_pick = conv_state.last_response_text or ""
+    parse_ok = await asyncio.to_thread(
+        session.parse_content, cached_text, prior_pick, llm,
+    )
+
+    if parse_ok:
+        parts = []
+        title = session.source_title or "Content"
+        parts.append(title)
+        parts.append("=" * len(title))
+        parts.append("")
+        for chunk in session.chunks:
+            parts.append(chunk.title)
+            parts.append("-" * len(chunk.title))
+            parts.append(chunk.content)
+            parts.append("")
+        printable = "\n".join(parts)
+    else:
+        printable = cached_text[:8000]
+
+    # Detect printer
+    try:
+        result = subprocess.run(
+            ["lpstat", "-p", "-d"],
+            capture_output=True, text=True, timeout=5,
+        )
+        printer = None
+        for line in result.stdout.splitlines():
+            if line.startswith("printer ") and "idle" in line:
+                printer = line.split()[1]
+                break
+        if not printer:
+            for line in result.stdout.splitlines():
+                if line.startswith("printer "):
+                    printer = line.split()[1]
+                    break
+    except Exception as e:
+        logger.error(f"Printer detection failed: {e}")
+        resp = f"I couldn't detect a printer, {persona.get_honorific()}. Please check that your printer is connected."
+        return (resp, False)
+
+    if not printer:
+        resp = f"No printers found on the system, {persona.get_honorific()}. Please check your printer connection."
+        return (resp, False)
+
+    # Write to temp file and send
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write(printable)
+        tmp_path = f.name
+
+    try:
+        result = subprocess.run(
+            ["lp", "-d", printer, tmp_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            logger.info(f"Sent content to printer {printer}")
+            resp = f"Sent to the printer, {persona.get_honorific()}."
+        else:
+            logger.error(f"lp failed: {result.stderr}")
+            resp = f"The print command failed, {persona.get_honorific()}. {result.stderr.strip()}"
+    except Exception as e:
+        logger.error(f"Print failed: {e}")
+        resp = f"I couldn't send it to the printer, {persona.get_honorific()}. Error: {e}"
+    finally:
+        import os
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    conv_state.last_tool_result_text = ""
+    return (resp, False)
+
+
+async def _open_in_browser(ws, conv_state, tts_proxy, config: dict) -> tuple:
+    """Open the source URL in the user's browser."""
+    import subprocess
+
+    _cached_text, provenance = _get_cached_content(conv_state)
+    url = None
+
+    if provenance:
+        urls = provenance.get("result_urls")
+        if urls:
+            url = urls[0].get("url")
+
+    if not url:
+        resp = f"I don't have a URL to open, {persona.get_honorific()}."
+        return (resp, False)
+
+    browser = config.get("web_navigation", {}).get("default_browser", "brave") if config else "brave"
+    browser_cmd = f"{browser}-browser" if browser != "brave" else "brave-browser"
+
+    try:
+        subprocess.Popen([browser_cmd, url])
+        logger.info(f"Opened {url} in {browser_cmd}")
+        resp = f"Opening that up for you, {persona.get_honorific()}."
+    except Exception as e:
+        logger.error(f"Browser open failed: {e}")
+        resp = f"I couldn't open the browser, {persona.get_honorific()}. Error: {e}"
+
+    conv_state.last_tool_result_text = ""
+    return (resp, False)
+
+
+# ---------------------------------------------------------------------------
 # Command processing — shared router (Phase 3 of conversational flow refactor)
 # ---------------------------------------------------------------------------
 
@@ -745,15 +1022,35 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                     daemon=True,
                 ).start()
 
-    # --- Readback follow-up: user said "yes" to "Would you like me to read?" ---
+    # --- Delivery mode dispatch: user responds to content offer ---
     elif (not result.handled
           and conv_state.jarvis_asked_question
-          and _is_readback_affirm(command, conv_state.last_response_text)):
+          and (delivery_mode := _detect_delivery_mode(command, conv_state.last_response_text))):
 
-        used_llm = True
-        response, streamed = await _start_structured_readback(
-            ws, llm, conv_state, tts_proxy,
-        )
+        if delivery_mode == "read":
+            used_llm = True
+            response, streamed = await _start_structured_readback(
+                ws, llm, conv_state, tts_proxy,
+            )
+        elif delivery_mode == "display":
+            used_llm = True
+            response, streamed = await _display_in_chat(
+                ws, llm, conv_state, tts_proxy,
+            )
+        elif delivery_mode == "print":
+            response, streamed = await _print_content(
+                ws, llm, conv_state, tts_proxy,
+            )
+        elif delivery_mode == "browse":
+            response, streamed = await _open_in_browser(
+                ws, conv_state, tts_proxy, config,
+            )
+        elif delivery_mode == "clarify":
+            response = persona.readback_delivery_options()
+            # Response ends with "?" so jarvis_asked_question will be set True
+            # Next turn: _detect_delivery_mode picks up the specific mode
+        else:
+            response = persona.readback_delivery_options()
 
     else:
         # LLM fallback (streaming over WebSocket when ws is available)

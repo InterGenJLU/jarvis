@@ -236,6 +236,13 @@ _POOLS = {
         "That covers it, {h}. Any part you'd like me to go back to?",
     ],
 
+    # Delivery mode clarification — user said "show me" without specifying how
+    "readback_delivery_options": [
+        "I can read it to you, show it here in our chat, print it out, or open the page online. What would you prefer, {h}?",
+        "Would you like me to read it aloud, display it in chat, print it, or pull it up in your browser, {h}?",
+        "I can go through it step by step, show the full text here, send it to the printer, or open it online. Which works best, {h}?",
+    ],
+
     # TTS ack cache (no honorific — synthesized at startup)
     # Each entry is (phrase, style_tag).  Style tags:
     #   "neutral"  — generic, used as fallback for any style
@@ -489,6 +496,12 @@ def readback_complete(source: str) -> str:
     """Pick a readback completion message."""
     template = random.choice(_POOLS["readback_complete"])
     return template.format(source=source, h=get_honorific())
+
+
+def readback_delivery_options() -> str:
+    """Ask user which delivery mode they prefer."""
+    template = random.choice(_POOLS["readback_delivery_options"])
+    return template.format(h=get_honorific())
 
 
 def rundown_defer() -> str:
