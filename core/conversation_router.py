@@ -218,6 +218,7 @@ class ConversationRouter:
         # If we reach here, P3.5 did not handle it — user is on a new topic.
         if self.conv_state.nav_artifact_id:
             self.conv_state.nav_artifact_id = None
+            self.conv_state.nav_root_id = None
             self.conv_state.nav_cursor = 0
             self.conv_state.nav_total = 0
 
@@ -537,6 +538,10 @@ class ConversationRouter:
         r'\b(?:where\s+(?:was\s+I|am\s+I)|what\s+step\s+(?:am\s+I|are\s+we)|'
         r'which\s+step)\b', re.I,
     )
+    _NAV_DRILL_OUT_PATTERNS = re.compile(
+        r'\b(?:go\s+back\s+to\s+(?:the\s+)?sections|show\s+(?:me\s+)?(?:the\s+)?sections|'
+        r'back\s+to\s+(?:the\s+)?overview|section\s+list|list\s+sections)\b', re.I,
+    )
 
     def _handle_artifact_reference(self, command: str) -> RouteResult | None:
         """P3.5: Artifact reference resolution.
@@ -594,35 +599,39 @@ class ConversationRouter:
         if not cache or not wid:
             return None
 
-        # 1. Direct step jump: "skip to step 4" — works with or without session
+        # 1. Direct step jump: "skip to step 4" — auto-drills if at section level
         step_match = self._NAV_STEP_PATTERNS.search(cmd)
         if step_match:
             target = int(step_match.group(1)) - 1  # 0-based
             return self._nav_jump_to(cache, wid, target)
 
-        # 2. Section filter: "just the ingredients" — auto-arms
+        # 2. Section filter: "just the ingredients" — drill into section
         section_match = self._NAV_SECTION_PATTERNS.search(cmd)
         if section_match:
             keyword = section_match.group(1).lower().rstrip("s")
-            return self._nav_jump_to_section(cache, wid, keyword)
+            return self._nav_drill_into_section(cache, wid, keyword)
+
+        # 3. Drill out: "go back to sections" — only when drilled in
+        if self._NAV_DRILL_OUT_PATTERNS.search(cmd):
+            return self._nav_drill_out(cache, wid)
 
         # Below this point, active navigation session required
         if not self.conv_state.nav_artifact_id:
             return None
 
-        # 3. Next step
+        # 4. Next step — section boundary aware
         if self._NAV_NEXT_PATTERNS.search(cmd):
             return self._nav_advance(cache, wid)
 
-        # 4. Previous step
+        # 5. Previous step — auto drill-out at boundary
         if self._NAV_PREV_PATTERNS.search(cmd):
             return self._nav_retreat(cache, wid)
 
-        # 5. Start over
+        # 6. Start over — within current level
         if self._NAV_RESET_PATTERNS.search(cmd):
             return self._nav_reset(cache, wid)
 
-        # 6. Position query
+        # 7. Position query — level-aware
         if self._NAV_POSITION_PATTERNS.search(cmd):
             return self._nav_position()
 
@@ -651,10 +660,35 @@ class ConversationRouter:
 
     def _nav_jump_to(self, cache, wid: str,
                      target_idx: int) -> RouteResult | None:
-        """Handle 'skip to step N'."""
+        """Handle 'skip to step N'.
+
+        If at section level and children are sections, auto-find a
+        steps/instructions section, drill in, and jump to step N.
+        """
         parent_id, children = self._nav_get_or_decompose(cache, wid)
         if not children:
             return None  # No navigable content — fall through
+
+        # Auto-drill: if children are sections, find steps section first
+        has_sections = any(c.artifact_type == "section" for c in children)
+        if has_sections:
+            # Find instructions/steps section
+            steps_section = None
+            for child in children:
+                label = child.summary.lower()
+                if any(kw in label for kw in ("instruction", "step", "direction", "method")):
+                    steps_section = child
+                    break
+            if steps_section:
+                step_children = cache.decompose(
+                    steps_section.artifact_id, wid, llm=self.llm,
+                )
+                if step_children:
+                    # Drill into steps section
+                    self.conv_state.nav_root_id = parent_id
+                    self.conv_state.nav_artifact_id = steps_section.artifact_id
+                    self.conv_state.nav_total = len(step_children)
+                    children = step_children  # Use drilled children for jump
 
         if target_idx < 0 or target_idx >= len(children):
             return RouteResult(
@@ -672,50 +706,111 @@ class ConversationRouter:
             handled=True, open_window=EXTENDED_WINDOW,
         )
 
-    def _nav_jump_to_section(self, cache, wid: str,
-                             section_keyword: str) -> RouteResult | None:
-        """Handle 'just the ingredients' — find section by keyword match."""
+    def _nav_drill_into_section(self, cache, wid: str,
+                                section_keyword: str) -> RouteResult | None:
+        """Handle 'just the ingredients' — find section and drill in.
+
+        At section level: finds matching section, decomposes it into depth-2
+        sub-items, sets nav state to navigate within the section.
+        At sub-item level: searches within current siblings by keyword.
+        """
         parent_id, children = self._nav_get_or_decompose(cache, wid)
         if not children:
             return None
 
-        # Two-pass matching: prefer summary/label hits, fall back to content
-        label_matches = []
-        content_matches = []
-        label_first_idx = None
-        content_first_idx = None
-        for i, child in enumerate(children):
-            label = child.summary.lower()
-            if section_keyword in label:
-                label_matches.append(child)
-                if label_first_idx is None:
-                    label_first_idx = i
-            elif section_keyword in child.content[:80].lower():
-                content_matches.append(child)
-                if content_first_idx is None:
-                    content_first_idx = i
+        # Check if children are sections (depth-1)
+        has_sections = any(c.artifact_type == "section" for c in children)
 
-        # Prefer label matches; fall back to content matches
-        matching = label_matches or content_matches
-        first_idx = label_first_idx if label_matches else content_first_idx
+        if has_sections:
+            # Find matching section by keyword
+            target_section = None
+            target_idx = None
+            for i, child in enumerate(children):
+                label = child.summary.lower()
+                if section_keyword in label:
+                    target_section = child
+                    target_idx = i
+                    break
+                if section_keyword in child.content[:80].lower():
+                    target_section = child
+                    target_idx = i
+                    break
 
-        if not matching:
-            return None  # No matching section — fall through
+            if not target_section:
+                return None  # No matching section — fall through
 
-        # If multiple items match (e.g., all "ingredient" items), join them
-        if len(matching) > 1:
-            text = " ".join(c.content for c in matching)
+            # Decompose the section into depth-2 sub-items
+            section_children = cache.decompose(
+                target_section.artifact_id, wid, llm=self.llm,
+            )
+
+            if section_children:
+                # Drill into this section
+                self.conv_state.nav_root_id = parent_id
+                self.conv_state.nav_artifact_id = target_section.artifact_id
+                self.conv_state.nav_cursor = 0
+                self.conv_state.nav_total = len(section_children)
+
+                # Read back all items in the section
+                parts = [c.content for c in section_children]
+                text = " ".join(parts)
+                return RouteResult(
+                    text=text, intent="nav_section_drill",
+                    source="cache", handled=True,
+                    open_window=EXTENDED_WINDOW,
+                )
+            else:
+                # Section has no decomposable sub-items — read it as-is
+                self.conv_state.nav_cursor = target_idx
+                return RouteResult(
+                    text=target_section.content,
+                    intent="nav_section", source="cache",
+                    handled=True, open_window=EXTENDED_WINDOW,
+                )
         else:
-            text = matching[0].content
+            # Flat sub-items — fall back to keyword matching across items
+            matching = [c for c in children
+                        if section_keyword in c.summary.lower()
+                        or section_keyword in c.content[:80].lower()]
+            if not matching:
+                return None
 
-        self.conv_state.nav_cursor = first_idx
+            text = " ".join(c.content for c in matching)
+            return RouteResult(
+                text=text, intent="nav_section", source="cache",
+                handled=True, open_window=EXTENDED_WINDOW,
+            )
+
+    def _nav_drill_out(self, cache, wid: str) -> RouteResult | None:
+        """Handle 'go back to sections' — drill out to parent level."""
+        root_id = self.conv_state.nav_root_id
+        if not root_id:
+            return None  # Not drilled in — nothing to drill out of
+
+        # Restore nav to root level
+        children = cache.get_children(root_id, wid)
+        if not children:
+            return None
+
+        self.conv_state.nav_artifact_id = root_id
+        self.conv_state.nav_root_id = None
+        self.conv_state.nav_cursor = 0
+        self.conv_state.nav_total = len(children)
+
+        # List section names
+        section_names = [c.summary for c in children]
+        listing = ", ".join(section_names)
         return RouteResult(
-            text=text, intent="nav_section", source="cache",
+            text=f"Here are the sections: {listing}. Which section would you like?",
+            intent="nav_drill_out", source="cache",
             handled=True, open_window=EXTENDED_WINDOW,
         )
 
     def _nav_advance(self, cache, wid: str) -> RouteResult | None:
-        """Handle 'next step'."""
+        """Handle 'next step' — section boundary aware.
+
+        At end of drilled-in section, offers next sibling section.
+        """
         parent_id = self.conv_state.nav_artifact_id
         children = cache.get_children(parent_id, wid)
         if not children:
@@ -723,6 +818,25 @@ class ConversationRouter:
 
         next_idx = self.conv_state.nav_cursor + 1
         if next_idx >= len(children):
+            # If drilled in, offer next sibling section
+            root_id = self.conv_state.nav_root_id
+            if root_id:
+                siblings = cache.get_children(root_id, wid)
+                current_section = cache.get_by_id(parent_id)
+                if siblings and current_section:
+                    sibling_idx = next(
+                        (i for i, s in enumerate(siblings)
+                         if s.artifact_id == parent_id), None,
+                    )
+                    if sibling_idx is not None and sibling_idx + 1 < len(siblings):
+                        next_section = siblings[sibling_idx + 1]
+                        return RouteResult(
+                            text=f"That's the end of {current_section.summary}. "
+                                 f"Next section is {next_section.summary}. "
+                                 f"Would you like me to continue with that?",
+                            intent="nav_end_section", source="cache",
+                            handled=True, open_window=EXTENDED_WINDOW,
+                        )
             return RouteResult(
                 text="That's the last step. Would you like me to start over?",
                 intent="nav_end", source="cache",
@@ -738,7 +852,7 @@ class ConversationRouter:
         )
 
     def _nav_retreat(self, cache, wid: str) -> RouteResult | None:
-        """Handle 'go back'."""
+        """Handle 'go back' — auto drill-out at section boundary."""
         parent_id = self.conv_state.nav_artifact_id
         children = cache.get_children(parent_id, wid)
         if not children:
@@ -746,6 +860,10 @@ class ConversationRouter:
 
         prev_idx = self.conv_state.nav_cursor - 1
         if prev_idx < 0:
+            # If drilled in, auto drill-out to section listing
+            root_id = self.conv_state.nav_root_id
+            if root_id:
+                return self._nav_drill_out(cache, wid)
             return RouteResult(
                 text="You're already at the beginning.",
                 intent="nav_start", source="cache",
@@ -778,14 +896,29 @@ class ConversationRouter:
         )
 
     def _nav_position(self) -> RouteResult:
-        """Handle 'where was I?'."""
+        """Handle 'where was I?' — level-aware reporting."""
+        from core.interaction_cache import get_interaction_cache
+
         cursor = self.conv_state.nav_cursor
         total = self.conv_state.nav_total
         step_num = cursor + 1
-        if total:
+        root_id = self.conv_state.nav_root_id
+
+        if root_id:
+            # Drilled in — report section context
+            parent_id = self.conv_state.nav_artifact_id
+            cache = get_interaction_cache()
+            section_art = cache.get_by_id(parent_id) if cache else None
+            section_name = section_art.summary if section_art else "this section"
+            if total:
+                text = f"You're on step {step_num} of {total} in {section_name}."
+            else:
+                text = f"You're on step {step_num} in {section_name}."
+        elif total:
             text = f"You're on step {step_num} of {total}."
         else:
             text = f"You're on step {step_num}."
+
         return RouteResult(
             text=text, intent="nav_position", source="cache",
             handled=True, open_window=EXTENDED_WINDOW,
@@ -796,7 +929,10 @@ class ConversationRouter:
         """Format a sub-item for TTS delivery with position context."""
         label = child.summary
         content = child.content
-        if total > 1 and not label.startswith("Section"):
+        if child.artifact_type == "section":
+            # Section-level: just show the section name + content
+            prefix = f"{label}."
+        elif total > 1:
             prefix = f"{label} of {total}."
         else:
             prefix = f"{label}."

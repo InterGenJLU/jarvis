@@ -429,6 +429,7 @@ async def _stream_readback(ws, llm, cached_tool_result: str,
             ))
             # Arm navigation session
             conv_state.nav_artifact_id = _readback_art_id
+            conv_state.nav_root_id = None
             conv_state.nav_cursor = 0
             conv_state.nav_total = 0
 

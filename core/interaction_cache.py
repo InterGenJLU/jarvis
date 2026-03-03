@@ -352,8 +352,15 @@ class InteractionCache:
     # ------------------------------------------------------------------
 
     # Regex patterns for structured content extraction
+    # Section headers: **Bold Headers** or ### Markdown Headers on their own line
+    # Uses [ \t]* (not \s*) to avoid consuming newlines needed as next-match anchors
+    _SECTION_HEADER = re.compile(
+        r'(?:^|\n)\*\*([^*\n]+)\*\*[ \t]*\n|(?:^|\n)(#{1,3})\s+(.+?)\n',
+    )
+    # Numbered steps — tolerates bold wrapping: "1. Text" or "**1.** Text" or "**1. Text**"
     _NUMBERED_STEP = re.compile(
-        r'(?:^|\n)(\d+)\.\s+(.*?)(?=\n\d+\.\s|\Z)', re.DOTALL,
+        r'(?:^|\n)\*{0,2}(\d+)[\.\)]\*{0,2}\s+(.*?)(?=\n\*{0,2}\d+[\.\)]\*{0,2}\s|\Z)',
+        re.DOTALL,
     )
     _BULLET_ITEM = re.compile(
         r'(?:^|\n)[-*]\s+(.*?)(?=\n[-*]\s|\n\n|\Z)', re.DOTALL,
@@ -361,6 +368,63 @@ class InteractionCache:
     _MD_SECTION = re.compile(
         r'(?:^|\n)(#{1,3})\s+(.+?)\n(.*?)(?=\n#{1,3}\s|\Z)', re.DOTALL,
     )
+
+    # Minimum content size for decomposition (skip short prose)
+    _MIN_DECOMPOSE_CHARS = 200
+    _MIN_DECOMPOSE_NEWLINES = 3
+
+    # Bold-wrapped numbered step (NOT a section header)
+    _BOLD_NUMBERED = re.compile(r'^\d+[\.\)]')
+
+    @classmethod
+    def _detect_sections(cls, content: str) -> list[tuple[str, str, str]]:
+        """Detect top-level section boundaries in content.
+
+        Returns list of (label, body, item_type) 3-tuples where item_type
+        is "section". Section headers are bold (**Header**) or markdown (## Header).
+        Only returns sections if >= 2 are found.
+
+        Skips: title (first bold line before real content), bold numbered items
+        (e.g., **1. Make the Dough** — those are steps, not sections).
+        """
+        # Find all section header positions
+        headers: list[tuple[int, int, str]] = []  # (match_start, body_start, name)
+        first_match = True
+        for m in cls._SECTION_HEADER.finditer(content):
+            name = m.group(1) or m.group(3)
+            if not name:
+                continue
+            name = name.strip()
+
+            # Skip bold-wrapped numbered items (e.g., "2. Portion & Roll")
+            if cls._BOLD_NUMBERED.match(name):
+                continue
+
+            # Skip title: first bold line at/near start of content
+            if first_match:
+                first_match = False
+                # If the match starts within the first few chars, it's likely a title
+                pre_content = content[:m.start()].strip()
+                if not pre_content:
+                    continue  # Skip the title
+
+            headers.append((m.start(), m.end(), name))
+
+        if len(headers) < 2:
+            return []
+
+        # Extract body text between consecutive headers
+        sections: list[tuple[str, str, str]] = []
+        for i, (match_start, body_start, name) in enumerate(headers):
+            if i + 1 < len(headers):
+                body = content[body_start:headers[i + 1][0]].strip()
+            else:
+                body = content[body_start:].strip()
+
+            if body:  # Skip empty sections
+                sections.append((name, body, "section"))
+
+        return sections if len(sections) >= 2 else []
 
     _DECOMPOSE_PROMPT = (
         "Break the following text into navigable sub-items for a voice assistant.\n"
@@ -416,19 +480,21 @@ class InteractionCache:
         items = self._extract_sub_items(parent.content)
 
         if not items and llm:
-            items = self._llm_decompose(parent.content, llm)
+            llm_items = self._llm_decompose(parent.content, llm)
+            # LLM returns 2-tuples — wrap as sub_item type
+            items = [(label, text, "sub_item") for label, text in llm_items]
 
         if not items:
             self.logger.info("decompose: no sub-items found for %s", parent_id)
             return []
 
         children = []
-        for idx, (label, text) in enumerate(items):
+        for idx, (label, text, item_type) in enumerate(items):
             child = Artifact(
                 artifact_id=uuid.uuid4().hex[:16],
                 turn_id=parent.turn_id,
                 item_index=idx,
-                artifact_type="sub_item",
+                artifact_type=item_type,
                 content=text.strip(),
                 summary=label,
                 source=parent.source,
@@ -448,27 +514,40 @@ class InteractionCache:
         return children
 
     @classmethod
-    def _extract_sub_items(cls, content: str) -> list[tuple[str, str]]:
+    def _extract_sub_items(cls, content: str) -> list[tuple[str, str, str]]:
         """Regex extraction of sub-items from structured content.
 
-        Priority: numbered steps > bullet items > markdown sections.
-        Returns list of (label, text) tuples. Empty if nothing matched.
+        Priority: sections (bold/markdown headers) > numbered steps > bullets.
+        Returns list of (label, text, item_type) 3-tuples.
+        item_type is "section", "sub_item", or "sub_item".
+        Empty if content is too short or nothing matched.
         """
-        # 1. Numbered steps: "1. Preheat oven..." / "2. Mix flour..."
+        # Guard: skip short prose that isn't navigable
+        if (len(content) < cls._MIN_DECOMPOSE_CHARS
+                or content.count('\n') < cls._MIN_DECOMPOSE_NEWLINES):
+            return []
+
+        # 1. Sections: **Bold Headers** or ## Markdown Headers
+        sections = cls._detect_sections(content)
+        if sections:
+            return sections
+
+        # 2. Numbered steps: "1. Preheat oven..." / "**1.** Mix flour..."
         matches = cls._NUMBERED_STEP.findall(content)
         if len(matches) >= 2:
-            return [(f"Step {num}", text.strip()) for num, text in matches]
+            return [(f"Step {num}", text.strip(), "sub_item")
+                    for num, text in matches]
 
-        # 2. Bullet items: "- 2 cups flour" / "* 1 tsp salt"
+        # 3. Bullet items: "- 2 cups flour" / "* 1 tsp salt"
         matches = cls._BULLET_ITEM.findall(content)
         if len(matches) >= 2:
-            return [(f"Item {i+1}", text.strip())
+            return [(f"Item {i+1}", text.strip(), "sub_item")
                     for i, text in enumerate(matches)]
 
-        # 3. Markdown sections: "## Ingredients\n..."
+        # 4. Markdown sections (legacy ## style)
         matches = cls._MD_SECTION.findall(content)
         if len(matches) >= 2:
-            return [(f"Section: {header.strip()}", body.strip())
+            return [(f"Section: {header.strip()}", body.strip(), "section")
                     for _hashes, header, body in matches if body.strip()]
 
         return []
