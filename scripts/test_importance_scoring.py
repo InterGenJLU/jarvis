@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Importance Scoring (CMA Selective Retention) tests.
+Importance Scoring + Retrieval-Driven Mutation (CMA) tests.
 
 Tests:
   1. Default importance score
@@ -12,6 +12,15 @@ Tests:
   7. Cold-tier search ranking by importance
   8. Rehydrate boosts original cold artifact
   9. SQLite persistence of scores
+  10. ACCESS_WEIGHTS completeness
+  --- Retrieval-driven mutation ---
+  11. record_access updates last_accessed_at + access_count
+  12. effective_score decay (older → lower score)
+  13. effective_score frequency boost (more accesses → higher)
+  14. effective_score combined (recent+frequent beats old+important)
+  15. search_cold ranks by effective_score
+  16. Parent bubbling updates access fields
+  17. SQLite persistence of new fields
 
 Usage:
   python3 scripts/test_importance_scoring.py --verbose
@@ -19,6 +28,7 @@ Usage:
 
 import os
 import sys
+import time
 import tempfile
 import shutil
 from dataclasses import dataclass
@@ -413,11 +423,321 @@ def test_access_weights_completeness():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# TEST 11: record_access updates last_accessed_at + access_count
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_last_accessed_tracking():
+    log("\n--- 11. record_access updates last_accessed_at + access_count ---")
+    cache, tmpdir = make_cache()
+    try:
+        aid = make_artifact(cache)
+
+        # Before any access
+        art = cache.get_by_id(aid)
+        assert_eq("Initial access_count = 0", art.access_count, 0)
+        assert_eq("Initial last_accessed_at = 0.0", art.last_accessed_at, 0.0)
+
+        # First access
+        before = time.time()
+        cache.record_access(aid, "ordinal_reference")
+        after = time.time()
+
+        art = cache.get_by_id(aid)
+        assert_eq("access_count after 1 access = 1", art.access_count, 1)
+        assert_true("last_accessed_at is set after access",
+                     before <= art.last_accessed_at <= after,
+                     detail=f"{before} <= {art.last_accessed_at} <= {after}")
+
+        # Second access
+        cache.record_access(aid, "nav_advance")
+        art = cache.get_by_id(aid)
+        assert_eq("access_count after 2 accesses = 2", art.access_count, 2)
+        assert_true("last_accessed_at updated on second access",
+                     art.last_accessed_at >= before)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 12: effective_score decay
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_effective_score_decay():
+    log("\n--- 12. effective_score decay (older → lower) ---")
+
+    now = time.time()
+
+    # Artifact accessed just now: no decay
+    fresh = Artifact(
+        artifact_id="decay_fresh", turn_id=1, item_index=0,
+        artifact_type="test", content="x", summary="x", source="test",
+        window_id="w", created_at=now - 100, importance_score=10.0,
+        last_accessed_at=now, access_count=1,
+    )
+    score_fresh = InteractionCache.effective_score(fresh, now)
+
+    # Artifact accessed 7 days ago: half-life decay
+    week_old = Artifact(
+        artifact_id="decay_week", turn_id=1, item_index=0,
+        artifact_type="test", content="x", summary="x", source="test",
+        window_id="w", created_at=now - 100, importance_score=10.0,
+        last_accessed_at=now - 7 * 86400, access_count=1,
+    )
+    score_week = InteractionCache.effective_score(week_old, now)
+
+    # Artifact accessed 14 days ago: two half-lives
+    old = Artifact(
+        artifact_id="decay_old", turn_id=1, item_index=0,
+        artifact_type="test", content="x", summary="x", source="test",
+        window_id="w", created_at=now - 100, importance_score=10.0,
+        last_accessed_at=now - 14 * 86400, access_count=1,
+    )
+    score_old = InteractionCache.effective_score(old, now)
+
+    assert_true("Fresh > week-old", score_fresh > score_week,
+                detail=f"{score_fresh:.2f} > {score_week:.2f}")
+    assert_true("Week-old > 2-week-old", score_week > score_old,
+                detail=f"{score_week:.2f} > {score_old:.2f}")
+
+    # At half-life, score should be roughly half (modulo frequency boost)
+    ratio = score_week / score_fresh
+    assert_true("7-day decay ratio ≈ 0.50",
+                0.45 <= ratio <= 0.55,
+                detail=f"ratio={ratio:.3f}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 13: effective_score frequency boost
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_effective_score_frequency():
+    log("\n--- 13. effective_score frequency boost ---")
+
+    now = time.time()
+
+    def make_freq_art(count):
+        return Artifact(
+            artifact_id=f"freq_{count}", turn_id=1, item_index=0,
+            artifact_type="test", content="x", summary="x", source="test",
+            window_id="w", created_at=now - 100, importance_score=10.0,
+            last_accessed_at=now, access_count=count,
+        )
+
+    s0 = InteractionCache.effective_score(make_freq_art(0), now)
+    s1 = InteractionCache.effective_score(make_freq_art(1), now)
+    s3 = InteractionCache.effective_score(make_freq_art(3), now)
+    s7 = InteractionCache.effective_score(make_freq_art(7), now)
+    s15 = InteractionCache.effective_score(make_freq_art(15), now)
+
+    assert_true("0 accesses < 1 access", s0 < s1,
+                detail=f"{s0:.2f} < {s1:.2f}")
+    assert_true("1 access < 3 accesses", s1 < s3,
+                detail=f"{s1:.2f} < {s3:.2f}")
+    assert_true("3 accesses < 7 accesses", s3 < s7,
+                detail=f"{s3:.2f} < {s7:.2f}")
+    assert_true("7 accesses < 15 accesses", s7 < s15,
+                detail=f"{s7:.2f} < {s15:.2f}")
+
+    # Boost is gentle — 15 accesses shouldn't more than double the score
+    ratio_15 = s15 / s0
+    assert_true("15-access boost < 2x", ratio_15 < 2.0,
+                detail=f"ratio={ratio_15:.3f}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 14: effective_score combined — recency+frequency beats raw importance
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_effective_score_combined():
+    log("\n--- 14. effective_score combined ranking ---")
+
+    now = time.time()
+
+    # Artifact A: moderate importance, recently accessed, frequently recalled
+    art_a = Artifact(
+        artifact_id="combo_a", turn_id=1, item_index=0,
+        artifact_type="test", content="x", summary="x", source="test",
+        window_id="w", created_at=now - 30 * 86400,
+        importance_score=10.0, last_accessed_at=now - 3 * 86400,
+        access_count=5,
+    )
+
+    # Artifact B: higher importance, stale (14 days), single access
+    art_b = Artifact(
+        artifact_id="combo_b", turn_id=1, item_index=0,
+        artifact_type="test", content="x", summary="x", source="test",
+        window_id="w", created_at=now - 30 * 86400,
+        importance_score=12.0, last_accessed_at=now - 14 * 86400,
+        access_count=1,
+    )
+
+    sa = InteractionCache.effective_score(art_a, now)
+    sb = InteractionCache.effective_score(art_b, now)
+
+    assert_true("Recent+frequent (10.0) beats stale+important (12.0)",
+                sa > sb,
+                detail=f"A={sa:.2f}, B={sb:.2f}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 15: search_cold ranks by effective_score
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_cold_search_effective_ranking():
+    log("\n--- 15. search_cold ranks by effective_score ---")
+    cache, tmpdir = make_cache()
+    try:
+        import sqlite3 as _sqlite3
+        wid = "effective_cold_window"
+        now = time.time()
+
+        # Artifact A: lower importance but recently accessed
+        a1 = make_artifact(cache, window_id=wid, turn=1, index=0,
+                           content="Recently accessed artifact with enough content for promotion filter pass one",
+                           summary="Recent")
+        # Artifact B: higher importance but stale
+        a2 = make_artifact(cache, window_id=wid, turn=2, index=0,
+                           content="Stale high importance artifact with different content for deduplication filter check",
+                           summary="Stale")
+
+        # Boost B's importance higher than A
+        cache.record_access(a2, "rehydrate")          # +5.0 → 6.0
+        cache.record_access(a2, "ordinal_reference")  # +3.0 → 9.0
+        cache.record_access(a1, "type_reference")     # +2.0 → 3.0
+
+        # Demote → promote to cold
+        cache.demote_window(wid)
+        cache.promote_window(wid)
+
+        # Now backdate B's last_accessed_at to 14 days ago in SQLite
+        db_path = os.path.join(tmpdir, "data", "interaction_cache.db")
+        conn = _sqlite3.connect(db_path)
+        conn.execute(
+            "UPDATE artifacts SET last_accessed_at = ? WHERE artifact_id = ?",
+            (now - 14 * 86400, a2),
+        )
+        # And set A's last_accessed_at to recently (1 day ago)
+        conn.execute(
+            "UPDATE artifacts SET last_accessed_at = ? WHERE artifact_id = ?",
+            (now - 1 * 86400, a1),
+        )
+        conn.commit()
+        conn.close()
+
+        # search_cold should now rank A (recent, lower importance) above B (stale, higher importance)
+        cold = cache.search_cold(user_id="user")
+        assert_true("At least 2 cold results", len(cold) >= 2,
+                     detail=f"got {len(cold)}")
+
+        if len(cold) >= 2:
+            # A should be first because effective_score favors recency
+            assert_eq("Recent artifact ranked first",
+                       cold[0].artifact_id, a1)
+            assert_eq("Stale artifact ranked second",
+                       cold[1].artifact_id, a2)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 16: Parent bubbling updates access fields
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_parent_bubbling_access_fields():
+    log("\n--- 16. Parent bubbling updates access fields ---")
+    cache, tmpdir = make_cache()
+    try:
+        wid = "bubble_access_window"
+        parent_id = make_artifact(cache, window_id=wid, turn=1, index=0,
+                                  summary="Bubble parent")
+        child_id = make_artifact(cache, window_id=wid, turn=1, index=1,
+                                 summary="Bubble child", parent_id=parent_id)
+
+        before = time.time()
+        cache.record_access(child_id, "nav_advance")
+        after = time.time()
+
+        parent = cache.get_by_id(parent_id)
+        assert_eq("Parent access_count = 1 after child access",
+                   parent.access_count, 1)
+        assert_true("Parent last_accessed_at set after child access",
+                     before <= parent.last_accessed_at <= after,
+                     detail=f"{before} <= {parent.last_accessed_at} <= {after}")
+
+        # Second child access
+        cache.record_access(child_id, "nav_advance")
+        parent = cache.get_by_id(parent_id)
+        assert_eq("Parent access_count = 2 after 2 child accesses",
+                   parent.access_count, 2)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 17: SQLite persistence of new fields
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_sqlite_persistence_new_fields():
+    log("\n--- 17. SQLite persistence of new fields ---")
+    cache, tmpdir = make_cache()
+    try:
+        import sqlite3 as _sqlite3
+        aid = make_artifact(cache)
+
+        before = time.time()
+        cache.record_access(aid, "ordinal_reference")
+        cache.record_access(aid, "nav_advance")
+        after = time.time()
+
+        # Read directly from SQLite
+        db_path = os.path.join(tmpdir, "data", "interaction_cache.db")
+        conn = _sqlite3.connect(db_path)
+        conn.row_factory = _sqlite3.Row
+        row = conn.execute(
+            "SELECT last_accessed_at, access_count FROM artifacts "
+            "WHERE artifact_id = ?", (aid,)
+        ).fetchone()
+        conn.close()
+
+        assert_eq("SQLite access_count = 2", row["access_count"], 2)
+        assert_true("SQLite last_accessed_at in range",
+                     before <= row["last_accessed_at"] <= after,
+                     detail=f"{before} <= {row['last_accessed_at']} <= {after}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST 18: effective_score uses created_at when never accessed
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_effective_score_fallback_to_created_at():
+    log("\n--- 18. effective_score uses created_at when never accessed ---")
+
+    now = time.time()
+
+    # Never accessed (last_accessed_at = 0.0) → should use created_at
+    art = Artifact(
+        artifact_id="fallback_test", turn_id=1, item_index=0,
+        artifact_type="test", content="x", summary="x", source="test",
+        window_id="w", created_at=now - 3 * 86400,
+        importance_score=5.0, last_accessed_at=0.0, access_count=0,
+    )
+
+    score = InteractionCache.effective_score(art, now)
+    # With 3-day-old created_at and 7-day half-life:
+    # decay = 0.5^(3/7) ≈ 0.74, freq_boost = 1.0, effective ≈ 3.7
+    assert_true("Score decays from created_at when never accessed",
+                3.0 <= score <= 4.5,
+                detail=f"score={score:.3f}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Runner
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main():
-    log("Importance Scoring (CMA Selective Retention) — Test Suite\n")
+    log("Importance Scoring + Retrieval-Driven Mutation — Test Suite\n")
 
     test_default_score()
     test_record_access()
@@ -429,6 +749,15 @@ def main():
     test_rehydrate_boost()
     test_sqlite_persistence()
     test_access_weights_completeness()
+    # Retrieval-driven mutation tests
+    test_last_accessed_tracking()
+    test_effective_score_decay()
+    test_effective_score_frequency()
+    test_effective_score_combined()
+    test_cold_search_effective_ranking()
+    test_parent_bubbling_access_fields()
+    test_sqlite_persistence_new_fields()
+    test_effective_score_fallback_to_created_at()
 
     passed = sum(1 for r in results if r.passed)
     failed = sum(1 for r in results if not r.passed)

@@ -8,6 +8,7 @@ See docs/INTERACTION_ARTIFACT_CACHE_DESIGN.md for the full vision.
 """
 
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -39,6 +40,8 @@ class Artifact:
     tier: str = "hot"           # "hot" / "warm" / "cold"
     created_at: float = 0.0
     importance_score: float = 1.0  # engagement accumulator (CMA selective retention)
+    last_accessed_at: float = 0.0  # timestamp of most recent record_access()
+    access_count: int = 0          # total record_access() calls
 
 
 def _serialize_artifact(art: Artifact) -> tuple:
@@ -59,6 +62,8 @@ def _serialize_artifact(art: Artifact) -> tuple:
         art.tier,
         art.created_at,
         art.importance_score,
+        art.last_accessed_at,
+        art.access_count,
     )
 
 
@@ -81,6 +86,8 @@ def _row_to_artifact(row: sqlite3.Row) -> Artifact:
         tier=row["tier"],
         created_at=row["created_at"],
         importance_score=row["importance_score"] if "importance_score" in keys else 1.0,
+        last_accessed_at=row["last_accessed_at"] if "last_accessed_at" in keys else 0.0,
+        access_count=row["access_count"] if "access_count" in keys else 0,
     )
 
 
@@ -174,6 +181,24 @@ class InteractionCache:
                     self.logger.info(
                         "Migrated artifacts table: added importance_score column"
                     )
+                # Migration: add retrieval-driven mutation columns
+                try:
+                    conn.execute(
+                        "SELECT last_accessed_at FROM artifacts LIMIT 1"
+                    )
+                except sqlite3.OperationalError:
+                    conn.execute(
+                        "ALTER TABLE artifacts "
+                        "ADD COLUMN last_accessed_at REAL DEFAULT 0.0"
+                    )
+                    conn.execute(
+                        "ALTER TABLE artifacts "
+                        "ADD COLUMN access_count INTEGER DEFAULT 0"
+                    )
+                    self.logger.info(
+                        "Migrated artifacts table: added last_accessed_at, "
+                        "access_count columns"
+                    )
                 conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_artifacts_cold_importance
                     ON artifacts(tier, user_id, importance_score DESC, created_at DESC)
@@ -214,8 +239,8 @@ class InteractionCache:
                        (artifact_id, turn_id, item_index, artifact_type,
                         content, summary, source, provenance, metadata,
                         parent_id, user_id, window_id, tier, created_at,
-                        importance_score)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        importance_score, last_accessed_at, access_count)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     _serialize_artifact(artifact),
                 )
                 conn.commit()
@@ -233,8 +258,37 @@ class InteractionCache:
         return artifact.artifact_id
 
     # ------------------------------------------------------------------
-    # Importance scoring (CMA selective retention)
+    # Importance scoring + retrieval-driven mutation (CMA)
     # ------------------------------------------------------------------
+
+    # Time decay half-life: artifact loses half its effective score
+    # every N days without access. 7 days balances responsiveness
+    # with stability — weekly-unused artifacts fade, daily-used persist.
+    HALF_LIFE_DAYS = 7.0
+
+    # Frequency weight: how much repeated recall compounds.
+    # 0.15 * log2(1 + count) gives gentle boost:
+    #   1 access → +15%, 3 → +30%, 7 → +45%, 15 → +60%
+    FREQUENCY_WEIGHT = 0.15
+
+    @classmethod
+    def effective_score(cls, art: 'Artifact', now: float = None) -> float:
+        """Compute time-decayed, frequency-boosted effective score.
+
+        Used for cross-session retrieval ranking (search_cold). Combines:
+        - Base importance (cumulative engagement weight)
+        - Recency decay (exponential, 7-day half-life from last access)
+        - Frequency boost (log-scaled access count)
+        """
+        if now is None:
+            now = time.time()
+        last_touch = art.last_accessed_at or art.created_at
+        age_days = max(0.0, (now - last_touch) / 86400.0)
+        decay = 0.5 ** (age_days / cls.HALF_LIFE_DAYS)
+        freq_boost = 1.0 + cls.FREQUENCY_WEIGHT * math.log2(
+            1 + art.access_count
+        )
+        return art.importance_score * decay * freq_boost
 
     ACCESS_WEIGHTS = {
         # Cross-session recall — strongest signal
@@ -261,10 +315,14 @@ class InteractionCache:
     def record_access(self, artifact_id: str, access_type: str):
         """Increment importance score for an artifact on user interaction.
 
+        Also updates last_accessed_at and access_count for retrieval-driven
+        mutation (time decay + recall frequency tracking).
+
         Bubbles half the weight to the parent artifact (if any),
         so top-level artifacts accumulate engagement from sub-item nav.
         """
         weight = self.ACCESS_WEIGHTS.get(access_type, 1.0)
+        now = time.time()
 
         # Update in-memory hot tier
         target_art = None
@@ -272,6 +330,8 @@ class InteractionCache:
             for art in artifacts:
                 if art.artifact_id == artifact_id:
                     art.importance_score += weight
+                    art.last_accessed_at = now
+                    art.access_count += 1
                     target_art = art
                     break
             if target_art:
@@ -282,23 +342,31 @@ class InteractionCache:
             conn = self._get_conn()
             try:
                 conn.execute(
-                    "UPDATE artifacts SET importance_score = importance_score + ? "
+                    "UPDATE artifacts "
+                    "SET importance_score = importance_score + ?, "
+                    "    last_accessed_at = ?, "
+                    "    access_count = access_count + 1 "
                     "WHERE artifact_id = ?",
-                    (weight, artifact_id),
+                    (weight, now, artifact_id),
                 )
                 # Bubble to parent — sub-item engagement reflects on parent
                 if target_art and target_art.parent_id:
                     half = weight * 0.5
                     conn.execute(
-                        "UPDATE artifacts SET importance_score = importance_score + ? "
+                        "UPDATE artifacts "
+                        "SET importance_score = importance_score + ?, "
+                        "    last_accessed_at = ?, "
+                        "    access_count = access_count + 1 "
                         "WHERE artifact_id = ?",
-                        (half, target_art.parent_id),
+                        (half, now, target_art.parent_id),
                     )
                     # Hot tier parent too
                     for artifacts in self._hot.values():
                         for art in artifacts:
                             if art.artifact_id == target_art.parent_id:
                                 art.importance_score += half
+                                art.last_accessed_at = now
+                                art.access_count += 1
                                 break
                 conn.commit()
             except Exception as e:
@@ -307,8 +375,9 @@ class InteractionCache:
             finally:
                 conn.close()
 
-        self.logger.debug("Recorded access: %s +%.1f (%s)",
-                          artifact_id, weight, access_type)
+        self.logger.debug("Recorded access: %s +%.1f (%s) count=%d",
+                          artifact_id, weight, access_type,
+                          target_art.access_count if target_art else 0)
 
     def get_by_id(self, artifact_id: str) -> Optional[Artifact]:
         """Retrieve a single artifact by ID. Checks hot first, then SQLite."""
@@ -853,19 +922,20 @@ class InteractionCache:
                     params + [limit * 3],  # over-fetch for keyword filter
                 ).fetchall()
 
-                if not keyword:
-                    return [_row_to_artifact(r) for r in rows[:limit]]
+                # Convert all rows, apply keyword filter if needed
+                all_arts = [_row_to_artifact(r) for r in rows]
+                if keyword:
+                    kw = keyword.lower()
+                    all_arts = [a for a in all_arts
+                                if self._keyword_match(a, kw)]
 
-                # Apply keyword filter in Python (summary, content, provenance)
-                kw = keyword.lower()
-                results = []
-                for row in rows:
-                    art = _row_to_artifact(row)
-                    if self._keyword_match(art, kw):
-                        results.append(art)
-                        if len(results) >= limit:
-                            break
-                return results
+                # Re-rank by effective score (time decay + frequency)
+                now = time.time()
+                all_arts.sort(
+                    key=lambda a: self.effective_score(a, now),
+                    reverse=True,
+                )
+                return all_arts[:limit]
             finally:
                 conn.close()
 
