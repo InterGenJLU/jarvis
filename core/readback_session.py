@@ -49,6 +49,7 @@ class ReadbackSession:
     def __init__(self):
         self.state: str = "parsing"         # "parsing" | "delivering" | "paused" | "complete"
         self.source_title: str = ""         # "Tastes Better From Scratch"
+        self.source_artifact_id: str = ""   # backing artifact (for importance scoring)
         self.chunks: list[ReadbackChunk] = []
         self.current_idx: int = 0           # Which chunk to deliver next
         self.last_delivered_idx: int = -1   # For "repeat that"

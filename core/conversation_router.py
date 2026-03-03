@@ -433,8 +433,16 @@ class ConversationRouter:
 
         cmd = command.strip().lower().rstrip(".,!?")
 
+        def _rb_access(access_type):
+            if session.source_artifact_id:
+                from core.interaction_cache import get_interaction_cache
+                _c = get_interaction_cache()
+                if _c:
+                    _c.record_access(session.source_artifact_id, access_type)
+
         # Continue / affirm
         if cmd in self._READBACK_CONTINUE:
+            _rb_access("readback_continue")
             return RouteResult(
                 handled=True, intent="readback_continue",
                 text="__READBACK_CONTINUE__",
@@ -456,6 +464,7 @@ class ConversationRouter:
             n = int(step_match.group(1))
             answer = session.get_step(n)
             if answer:
+                _rb_access("readback_recall")
                 return RouteResult(
                     handled=True, intent="readback_recall",
                     text=answer, open_window=120.0,
@@ -467,6 +476,7 @@ class ConversationRouter:
             query = ingr_match.group(1).strip().rstrip("?")
             answer = session.search_ingredients(query)
             if answer:
+                _rb_access("readback_recall")
                 return RouteResult(
                     handled=True, intent="readback_recall",
                     text=answer, open_window=120.0,
@@ -475,6 +485,7 @@ class ConversationRouter:
         # Section recall: "go back to ingredients", "repeat the ingredients"
         for section_name in ("ingredients", "equipment", "instructions", "notes"):
             if section_name in cmd and ("back" in cmd or "repeat" in cmd or "again" in cmd):
+                _rb_access("readback_section")
                 return RouteResult(
                     handled=True, intent="readback_section",
                     text=f"__READBACK_SECTION__{section_name}",
@@ -485,6 +496,7 @@ class ConversationRouter:
         if any(p in cmd for p in ("repeat that", "say that again", "one more time", "repeat the last")):
             chunk = session.get_last_delivered()
             if chunk:
+                _rb_access("readback_repeat")
                 return RouteResult(
                     handled=True, intent="readback_repeat",
                     text=chunk.content, open_window=120.0,
@@ -828,6 +840,7 @@ class ConversationRouter:
 
         self.conv_state.nav_cursor = target_idx
         child = children[target_idx]
+        cache.record_access(child.artifact_id, "nav_jump")
         return RouteResult(
             text=self._nav_format(child, target_idx, len(children)),
             intent="nav_jump", source="cache",
@@ -878,6 +891,7 @@ class ConversationRouter:
                 self.conv_state.nav_artifact_id = target_section.artifact_id
                 self.conv_state.nav_cursor = 0
                 self.conv_state.nav_total = len(section_children)
+                cache.record_access(target_section.artifact_id, "nav_section_drill")
 
                 # Read back all items in the section
                 parts = [c.content for c in section_children]
@@ -903,6 +917,7 @@ class ConversationRouter:
             if not matching:
                 return None
 
+            cache.record_access(matching[0].artifact_id, "nav_section_drill")
             text = " ".join(c.content for c in matching)
             return RouteResult(
                 text=text, intent="nav_section", source="cache",
@@ -924,6 +939,7 @@ class ConversationRouter:
         self.conv_state.nav_root_id = None
         self.conv_state.nav_cursor = 0
         self.conv_state.nav_total = len(children)
+        cache.record_access(root_id, "nav_drill_out")
 
         # List section names
         section_names = [c.summary for c in children]
@@ -973,6 +989,7 @@ class ConversationRouter:
 
         self.conv_state.nav_cursor = next_idx
         child = children[next_idx]
+        cache.record_access(child.artifact_id, "nav_advance")
         return RouteResult(
             text=self._nav_format(child, next_idx, len(children)),
             intent="nav_next", source="cache",
@@ -1000,6 +1017,7 @@ class ConversationRouter:
 
         self.conv_state.nav_cursor = prev_idx
         child = children[prev_idx]
+        cache.record_access(child.artifact_id, "nav_retreat")
         return RouteResult(
             text=self._nav_format(child, prev_idx, len(children)),
             intent="nav_prev", source="cache",
@@ -1017,6 +1035,7 @@ class ConversationRouter:
                 intent="nav_reset", source="cache", handled=True,
             )
         child = children[0]
+        cache.record_access(child.artifact_id, "nav_reset")
         return RouteResult(
             text=self._nav_format(child, 0, len(children)),
             intent="nav_reset", source="cache",
@@ -1128,6 +1147,17 @@ class ConversationRouter:
         title = urls[idx]["title"]
         logger.info("Artifact ordinal ref: fetching result %d: %s", idx + 1, url)
 
+        # Record importance on the search result set artifact
+        from core.interaction_cache import get_interaction_cache
+        _ord_cache = get_interaction_cache()
+        _ord_wid = self.conv_state.window_id
+        if _ord_cache and _ord_wid:
+            _ord_art = _ord_cache.get_latest(
+                _ord_wid, artifact_type="search_result_set",
+            )
+            if _ord_art:
+                _ord_cache.record_access(_ord_art.artifact_id, "ordinal_reference")
+
         content = self.web_researcher.fetch_page(url, max_chars=4000)
         if not content:
             return RouteResult(
@@ -1173,6 +1203,7 @@ class ConversationRouter:
             art = cache.get_latest(wid, artifact_type="synthesis")
             if art:
                 text = art.content
+                cache.record_access(art.artifact_id, "recency_reference")
                 logger.info("Recency ref: returning cached synthesis %s",
                             art.artifact_id)
 
@@ -1215,6 +1246,7 @@ class ConversationRouter:
         if not matched_art:
             return None
 
+        cache.record_access(matched_art.artifact_id, "type_reference")
         logger.info("Type ref: resolved '%s' to artifact %s [%s]",
                      cmd[:40], matched_art.artifact_id,
                      matched_art.artifact_type)
@@ -1274,6 +1306,7 @@ class ConversationRouter:
         if cache and wid:
             art = cache.get_latest(wid, artifact_type="search_result_set")
             if art:
+                cache.record_access(art.artifact_id, "generic_followup")
                 urls = art.provenance.get("result_urls")
                 if urls:
                     url = urls[0]["url"]

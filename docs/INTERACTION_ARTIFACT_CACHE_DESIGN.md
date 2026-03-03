@@ -1,7 +1,7 @@
 # Interaction Artifact Cache — Design Document
 
 > **Date:** March 3, 2026 (Session 131)
-> **Status:** Phases 1-5 complete
+> **Status:** Phases 1-6 complete
 > **Research:** See `INTERACTION_ARTIFACT_CACHE_RESEARCH.md`
 > **Prior work this replaces:** Readback flow plan (`memory/plan_readback_flow.md`)
 
@@ -146,6 +146,15 @@ Response + Artifacts
 - `format_recall_context()` returns `{context, artifact_ids}` dict for rehydration by router
 - New composite index `idx_artifacts_cold_user_date` for efficient cross-session queries
 - Full rehydration: recalled artifacts are navigable via existing P3.5 sub-item navigation
+
+**Phase 6 — Importance Scoring (CMA Selective Retention)** ✅
+- `importance_score REAL DEFAULT 1.0` column on artifacts table (schema migration)
+- 15 weighted access types (0.5-5.0): cross-session recall (5.0) > deliberate selection (3.0) > active interest (2.0-2.5) > sequential engagement (1.0) > structural nav (0.5)
+- `record_access(artifact_id, access_type)` — increments score, bubbles 50% to parent
+- `promote_window()` sorts by importance (highest-engagement first in session summary)
+- `search_cold()` orders by importance DESC, recency as tiebreaker
+- `rehydrate()` boosts original cold-tier artifact on recall (retrieval-driven mutation seed)
+- 14 call sites across conversation_router.py (4 readback, 4 reference, 6 navigation)
 
 ---
 

@@ -573,6 +573,8 @@ async def _start_structured_readback(ws, llm, conv_state, tts_proxy) -> tuple:
 
     # Parse succeeded — store session and begin delivery
     conv_state.readback_session = session
+    if _art:
+        session.source_artifact_id = _art.artifact_id
     conv_state.last_tool_result_text = ""
 
     # Send preface

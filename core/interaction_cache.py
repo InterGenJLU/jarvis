@@ -38,6 +38,7 @@ class Artifact:
     window_id: str = ""
     tier: str = "hot"           # "hot" / "warm" / "cold"
     created_at: float = 0.0
+    importance_score: float = 1.0  # engagement accumulator (CMA selective retention)
 
 
 def _serialize_artifact(art: Artifact) -> tuple:
@@ -57,11 +58,13 @@ def _serialize_artifact(art: Artifact) -> tuple:
         art.window_id,
         art.tier,
         art.created_at,
+        art.importance_score,
     )
 
 
 def _row_to_artifact(row: sqlite3.Row) -> Artifact:
     """Convert a SQLite Row to an Artifact."""
+    keys = row.keys() if hasattr(row, "keys") else []
     return Artifact(
         artifact_id=row["artifact_id"],
         turn_id=row["turn_id"],
@@ -77,6 +80,7 @@ def _row_to_artifact(row: sqlite3.Row) -> Artifact:
         window_id=row["window_id"],
         tier=row["tier"],
         created_at=row["created_at"],
+        importance_score=row["importance_score"] if "importance_score" in keys else 1.0,
     )
 
 
@@ -159,6 +163,21 @@ class InteractionCache:
                     CREATE INDEX IF NOT EXISTS idx_artifacts_cold_user_date
                     ON artifacts(tier, user_id, created_at DESC)
                 """)
+                # Migration: add importance_score column if missing
+                try:
+                    conn.execute("SELECT importance_score FROM artifacts LIMIT 1")
+                except sqlite3.OperationalError:
+                    conn.execute(
+                        "ALTER TABLE artifacts "
+                        "ADD COLUMN importance_score REAL NOT NULL DEFAULT 1.0"
+                    )
+                    self.logger.info(
+                        "Migrated artifacts table: added importance_score column"
+                    )
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_artifacts_cold_importance
+                    ON artifacts(tier, user_id, importance_score DESC, created_at DESC)
+                """)
                 conn.commit()
             finally:
                 conn.close()
@@ -194,8 +213,9 @@ class InteractionCache:
                     """INSERT OR REPLACE INTO artifacts
                        (artifact_id, turn_id, item_index, artifact_type,
                         content, summary, source, provenance, metadata,
-                        parent_id, user_id, window_id, tier, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        parent_id, user_id, window_id, tier, created_at,
+                        importance_score)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     _serialize_artifact(artifact),
                 )
                 conn.commit()
@@ -211,6 +231,84 @@ class InteractionCache:
             artifact.turn_id, artifact.item_index, artifact.window_id,
         )
         return artifact.artifact_id
+
+    # ------------------------------------------------------------------
+    # Importance scoring (CMA selective retention)
+    # ------------------------------------------------------------------
+
+    ACCESS_WEIGHTS = {
+        # Cross-session recall — strongest signal
+        "rehydrate": 5.0,
+        # Direct reference — user explicitly pointed at this artifact
+        "ordinal_reference": 3.0,
+        "nav_jump": 3.0,
+        "nav_section_drill": 3.0,
+        "generic_followup": 2.5,
+        "type_reference": 2.0,
+        "readback_recall": 2.0,
+        "readback_section": 2.0,
+        "recency_reference": 1.5,
+        "readback_repeat": 1.5,
+        # Sequential engagement
+        "nav_advance": 1.0,
+        "nav_retreat": 1.0,
+        "readback_continue": 1.0,
+        # Structural navigation
+        "nav_reset": 0.5,
+        "nav_drill_out": 0.5,
+    }
+
+    def record_access(self, artifact_id: str, access_type: str):
+        """Increment importance score for an artifact on user interaction.
+
+        Bubbles half the weight to the parent artifact (if any),
+        so top-level artifacts accumulate engagement from sub-item nav.
+        """
+        weight = self.ACCESS_WEIGHTS.get(access_type, 1.0)
+
+        # Update in-memory hot tier
+        target_art = None
+        for artifacts in self._hot.values():
+            for art in artifacts:
+                if art.artifact_id == artifact_id:
+                    art.importance_score += weight
+                    target_art = art
+                    break
+            if target_art:
+                break
+
+        # Update SQLite
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                conn.execute(
+                    "UPDATE artifacts SET importance_score = importance_score + ? "
+                    "WHERE artifact_id = ?",
+                    (weight, artifact_id),
+                )
+                # Bubble to parent — sub-item engagement reflects on parent
+                if target_art and target_art.parent_id:
+                    half = weight * 0.5
+                    conn.execute(
+                        "UPDATE artifacts SET importance_score = importance_score + ? "
+                        "WHERE artifact_id = ?",
+                        (half, target_art.parent_id),
+                    )
+                    # Hot tier parent too
+                    for artifacts in self._hot.values():
+                        for art in artifacts:
+                            if art.artifact_id == target_art.parent_id:
+                                art.importance_score += half
+                                break
+                conn.commit()
+            except Exception as e:
+                self.logger.warning("record_access failed for %s: %s",
+                                    artifact_id, e)
+            finally:
+                conn.close()
+
+        self.logger.debug("Recorded access: %s +%.1f (%s)",
+                          artifact_id, weight, access_type)
 
     def get_by_id(self, artifact_id: str) -> Optional[Artifact]:
         """Retrieve a single artifact by ID. Checks hot first, then SQLite."""
@@ -676,6 +774,9 @@ class InteractionCache:
             )
             return []
 
+        # Rank by importance — highest-engagement artifacts first in summary
+        promoted.sort(key=lambda a: a.importance_score, reverse=True)
+
         # Update promoted artifacts to cold tier
         promoted_ids = [a.artifact_id for a in promoted]
         with self._db_lock:
@@ -747,7 +848,7 @@ class InteractionCache:
                 rows = conn.execute(
                     f"""SELECT * FROM artifacts
                         WHERE {where}
-                        ORDER BY created_at DESC
+                        ORDER BY importance_score DESC, created_at DESC
                         LIMIT ?""",
                     params + [limit * 3],  # over-fetch for keyword filter
                 ).fetchall()
@@ -782,6 +883,11 @@ class InteractionCache:
         originals = self.search_cold(artifact_ids=artifact_ids)
         if not originals:
             return []
+
+        # Boost original cold-tier importance (retrieval-driven mutation seed)
+        for orig in originals:
+            if not orig.parent_id:
+                self.record_access(orig.artifact_id, "rehydrate")
 
         rehydrated = []
         for orig in originals:
