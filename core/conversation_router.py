@@ -141,7 +141,7 @@ class ConversationRouter:
             P2.7      — Dismissal detection (conversation window only)
             P2.8      — Bare acknowledgment filter (conversation window only)
             P3        — Memory operations (forget, transparency, fact, recall)
-            P3.5      — Research follow-up (conversation window only)
+            P3.5      — Artifact reference resolution (conversation window only)
             P3.7      — News article pull-up
             Pre-P4    — Multi-step task planning (compound requests)
             P4        — Skill routing (skipped when doc_buffer active)
@@ -203,9 +203,9 @@ class ConversationRouter:
         if result:
             return result
 
-        # --- Priority 3.5: Research follow-up ---
+        # --- Priority 3.5: Artifact reference resolution ---
         if in_conversation:
-            result = self._handle_research_followup(command)
+            result = self._handle_artifact_reference(command)
             if result:
                 return result
 
@@ -477,91 +477,313 @@ class ConversationRouter:
             # Nothing found — fall through to LLM
         return None
 
-    def _handle_research_followup(self, command: str) -> RouteResult | None:
-        """P3.5: Research follow-up ('tell me more about result 2').
+    # Ordinal words for "the first/second/third one" references
+    _ORDINAL_WORDS = {
+        "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+        "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+    }
 
-        Only triggers when conv_state has cached search results from a
-        previous web research query in the same conversation window.
+    # Type-based reference patterns → (artifact_type filter, keyword filter)
+    _TYPE_REFERENCE_PATTERNS = [
+        (re.compile(r'\b(?:those|the|search)\s+results?\b', re.I),
+         "search_result_set", None),
+        (re.compile(r'\b(?:that|the)\s+recipe\b', re.I),
+         None, "recipe"),
+        (re.compile(r'\b(?:that|the)\s+(?:weather|forecast)\b', re.I),
+         None, "weather"),
+        (re.compile(r'\b(?:that|the)\s+article\b', re.I),
+         None, "article"),
+    ]
+
+    # Recency references → return the latest synthesis
+    _RECENCY_PATTERNS = re.compile(
+        r'\b(?:'
+        r'repeat\s+that|say\s+(?:that|it)\s+again|'
+        r'what\s+(?:did\s+you|you)\s+(?:just\s+)?sa(?:y|id)|'
+        r'(?:can\s+you\s+)?repeat\s+(?:that|what\s+you\s+said)'
+        r')\b', re.I,
+    )
+
+    def _handle_artifact_reference(self, command: str) -> RouteResult | None:
+        """P3.5: Artifact reference resolution.
+
+        Resolves ordinal ("result 2"), type-based ("that recipe"),
+        and recency ("repeat that") references against the artifact cache,
+        with conv_state fallback for backwards compatibility.
         """
-        results = self.conv_state.research_results
-        if not results or not self.web_researcher:
-            return None
-
         cmd = command.strip().lower()
 
-        # Match "result N", "number N", "option N", "#N"
+        # --- Ordinal references: "result 2", "number 3", "#1", "the second one" ---
+        result = self._resolve_ordinal_reference(command, cmd)
+        if result:
+            return result
+
+        # --- Recency references: "repeat that", "say that again" ---
+        result = self._resolve_recency_reference(command, cmd)
+        if result:
+            return result
+
+        # --- Type-based references: "those results", "that recipe" ---
+        result = self._resolve_type_reference(command, cmd)
+        if result:
+            return result
+
+        # --- Generic follow-up: "tell me more", "elaborate" ---
+        result = self._resolve_generic_followup(command, cmd)
+        if result:
+            return result
+
+        return None
+
+    def _get_search_result_urls(self) -> list[dict] | None:
+        """Get search result URLs from cache, falling back to conv_state.
+
+        Returns list of {"title": ..., "url": ...} dicts, or None.
+        """
+        from core.interaction_cache import get_interaction_cache
+
+        wid = self.conv_state.window_id
+        cache = get_interaction_cache()
+
+        # Cache-first: look for search_result_set artifact
+        if cache and wid:
+            art = cache.get_latest(wid, artifact_type="search_result_set")
+            if art:
+                urls = art.provenance.get("result_urls")
+                if urls:
+                    return urls
+
+        # Fallback: conv_state.research_results
+        if self.conv_state.research_results:
+            return [
+                {"title": r.get("title", ""), "url": r.get("url", "")}
+                for r in self.conv_state.research_results
+            ]
+        return None
+
+    def _resolve_ordinal_reference(self, command: str,
+                                   cmd: str) -> RouteResult | None:
+        """Resolve 'result 2', 'the third one', etc."""
+        if not self.web_researcher:
+            return None
+
+        idx = None
+
+        # Numeric: "result N", "number N", "option N", "#N"
         num_match = re.search(r'(?:result|number|option|#)\s*(\d+)', cmd)
         if num_match:
             idx = int(num_match.group(1)) - 1
-            if 0 <= idx < len(results):
-                url = results[idx]["url"]
-                title = results[idx]["title"]
-                logger.info(f"Research follow-up: fetching result {idx+1}: {url}")
 
-                content = self.web_researcher.fetch_page(url, max_chars=4000)
-                if not content:
-                    return RouteResult(
-                        text=persona.research_page_fail(),
-                        intent="research_followup", source="memory",
-                        handled=True, open_window=EXTENDED_WINDOW,
-                    )
-
-                history = self.conversation.format_history_for_llm(
-                    include_system_prompt=False
-                )
-                response = self.llm.chat(
-                    user_message=(
-                        f"The user asked about a search result. Here is the full article "
-                        f"content from \"{title}\":\n\n{content}\n\n"
-                        f"Summarize the key information from this article, focusing on "
-                        f"what the user was originally asking about. Be thorough but concise."
-                        f"\n\nUser's request: {command}"
-                    ),
-                    conversation_history=history,
-                    max_tokens=400,
-                )
-                return RouteResult(
-                    text=response, intent="research_followup",
-                    source="memory", handled=True, used_llm=True,
-                    open_window=15.0,
-                )
-
-        # Generic follow-up ("tell me more", "elaborate")
-        more_phrases = ["tell me more", "more about that", "what does it say",
-                        "elaborate", "go into detail", "expand on that"]
-        if any(p in cmd for p in more_phrases) and len(results) > 0:
-            url = results[0]["url"]
-            title = results[0]["title"]
-            logger.info(f"Research follow-up (generic): fetching {url}")
-
-            content = self.web_researcher.fetch_page(url, max_chars=4000)
-            if not content:
-                return RouteResult(
-                    text=persona.research_page_fail(),
-                    intent="research_followup", source="memory",
-                    handled=True, open_window=EXTENDED_WINDOW,
-                )
-
-            history = self.conversation.format_history_for_llm(
-                include_system_prompt=False
+        # Word: "the first one", "the second one"
+        if idx is None:
+            word_match = re.search(
+                r'\bthe\s+(' + '|'.join(self._ORDINAL_WORDS) + r')\s+one\b',
+                cmd,
             )
-            response = self.llm.chat(
-                user_message=(
-                    f"The user wants more detail about this article: \"{title}\"\n\n"
-                    f"Full content:\n{content}\n\n"
-                    f"Provide a thorough but spoken-word-friendly summary."
-                    f"\n\nUser's request: {command}"
-                ),
-                conversation_history=history,
-                max_tokens=400,
-            )
+            if word_match:
+                idx = self._ORDINAL_WORDS[word_match.group(1)] - 1
+
+        if idx is None:
+            return None
+
+        urls = self._get_search_result_urls()
+        if not urls:
+            return None
+
+        if not (0 <= idx < len(urls)):
+            return None
+
+        url = urls[idx]["url"]
+        title = urls[idx]["title"]
+        logger.info("Artifact ordinal ref: fetching result %d: %s", idx + 1, url)
+
+        content = self.web_researcher.fetch_page(url, max_chars=4000)
+        if not content:
             return RouteResult(
-                text=response, intent="research_followup",
-                source="memory", handled=True, used_llm=True,
-                open_window=15.0,
+                text=persona.research_page_fail(),
+                intent="artifact_reference", source="cache",
+                handled=True, open_window=EXTENDED_WINDOW,
             )
 
-        return None
+        history = self.conversation.format_history_for_llm(
+            include_system_prompt=False,
+        )
+        response = self.llm.chat(
+            user_message=(
+                f'The user asked about a search result. Here is the full article '
+                f'content from "{title}":\n\n{content}\n\n'
+                f'Summarize the key information from this article, focusing on '
+                f'what the user was originally asking about. Be thorough but concise.'
+                f'\n\nUser\'s request: {command}'
+            ),
+            conversation_history=history,
+            max_tokens=400,
+        )
+        return RouteResult(
+            text=response, intent="artifact_reference",
+            source="cache", handled=True, used_llm=True,
+            open_window=15.0,
+        )
+
+    def _resolve_recency_reference(self, command: str,
+                                   cmd: str) -> RouteResult | None:
+        """Resolve 'repeat that', 'what did you say', etc."""
+        if not self._RECENCY_PATTERNS.search(cmd):
+            return None
+
+        from core.interaction_cache import get_interaction_cache
+
+        wid = self.conv_state.window_id
+        cache = get_interaction_cache()
+
+        # Try cache for latest synthesis
+        text = None
+        if cache and wid:
+            art = cache.get_latest(wid, artifact_type="synthesis")
+            if art:
+                text = art.content
+                logger.info("Recency ref: returning cached synthesis %s",
+                            art.artifact_id)
+
+        # Fallback: conv_state.last_response_text
+        if not text:
+            text = self.conv_state.last_response_text
+
+        if not text:
+            return None
+
+        return RouteResult(
+            text=text, intent="artifact_reference",
+            source="cache", handled=True,
+            open_window=EXTENDED_WINDOW,
+        )
+
+    def _resolve_type_reference(self, command: str,
+                                cmd: str) -> RouteResult | None:
+        """Resolve 'those results', 'that recipe', 'the weather', etc."""
+        from core.interaction_cache import get_interaction_cache
+
+        wid = self.conv_state.window_id
+        cache = get_interaction_cache()
+        if not cache or not wid:
+            return None
+
+        matched_art = None
+        for pattern, art_type, keyword in self._TYPE_REFERENCE_PATTERNS:
+            if not pattern.search(cmd):
+                continue
+
+            if art_type:
+                matched_art = cache.get_latest(wid, artifact_type=art_type)
+            elif keyword:
+                matched_art = cache.find_by_keyword(wid, keyword)
+
+            if matched_art:
+                break
+
+        if not matched_art:
+            return None
+
+        logger.info("Type ref: resolved '%s' to artifact %s [%s]",
+                     cmd[:40], matched_art.artifact_id,
+                     matched_art.artifact_type)
+
+        # For search_result_set, re-present with LLM context
+        # For synthesis, just return the content
+        if matched_art.artifact_type == "synthesis":
+            return RouteResult(
+                text=matched_art.content, intent="artifact_reference",
+                source="cache", handled=True,
+                open_window=EXTENDED_WINDOW,
+            )
+
+        # For other types, ask LLM to answer in context of the artifact
+        history = self.conversation.format_history_for_llm(
+            include_system_prompt=False,
+        )
+        response = self.llm.chat(
+            user_message=(
+                f'The user is referring to earlier data from this conversation. '
+                f'Here is the cached content:\n\n{matched_art.content[:3000]}\n\n'
+                f'Answer the user\'s request using this context. '
+                f'Be thorough but spoken-word-friendly.\n\n'
+                f'User\'s request: {command}'
+            ),
+            conversation_history=history,
+            max_tokens=400,
+        )
+        return RouteResult(
+            text=response, intent="artifact_reference",
+            source="cache", handled=True, used_llm=True,
+            open_window=15.0,
+        )
+
+    def _resolve_generic_followup(self, command: str,
+                                  cmd: str) -> RouteResult | None:
+        """Handle 'tell me more', 'elaborate' with cache-backed context."""
+        more_phrases = [
+            "tell me more", "more about that", "what does it say",
+            "elaborate", "go into detail", "expand on that",
+        ]
+        if not any(p in cmd for p in more_phrases):
+            return None
+
+        if not self.web_researcher:
+            return None
+
+        from core.interaction_cache import get_interaction_cache
+
+        # Try to get the URL to fetch more content from
+        url = None
+        title = "this topic"
+
+        # Cache-first: get the latest search result set for URLs
+        wid = self.conv_state.window_id
+        cache = get_interaction_cache()
+        if cache and wid:
+            art = cache.get_latest(wid, artifact_type="search_result_set")
+            if art:
+                urls = art.provenance.get("result_urls")
+                if urls:
+                    url = urls[0]["url"]
+                    title = urls[0].get("title", title)
+
+        # Fallback: conv_state.research_results
+        if not url and self.conv_state.research_results:
+            results = self.conv_state.research_results
+            url = results[0]["url"]
+            title = results[0].get("title", title)
+
+        if not url:
+            return None
+
+        logger.info("Generic follow-up: fetching %s", url)
+        content = self.web_researcher.fetch_page(url, max_chars=4000)
+        if not content:
+            return RouteResult(
+                text=persona.research_page_fail(),
+                intent="artifact_reference", source="cache",
+                handled=True, open_window=EXTENDED_WINDOW,
+            )
+
+        history = self.conversation.format_history_for_llm(
+            include_system_prompt=False,
+        )
+        response = self.llm.chat(
+            user_message=(
+                f'The user wants more detail about this article: "{title}"\n\n'
+                f'Full content:\n{content}\n\n'
+                f'Provide a thorough but spoken-word-friendly summary.'
+                f'\n\nUser\'s request: {command}'
+            ),
+            conversation_history=history,
+            max_tokens=400,
+        )
+        return RouteResult(
+            text=response, intent="artifact_reference",
+            source="cache", handled=True, used_llm=True,
+            open_window=15.0,
+        )
 
     # -------------------------------------------------------------------
     # Follow-up detection

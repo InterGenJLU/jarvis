@@ -298,6 +298,50 @@ class InteractionCache:
         """Get all hot-tier artifacts for a window."""
         return list(self._hot.get(window_id, []))
 
+    def find_by_keyword(self, window_id: str,
+                        keyword: str) -> Optional[Artifact]:
+        """Find the most recent artifact matching a keyword.
+
+        Searches summary, provenance.query, and first 500 chars of content
+        (case-insensitive). Checks hot tier first, then SQLite warm tier.
+        """
+        kw = keyword.lower()
+
+        # Hot tier (reverse for most-recent-first)
+        for art in reversed(self._hot.get(window_id, [])):
+            if self._keyword_match(art, kw):
+                return art
+
+        # SQLite fallback (warm tier)
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                rows = conn.execute(
+                    """SELECT * FROM artifacts
+                       WHERE window_id = ?
+                       ORDER BY created_at DESC""",
+                    (window_id,),
+                ).fetchall()
+                for row in rows:
+                    art = _row_to_artifact(row)
+                    if self._keyword_match(art, kw):
+                        return art
+            finally:
+                conn.close()
+        return None
+
+    @staticmethod
+    def _keyword_match(art: Artifact, kw: str) -> bool:
+        """Check if an artifact matches a keyword (case-insensitive)."""
+        if kw in art.summary.lower():
+            return True
+        query = art.provenance.get("query", "")
+        if query and kw in query.lower():
+            return True
+        if kw in art.content[:500].lower():
+            return True
+        return False
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
