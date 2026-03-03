@@ -91,6 +91,15 @@ class TextToSpeech:
 
         self._kokoro_speed = config.get("tts.kokoro_speed", 1.0)
 
+        # Inject pronunciation overrides into Misaki G2P lexicon
+        pronunciations = config.get("tts.kokoro_pronunciations", {})
+        if pronunciations and hasattr(self._kokoro_pipeline, 'g2p'):
+            golds = getattr(getattr(self._kokoro_pipeline.g2p, 'lexicon', None), 'golds', None)
+            if golds is not None:
+                for word, phonemes in pronunciations.items():
+                    golds[word.lower()] = phonemes
+                self.logger.info(f"Kokoro G2P: injected {len(pronunciations)} pronunciation override(s)")
+
         init_time = time.time() - t0
         self.logger.info(
             f"Kokoro TTS initialized in {init_time:.1f}s "

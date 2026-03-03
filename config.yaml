@@ -46,6 +46,10 @@ tts:
   kokoro_voice_b: bm_george
   kokoro_blend_ratio: 0.5           # 0.5 = 50% fable + 50% george
   kokoro_speed: 1.0
+  # G2P pronunciation overrides (word -> IPA phonemes via Misaki lexicon)
+  # Only add words Kokoro mispronounces. Test via WAV before committing.
+  # Example: { "nginx": "ˈɛndʒɪnˌɛks" }
+  kokoro_pronunciations: {}
   # Piper settings (fallback)
   model_path: /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx
   config_path: /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx.json
