@@ -691,6 +691,45 @@ class SkillManager:
             traceback.print_exc()
             return "I'm sorry, I encountered an error processing that request."
     
+    def register_virtual_skill(self, name: str, intent_examples: list):
+        """Register a lightweight skill for MCP tool semantic pruning.
+
+        Creates a minimal skill-like object with semantic_intents so the
+        semantic pruner in conversation_router can score it alongside real
+        skills.  No handler — execution goes through tool_registry handlers.
+
+        Args:
+            name: Virtual skill name (e.g. "mcp_email").
+            intent_examples: List of example phrases for semantic matching.
+        """
+        import types
+
+        virtual = types.SimpleNamespace(
+            semantic_intents={
+                "default": {
+                    "examples": intent_examples,
+                    "threshold": 0.40,
+                },
+            },
+        )
+        self.skills[name] = virtual
+
+        # Pre-compute embeddings for the pruner cache
+        if hasattr(self, '_embedding_model') and self._embedding_model:
+            embeddings = self._embedding_model.encode(
+                intent_examples, convert_to_tensor=True, show_progress_bar=False,
+            )
+            self._semantic_embedding_cache[(name, "default")] = embeddings
+            self.logger.info(
+                f"Registered virtual skill '{name}' with "
+                f"{len(intent_examples)} intent examples"
+            )
+        else:
+            self.logger.warning(
+                f"Registered virtual skill '{name}' without embeddings "
+                f"(no embedding model loaded)"
+            )
+
     def get_skill(self, name: str) -> Optional[BaseSkill]:
         """Get skill by name"""
         return self.skills.get(name)

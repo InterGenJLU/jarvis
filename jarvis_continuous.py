@@ -103,6 +103,16 @@ class JarvisContinuous:
         skills_loaded = self.skill_manager.load_all_skills()
         self.logger.info(f"Loaded {skills_loaded} skills")
 
+        # MCP bridge (inbound — external MCP servers as native tools)
+        self.mcp_bridge = None
+        mcp_config = config.get("mcp_servers", {})
+        if mcp_config:
+            from core.mcp_client import MCPBridge
+            self.mcp_bridge = MCPBridge(self.skill_manager)
+            self.mcp_bridge.start(mcp_config)
+            tool_count = sum(len(t) for t in self.mcp_bridge._server_tools.values())
+            self.logger.info(f"MCP bridge: {tool_count} tools from {len(self.mcp_bridge._server_tools)} server(s)")
+
         # --- User profile + speaker identification ---
         self.profile_manager = None
         self.speaker_id = None
@@ -857,6 +867,8 @@ class JarvisContinuous:
                     self.context_window.flush()
                 self.audio_queue.put(None)   # STT worker shutdown sentinel
                 self.tts_queue.put(None)     # TTS worker shutdown sentinel
+                if self.mcp_bridge:
+                    self.mcp_bridge.stop()
                 if self.news_manager:
                     self.news_manager.stop()
                 if self.calendar_manager:
@@ -877,6 +889,8 @@ class JarvisContinuous:
                 print("\n\nShutdown signal received...")
                 self.logger.info("Shutdown requested")
             finally:
+                if self.mcp_bridge:
+                    self.mcp_bridge.stop()
                 if self.news_manager:
                     self.news_manager.stop()
                 if self.calendar_manager:

@@ -50,7 +50,8 @@ TOOL_HANDLERS = {}        # tool_name -> handler function
 SKILL_TOOLS = {}          # tool_name -> schema (skill-gated, for semantic pruning)
 ALWAYS_INCLUDED_TOOLS = {}  # tool_name -> schema (always in every tool call)
 ALL_TOOLS = {}            # tool_name -> schema (all tools)
-TOOL_SKILL_MAP = {}       # skill_name -> tool_name (for conversation_router pruner)
+TOOL_SKILL_MAP = {}       # skill_name -> tool_name or [tool_names] (for conversation_router pruner)
+_external_prompt_rules = {}  # tool_name -> system prompt rule string (MCP tools)
 
 for _mod in _tool_modules:
     _name = _mod.TOOL_NAME
@@ -98,6 +99,40 @@ RECALL_MEMORY_TOOL = _get_schema("recall_memory")
 
 
 # ---------------------------------------------------------------------------
+# External tool registration (MCP servers)
+# ---------------------------------------------------------------------------
+
+def register_external_tool(name, schema, handler, system_prompt_rule, skill_name=None):
+    """Register an externally-provided tool (e.g., from an MCP server).
+
+    Args:
+        name: Tool function name (must be unique across all tools).
+        schema: OpenAI function-calling format schema dict.
+        handler: Callable(args: dict) -> str.
+        system_prompt_rule: LLM system prompt rule for this tool.
+        skill_name: Optional virtual skill name (e.g. "mcp_email") for
+                    semantic pruning.  One skill can map to multiple tools.
+    """
+    ALL_TOOLS[name] = schema
+    TOOL_HANDLERS[name] = handler
+    _external_prompt_rules[name] = system_prompt_rule
+
+    if skill_name:
+        SKILL_TOOLS[name] = schema
+        existing = TOOL_SKILL_MAP.get(skill_name)
+        if existing is None:
+            TOOL_SKILL_MAP[skill_name] = [name]
+        elif isinstance(existing, list):
+            existing.append(name)
+        else:
+            # Convert single string to list (shouldn't happen for MCP, but safe)
+            TOOL_SKILL_MAP[skill_name] = [existing, name]
+
+    logger.info(f"Registered external tool: {name}" +
+                (f" (skill: {skill_name})" if skill_name else ""))
+
+
+# ---------------------------------------------------------------------------
 # System prompt rules assembly
 # ---------------------------------------------------------------------------
 
@@ -135,6 +170,13 @@ def build_tool_prompt_rules(active_tool_names: set) -> str:
     for mod in _tool_modules:
         if mod.TOOL_NAME in active_tool_names and mod.SYSTEM_PROMPT_RULE:
             rules.append(mod.SYSTEM_PROMPT_RULE)
+
+    # External (MCP) tool rules — deduplicate by rule text
+    seen_rules = {r for r in rules}
+    for tool_name, rule in _external_prompt_rules.items():
+        if tool_name in active_tool_names and rule not in seen_rules:
+            rules.append(rule)
+            seen_rules.add(rule)
 
     rules.extend(_GLOBAL_RULES_SUFFIX)
 

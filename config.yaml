@@ -289,3 +289,27 @@ web:
 stt_finetuned:
   enabled: true
   model_path: /mnt/storage/jarvis/models/voice_training/whisper_finetuned/final
+
+# External MCP servers (inbound bridge — consumed as native JARVIS tools)
+# Each entry spawns a subprocess, discovers its tools, and registers them
+# into the tool pipeline.  intent_examples drive semantic pruning.
+# mcp_servers:
+#   email:
+#     command: npx
+#     args: [-y, imap-mcp-server]
+#     env:
+#       IMAP_HOST: imap.gmail.com
+#       IMAP_PORT: "993"
+#       IMAP_USER: ${GMAIL_ADDRESS}
+#       IMAP_PASS: ${GMAIL_APP_PASSWORD}
+#       SMTP_HOST: smtp.gmail.com
+#       SMTP_PORT: "587"
+#     intent_examples:
+#       - "check my email"
+#       - "do I have any new messages"
+#       - "read my latest email"
+#       - "send an email to"
+#       - "search my inbox for"
+#     system_prompt_rule: >
+#       For email operations (read, send, search, manage folders),
+#       call the appropriate email tool. Always confirm before sending.

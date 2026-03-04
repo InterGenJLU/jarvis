@@ -763,6 +763,16 @@ def run_console(config, mode, user_id="user"):
     skill_manager = SkillManager(config, conversation, tts_proxy, responses, llm)
     skill_manager.load_all_skills()
 
+    # MCP bridge (inbound — external MCP servers as native tools)
+    mcp_bridge = None
+    mcp_config = config.get("mcp_servers", {})
+    if mcp_config:
+        from core.mcp_client import MCPBridge
+        mcp_bridge = MCPBridge(skill_manager)
+        mcp_bridge.start(mcp_config)
+        console.print(f"[cyan]MCP bridge:[/cyan] {sum(len(t) for t in mcp_bridge._server_tools.values())} "
+                       f"tools from {len(mcp_bridge._server_tools)} server(s)")
+
     # Web research (for tool-calling LLM queries)
     web_researcher = WebResearcher(config) if config.get("llm.local.tool_calling", False) else None
     if web_researcher:
@@ -967,6 +977,8 @@ def run_console(config, mode, user_id="user"):
             if command.lower() in ("reload", "restart", "console_reload"):
                 console.print("[cyan]Reloading console...[/cyan]\n")
                 # Clean shutdown before exec
+                if mcp_bridge:
+                    mcp_bridge.stop()
                 if memory_manager:
                     memory_manager.save()
                 if news_manager:
@@ -1155,6 +1167,8 @@ def run_console(config, mode, user_id="user"):
 
     finally:
         console.print("\n[dim]Shutting down...[/dim]")
+        if mcp_bridge:
+            mcp_bridge.stop()
         if memory_manager:
             memory_manager.save()
         if news_manager:

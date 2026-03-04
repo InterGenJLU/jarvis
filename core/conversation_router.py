@@ -1818,10 +1818,17 @@ class ConversationRouter:
                 if skill_best > best_migrated_score:
                     best_migrated_score = skill_best
                 if skill_best >= self._TOOL_PRUNE_THRESHOLD:
-                    tool_name = self._TOOL_SKILL_MAP[skill_name]
-                    tool_schema = SKILL_TOOLS.get(tool_name)
-                    if tool_schema:
-                        matched_tools.append((skill_best, tool_schema))
+                    tool_ref = self._TOOL_SKILL_MAP[skill_name]
+                    if isinstance(tool_ref, list):
+                        # MCP server with multiple tools
+                        for tn in tool_ref:
+                            schema = SKILL_TOOLS.get(tn)
+                            if schema:
+                                matched_tools.append((skill_best, schema))
+                    else:
+                        tool_schema = SKILL_TOOLS.get(tool_ref)
+                        if tool_schema:
+                            matched_tools.append((skill_best, tool_schema))
             else:
                 # Non-migrated skill — track best score for guard check.
                 if skill_name == 'web_navigation':
