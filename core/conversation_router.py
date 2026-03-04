@@ -341,19 +341,33 @@ class ConversationRouter:
             return None
 
         cmd_lower = command.lower().strip()
+        # Dismiss phrases checked first — "forget it" is colloquial dismissal
+        dismiss = ("forget it", "forget about it", "never mind", "nevermind")
         affirm = ("yes", "yeah", "yep", "go ahead", "do it",
                    "proceed", "confirm", "sure", "remove", "delete")
-        deny = ("no", "nope", "nah", "cancel", "nevermind",
-                "never mind", "keep", "don't")
+        deny = ("no", "nope", "nah", "cancel",
+                "keep", "don't")
 
-        if any(w in cmd_lower for w in affirm):
+        def _word_match(phrase: str, text: str) -> bool:
+            """Match phrase on word boundaries to avoid substring false positives."""
+            return bool(re.search(r'\b' + re.escape(phrase) + r'\b', text))
+
+        # Check dismissals before affirmations to prevent "forget it" → "do it"
+        if any(_word_match(w, cmd_lower) for w in dismiss):
+            text = mm.cancel_forget()
+            logger.info("Handled by memory forget dismissal")
+            return RouteResult(
+                text=text, intent="forget_cancel",
+                source="memory", handled=True,
+            )
+        if any(_word_match(w, cmd_lower) for w in affirm):
             text = mm.confirm_forget()
             logger.info("Handled by memory forget confirmation")
             return RouteResult(
                 text=text, intent="forget_confirm",
                 source="memory", handled=True,
             )
-        if any(w in cmd_lower for w in deny):
+        if any(_word_match(w, cmd_lower) for w in deny):
             text = mm.cancel_forget()
             logger.info("Handled by memory forget cancellation")
             return RouteResult(
@@ -1818,17 +1832,11 @@ class ConversationRouter:
                 if skill_best > best_migrated_score:
                     best_migrated_score = skill_best
                 if skill_best >= self._TOOL_PRUNE_THRESHOLD:
-                    tool_ref = self._TOOL_SKILL_MAP[skill_name]
-                    if isinstance(tool_ref, list):
-                        # MCP server with multiple tools
-                        for tn in tool_ref:
-                            schema = SKILL_TOOLS.get(tn)
-                            if schema:
-                                matched_tools.append((skill_best, schema))
-                    else:
-                        tool_schema = SKILL_TOOLS.get(tool_ref)
-                        if tool_schema:
-                            matched_tools.append((skill_best, tool_schema))
+                    tool_names = self._TOOL_SKILL_MAP[skill_name]
+                    for tn in tool_names:
+                        schema = SKILL_TOOLS.get(tn)
+                        if schema:
+                            matched_tools.append((skill_best, schema))
             else:
                 # Non-migrated skill — track best score for guard check.
                 if skill_name == 'web_navigation':

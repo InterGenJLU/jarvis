@@ -171,6 +171,8 @@ class MCPBridge:
             return f"Error from {tool_name}: {error_text}"
 
         # Concatenate all text content blocks
+        if not result.content:
+            return "No output"
         texts = [
             block.text for block in result.content
             if hasattr(block, "text")

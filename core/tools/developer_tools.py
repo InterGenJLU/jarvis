@@ -1,6 +1,7 @@
 """Tool definition: developer_tools — git, codebase search, system admin."""
 
 import logging
+import shlex
 import subprocess
 import time as _time
 
@@ -277,7 +278,7 @@ def _devtools_codebase_search(args: dict) -> str:
         output = _run_cmd(
             f"grep -rn --include='*.py' "
             f"--exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=venv "
-            f"-- {subprocess.list2cmdline([pattern])} {d}",
+            f"-- {shlex.quote(pattern)} {d}",
             timeout=10,
         )
         if output and output != "(no output)" and not output.startswith("Error"):
@@ -303,9 +304,9 @@ def _devtools_service_status(args: dict) -> str:
     service_name = args.get("service_name", "").strip()
     if service_name:
         # Try user service first, then system
-        output = _run_cmd(f"systemctl --user status {subprocess.list2cmdline([service_name])}")
+        output = _run_cmd(f"systemctl --user status {shlex.quote(service_name)}")
         if "could not be found" in output.lower() or "not loaded" in output.lower():
-            output = _run_cmd(f"systemctl status {subprocess.list2cmdline([service_name])}")
+            output = _run_cmd(f"systemctl status {shlex.quote(service_name)}")
         return output
     # List JARVIS-related services
     lines = ["User services:"]
@@ -325,7 +326,7 @@ def _devtools_network_info(args: dict) -> str:
     if info_type == "ports":
         return _run_cmd("ss -tlnp")
     elif info_type == "ping" and target:
-        return _run_cmd(f"ping -c 4 {subprocess.list2cmdline([target])}", timeout=10)
+        return _run_cmd(f"ping -c 4 {shlex.quote(target)}", timeout=10)
     elif info_type == "interfaces":
         return _run_cmd("ip link show")
     # Default: addresses
@@ -337,13 +338,13 @@ def _devtools_package_info(args: dict) -> str:
     package_name = args.get("package_name", "").strip()
     if package_name:
         lines = []
-        which = _run_cmd(f"which {subprocess.list2cmdline([package_name])}")
+        which = _run_cmd(f"which {shlex.quote(package_name)}")
         if which and not which.startswith("Error") and which != "(no output)":
             lines.append(f"Location: {which}")
-        version = _run_cmd(f"{subprocess.list2cmdline([package_name])} --version 2>&1 | head -1")
+        version = _run_cmd(f"{shlex.quote(package_name)} --version 2>&1 | head -1")
         if version and not version.startswith("Error") and version != "(no output)":
             lines.append(f"Version: {version}")
-        pip_info = _run_cmd(f"pip show {subprocess.list2cmdline([package_name])} 2>/dev/null")
+        pip_info = _run_cmd(f"pip show {shlex.quote(package_name)} 2>/dev/null")
         if pip_info and not pip_info.startswith("Error") and pip_info != "(no output)":
             lines.append(f"Pip info:\n{pip_info}")
         return "\n".join(lines) if lines else f"Package '{package_name}' not found."

@@ -50,7 +50,7 @@ TOOL_HANDLERS = {}        # tool_name -> handler function
 SKILL_TOOLS = {}          # tool_name -> schema (skill-gated, for semantic pruning)
 ALWAYS_INCLUDED_TOOLS = {}  # tool_name -> schema (always in every tool call)
 ALL_TOOLS = {}            # tool_name -> schema (all tools)
-TOOL_SKILL_MAP = {}       # skill_name -> tool_name or [tool_names] (for conversation_router pruner)
+TOOL_SKILL_MAP = {}       # skill_name -> list[str] of tool_names (for conversation_router pruner)
 _external_prompt_rules = {}  # tool_name -> system prompt rule string (MCP tools)
 
 for _mod in _tool_modules:
@@ -69,7 +69,7 @@ for _mod in _tool_modules:
 
     if _skill is not None:
         SKILL_TOOLS[_name] = _mod.SCHEMA
-        TOOL_SKILL_MAP[_skill] = _name
+        TOOL_SKILL_MAP[_skill] = [_name]
 
 # Log what we found
 logger.info(
@@ -122,11 +122,8 @@ def register_external_tool(name, schema, handler, system_prompt_rule, skill_name
         existing = TOOL_SKILL_MAP.get(skill_name)
         if existing is None:
             TOOL_SKILL_MAP[skill_name] = [name]
-        elif isinstance(existing, list):
-            existing.append(name)
         else:
-            # Convert single string to list (shouldn't happen for MCP, but safe)
-            TOOL_SKILL_MAP[skill_name] = [existing, name]
+            existing.append(name)
 
     logger.info(f"Registered external tool: {name}" +
                 (f" (skill: {skill_name})" if skill_name else ""))
