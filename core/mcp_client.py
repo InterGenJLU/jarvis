@@ -15,6 +15,7 @@ from contextlib import AsyncExitStack
 import logging
 import os
 import threading
+import time
 
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
@@ -33,6 +34,11 @@ class MCPBridge:
     MCP SDK calls.
     """
 
+    # Exponential backoff for reconnection: 2s, 4s, 8s, 16s, 30s cap
+    _BACKOFF_BASE = 2.0
+    _BACKOFF_MAX = 30.0
+    _MAX_RECONNECT_ATTEMPTS = 5
+
     def __init__(self, skill_manager=None):
         self._loop = None           # asyncio event loop (background thread)
         self._thread = None         # daemon thread running the loop
@@ -40,17 +46,31 @@ class MCPBridge:
         self._exit_stack = None     # AsyncExitStack for lifecycle
         self._skill_manager = skill_manager
         self._server_tools = {}     # server_name → [tool_name, ...]
+        self._server_configs = {}   # server_name → config dict (for reconnect)
+        self._server_health = {}    # server_name → {"healthy": bool, "last_error": float}
 
-    def start(self, mcp_config: dict):
+    # Default timeouts (seconds) — overridable via config.yaml mcp.timeouts
+    _DEFAULT_TIMEOUTS = {
+        "init": 5,
+        "connect": 30,
+        "tool_call": 30,
+        "shutdown": 10,
+    }
+
+    def start(self, mcp_config: dict, timeouts: dict = None):
         """Start background event loop, connect to all configured servers.
 
         Args:
             mcp_config: Dict from config.yaml 'mcp_servers' section.
                         Keys are server names, values are dicts with
                         'command', 'args', 'env', 'intent_examples', etc.
+            timeouts:   Optional dict overriding default timeouts
+                        (keys: init, connect, tool_call, shutdown).
         """
         if not mcp_config:
             return
+
+        self._timeouts = {**self._DEFAULT_TIMEOUTS, **(timeouts or {})}
 
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
@@ -62,17 +82,20 @@ class MCPBridge:
         future = asyncio.run_coroutine_threadsafe(
             self._init_exit_stack(), self._loop
         )
-        future.result(timeout=5)
+        future.result(timeout=self._timeouts["init"])
 
         for name, cfg in mcp_config.items():
+            self._server_configs[name] = cfg
             try:
                 future = asyncio.run_coroutine_threadsafe(
                     self._connect_server(name, cfg), self._loop
                 )
-                future.result(timeout=30)
+                future.result(timeout=self._timeouts["connect"])
                 tools = self._server_tools.get(name, [])
+                self._server_health[name] = {"healthy": True, "last_error": 0}
                 logger.info(f"MCP server '{name}' connected ({len(tools)} tools: {tools})")
             except Exception as e:
+                self._server_health[name] = {"healthy": False, "last_error": time.time()}
                 logger.warning(f"MCP server '{name}' failed to connect: {e}")
 
     async def _init_exit_stack(self):
@@ -86,7 +109,16 @@ class MCPBridge:
         for key, val in cfg.get("env", {}).items():
             if isinstance(val, str) and val.startswith("${") and val.endswith("}"):
                 env_var = val[2:-1]
-                env[key] = os.environ.get(env_var, "")
+                resolved = os.environ.get(env_var)
+                if resolved is None:
+                    logger.error(
+                        "MCP server '%s': required env var %s (for %s) is not set",
+                        name, env_var, key,
+                    )
+                    raise ValueError(
+                        f"Missing required env var '{env_var}' for MCP server '{name}'"
+                    )
+                env[key] = resolved
             else:
                 env[key] = str(val)
 
@@ -151,16 +183,76 @@ class MCPBridge:
                 self._call_tool(server_name, tool_name, args),
                 self._loop,
             )
-            return future.result(timeout=30)
+            return future.result(timeout=self._timeouts.get("tool_call", 30))
         return handler
 
+    async def _reconnect_server(self, server_name: str) -> bool:
+        """Attempt to reconnect a failed MCP server with exponential backoff."""
+        cfg = self._server_configs.get(server_name)
+        if not cfg:
+            return False
+
+        health = self._server_health.get(server_name, {})
+        last_error = health.get("last_error", 0)
+
+        # Respect backoff — don't hammer a dead server
+        elapsed = time.time() - last_error
+        if elapsed < self._BACKOFF_BASE:
+            return False
+
+        for attempt in range(self._MAX_RECONNECT_ATTEMPTS):
+            try:
+                # Drop old session if any
+                self._sessions.pop(server_name, None)
+                await self._connect_server(server_name, cfg)
+                self._server_health[server_name] = {
+                    "healthy": True, "last_error": 0,
+                }
+                logger.info("MCP server '%s' reconnected (attempt %d)",
+                            server_name, attempt + 1)
+                return True
+            except Exception as e:
+                delay = min(
+                    self._BACKOFF_BASE * (2 ** attempt),
+                    self._BACKOFF_MAX,
+                )
+                logger.warning(
+                    "MCP reconnect '%s' attempt %d failed: %s (next in %.0fs)",
+                    server_name, attempt + 1, e, delay,
+                )
+                await asyncio.sleep(delay)
+
+        self._server_health[server_name] = {
+            "healthy": False, "last_error": time.time(),
+        }
+        return False
+
     async def _call_tool(self, server_name: str, tool_name: str, args: dict) -> str:
-        """Call an MCP tool and return the text result."""
+        """Call an MCP tool and return the text result.
+
+        On connection failure, attempts lazy reconnect with exponential backoff.
+        """
         session = self._sessions.get(server_name)
         if not session:
-            return f"Error: MCP server '{server_name}' not connected"
+            # Try reconnect
+            if not await self._reconnect_server(server_name):
+                return f"Error: MCP server '{server_name}' is offline"
+            session = self._sessions.get(server_name)
 
-        result = await session.call_tool(tool_name, args)
+        try:
+            result = await session.call_tool(tool_name, args)
+        except Exception as e:
+            # Connection likely dead — mark unhealthy, try reconnect once
+            logger.warning("MCP call failed on '%s': %s — attempting reconnect",
+                           server_name, e)
+            self._server_health[server_name] = {
+                "healthy": False, "last_error": time.time(),
+            }
+            if await self._reconnect_server(server_name):
+                session = self._sessions[server_name]
+                result = await session.call_tool(tool_name, args)
+            else:
+                return f"Error: MCP server '{server_name}' is offline ({e})"
 
         if result.isError:
             error_text = (
@@ -189,7 +281,7 @@ class MCPBridge:
                 future = asyncio.run_coroutine_threadsafe(
                     self._exit_stack.aclose(), self._loop
                 )
-                future.result(timeout=10)
+                future.result(timeout=self._timeouts.get("shutdown", 10))
             except Exception as e:
                 # anyio cancel scope cross-task warning is expected and harmless
                 logger.debug(f"MCP bridge shutdown (non-fatal): {e}")

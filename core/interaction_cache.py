@@ -791,7 +791,7 @@ class InteractionCache:
     # Minimum content size for decomposition (skip short prose)
     _MIN_DECOMPOSE_CHARS = 200
     _MIN_DECOMPOSE_NEWLINES = 3
-    _MAX_DECOMPOSE_DEPTH = 3    # prevent unbounded recursive decomposition
+    _MAX_DECOMPOSE_DEPTH = 5    # prevent unbounded recursive decomposition
     _MAX_CHILDREN_PER_ROOT = 200
 
     # Bold-wrapped numbered step (NOT a section header)

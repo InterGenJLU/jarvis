@@ -109,7 +109,8 @@ class JarvisContinuous:
         if mcp_config:
             from core.mcp_client import MCPBridge
             self.mcp_bridge = MCPBridge(self.skill_manager)
-            self.mcp_bridge.start(mcp_config)
+            mcp_timeouts = config.get("mcp.timeouts", {})
+            self.mcp_bridge.start(mcp_config, timeouts=mcp_timeouts)
             tool_count = sum(len(t) for t in self.mcp_bridge._server_tools.values())
             self.logger.info(f"MCP bridge: {tool_count} tools from {len(self.mcp_bridge._server_tools)} server(s)")
 

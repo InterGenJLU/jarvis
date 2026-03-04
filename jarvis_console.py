@@ -769,7 +769,8 @@ def run_console(config, mode, user_id="user"):
     if mcp_config:
         from core.mcp_client import MCPBridge
         mcp_bridge = MCPBridge(skill_manager)
-        mcp_bridge.start(mcp_config)
+        mcp_timeouts = config.get("mcp.timeouts", {})
+        mcp_bridge.start(mcp_config, timeouts=mcp_timeouts)
         console.print(f"[cyan]MCP bridge:[/cyan] {sum(len(t) for t in mcp_bridge._server_tools.values())} "
                        f"tools from {len(mcp_bridge._server_tools)} server(s)")
 

@@ -79,6 +79,18 @@ mcp = FastMCP(
 # Tool wrappers — delegate to native handlers
 # ---------------------------------------------------------------------------
 
+def _safe_call(tool_name: str, args: dict) -> str:
+    """Wrap a native tool handler with error protection for MCP transport."""
+    handler = TOOL_HANDLERS.get(tool_name)
+    if not handler:
+        return f"Error: tool '{tool_name}' not available"
+    try:
+        return handler(args)
+    except Exception as e:
+        logger.error("MCP tool '%s' raised: %s", tool_name, e)
+        return f"Error in {tool_name}: {type(e).__name__}: {e}"
+
+
 @mcp.tool()
 def get_weather(query_type: str, location: str = "") -> str:
     """Get current weather, forecast, or rain check for a location.
@@ -87,9 +99,8 @@ def get_weather(query_type: str, location: str = "") -> str:
         query_type: One of: current, forecast, tomorrow, rain_check
         location: City or location name. Omit for the default location.
     """
-    return TOOL_HANDLERS["get_weather"](
-        {"query_type": query_type, "location": location}
-    )
+    return _safe_call("get_weather",
+                       {"query_type": query_type, "location": location})
 
 
 @mcp.tool()
@@ -99,7 +110,7 @@ def get_system_info(category: str) -> str:
     Args:
         category: One of: cpu, memory, disk, gpu, uptime, hostname, username, all_drives
     """
-    return TOOL_HANDLERS["get_system_info"]({"category": category})
+    return _safe_call("get_system_info", {"category": category})
 
 
 @mcp.tool()
@@ -116,7 +127,7 @@ def find_files(action: str, pattern: str = "", directory: str = "") -> str:
         args["pattern"] = pattern
     if directory:
         args["directory"] = directory
-    return TOOL_HANDLERS["find_files"](args)
+    return _safe_call("find_files", args)
 
 
 @mcp.tool()
@@ -149,7 +160,7 @@ def manage_reminders(
         args["snooze_minutes"] = snooze_minutes
     if cancel_fragment:
         args["cancel_fragment"] = cancel_fragment
-    return TOOL_HANDLERS["manage_reminders"](args)
+    return _safe_call("manage_reminders", args)
 
 
 # developer_tools — block run_command and confirm_pending
@@ -213,7 +224,7 @@ def developer_tools(
         args["filter"] = filter
     if minutes:
         args["minutes"] = minutes
-    return TOOL_HANDLERS["developer_tools"](args)
+    return _safe_call("developer_tools", args)
 
 
 @mcp.tool()
@@ -230,7 +241,7 @@ def get_news(action: str, category: str = "", max_priority: int = 0) -> str:
         args["category"] = category
     if max_priority:
         args["max_priority"] = max_priority
-    return TOOL_HANDLERS["get_news"](args)
+    return _safe_call("get_news", args)
 
 
 @mcp.tool()
@@ -243,7 +254,7 @@ def recall_memory(query: str) -> str:
     Args:
         query: What to search for in memory (e.g. 'favorite color', 'birthday')
     """
-    return TOOL_HANDLERS["recall_memory"]({"query": query})
+    return _safe_call("recall_memory", {"query": query})
 
 
 # ---------------------------------------------------------------------------
