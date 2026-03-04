@@ -36,6 +36,9 @@ python-xlib>=0.33
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 
+# MCP (Model Context Protocol) bridge
+mcp[cli]>=1.26.0
+
 # Utilities
 python-dotenv>=1.0.0
 keyring>=24.0.0
