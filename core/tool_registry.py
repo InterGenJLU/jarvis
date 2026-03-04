@@ -46,10 +46,11 @@ for _path in sorted(_tools_dir.glob("*.py")):
 # Build registries from discovered modules
 # ---------------------------------------------------------------------------
 
-TOOL_HANDLERS = {}   # tool_name -> handler function
-SKILL_TOOLS = {}     # tool_name -> schema (skill-gated, for semantic pruning)
-ALL_TOOLS = {}       # tool_name -> schema (all tools)
-TOOL_SKILL_MAP = {}  # skill_name -> tool_name (for conversation_router pruner)
+TOOL_HANDLERS = {}        # tool_name -> handler function
+SKILL_TOOLS = {}          # tool_name -> schema (skill-gated, for semantic pruning)
+ALWAYS_INCLUDED_TOOLS = {}  # tool_name -> schema (always in every tool call)
+ALL_TOOLS = {}            # tool_name -> schema (all tools)
+TOOL_SKILL_MAP = {}       # skill_name -> tool_name (for conversation_router pruner)
 
 for _mod in _tool_modules:
     _name = _mod.TOOL_NAME
@@ -62,6 +63,9 @@ for _mod in _tool_modules:
     if _handler is not None:
         TOOL_HANDLERS[_name] = _handler
 
+    if _always:
+        ALWAYS_INCLUDED_TOOLS[_name] = _mod.SCHEMA
+
     if _skill is not None:
         SKILL_TOOLS[_name] = _mod.SCHEMA
         TOOL_SKILL_MAP[_skill] = _name
@@ -70,7 +74,8 @@ for _mod in _tool_modules:
 logger.info(
     f"Tool registry: {len(_tool_modules)} tools discovered, "
     f"{len(TOOL_HANDLERS)} with handlers, "
-    f"{len(SKILL_TOOLS)} skill-gated"
+    f"{len(SKILL_TOOLS)} skill-gated, "
+    f"{len(ALWAYS_INCLUDED_TOOLS)} always-included"
 )
 
 
@@ -89,6 +94,7 @@ GET_WEATHER_TOOL = _get_schema("get_weather")
 MANAGE_REMINDERS_TOOL = _get_schema("manage_reminders")
 DEVELOPER_TOOLS_TOOL = _get_schema("developer_tools")
 GET_NEWS_TOOL = _get_schema("get_news")
+RECALL_MEMORY_TOOL = _get_schema("recall_memory")
 
 
 # ---------------------------------------------------------------------------

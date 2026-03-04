@@ -31,7 +31,15 @@ def set_config(config):
 def set_current_user_fn(fn):
     """Wire a callable that returns the active user_id (e.g. 'christopher', 'erica').
 
-    Used by manage_reminders tool to stamp created_by on new reminders.
+    Used by manage_reminders and recall_memory tools.
     Called during init in pipeline.py, jarvis_console.py, jarvis_web.py.
     """
     inject_dependencies({"current_user_fn": fn})
+
+
+def set_memory_manager(mgr):
+    """Wire the memory manager singleton for recall_memory tool dispatch.
+
+    Called during init in pipeline.py, jarvis_console.py, jarvis_web.py.
+    """
+    inject_dependencies({"memory_manager": mgr})

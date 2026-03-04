@@ -472,8 +472,10 @@ class Coordinator:
             set_current_user_fn(
                 lambda: getattr(self.conversation, 'current_user', None) or 'christopher'
             )
-        from core.tool_executor import set_config as set_tool_config
+        from core.tool_executor import set_config as set_tool_config, set_memory_manager
         set_tool_config(config)
+        if memory_manager:
+            set_memory_manager(memory_manager)
         self.news_manager = news_manager
         self.calendar_manager = calendar_manager
         self.profile_manager = profile_manager
@@ -1584,6 +1586,8 @@ class Coordinator:
                         duration_seconds=duration,
                         user_id=user_id,
                     )
+                # CMA consolidation: scan cold tier for patterns
+                cache.consolidate(user_id=user_id, memory_manager=mm)
             except Exception as e:
                 cache.logger.warning(
                     "Background promotion failed for window %s: %s",

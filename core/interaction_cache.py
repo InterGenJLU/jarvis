@@ -14,7 +14,9 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -203,6 +205,56 @@ class InteractionCache:
                     CREATE INDEX IF NOT EXISTS idx_artifacts_cold_importance
                     ON artifacts(tier, user_id, importance_score DESC, created_at DESC)
                 """)
+                # Associative linking — graph edges between artifacts
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS artifact_links (
+                        source_id   TEXT NOT NULL,
+                        target_id   TEXT NOT NULL,
+                        link_type   TEXT NOT NULL,
+                        strength    REAL NOT NULL DEFAULT 1.0,
+                        created_at  REAL NOT NULL,
+                        PRIMARY KEY (source_id, target_id, link_type)
+                    )
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_links_source
+                    ON artifact_links(source_id)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_links_target
+                    ON artifact_links(target_id)
+                """)
+
+                # -- Consolidated knowledge (CMA consolidation & abstraction) --
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS consolidated_knowledge (
+                        knowledge_id    TEXT PRIMARY KEY,
+                        user_id         TEXT NOT NULL DEFAULT 'user',
+                        pattern_type    TEXT NOT NULL,
+                        content         TEXT NOT NULL,
+                        evidence_count  INTEGER NOT NULL DEFAULT 1,
+                        evidence_ids    TEXT NOT NULL DEFAULT '[]',
+                        first_seen      REAL NOT NULL,
+                        last_seen       REAL NOT NULL,
+                        confidence      REAL NOT NULL DEFAULT 0.5,
+                        promoted        INTEGER NOT NULL DEFAULT 0,
+                        superseded_by   TEXT,
+                        created_at      REAL NOT NULL,
+                        updated_at      REAL NOT NULL
+                    )
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ck_user
+                    ON consolidated_knowledge(user_id)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ck_type
+                    ON consolidated_knowledge(user_id, pattern_type)
+                """)
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ck_promoted
+                    ON consolidated_knowledge(promoted)
+                """)
                 conn.commit()
             finally:
                 conn.close()
@@ -255,6 +307,11 @@ class InteractionCache:
             artifact.artifact_id, artifact.artifact_type,
             artifact.turn_id, artifact.item_index, artifact.window_id,
         )
+
+        # Auto-link to co-occurring artifacts in the same turn
+        if artifact.window_id and artifact.turn_id is not None:
+            self._auto_link_co_occurrence(artifact)
+
         return artifact.artifact_id
 
     # ------------------------------------------------------------------
@@ -310,6 +367,13 @@ class InteractionCache:
         # Structural navigation
         "nav_reset": 0.5,
         "nav_drill_out": 0.5,
+    }
+
+    # Associative link strengths by relationship type
+    LINK_STRENGTHS = {
+        "co_occurrence": 1.0,       # same (window, turn) — automatic
+        "rehydrated_with": 1.5,     # recalled together across sessions
+        "user_associated": 2.0,     # explicit user/LLM association (future)
     }
 
     def record_access(self, artifact_id: str, access_type: str):
@@ -378,6 +442,141 @@ class InteractionCache:
         self.logger.debug("Recorded access: %s +%.1f (%s) count=%d",
                           artifact_id, weight, access_type,
                           target_art.access_count if target_art else 0)
+
+    # ------------------------------------------------------------------
+    # Associative linking (CMA associative routing)
+    # ------------------------------------------------------------------
+
+    def create_link(self, id_a: str, id_b: str,
+                    link_type: str = "co_occurrence") -> bool:
+        """Create an undirected link between two artifacts.
+
+        Normalizes IDs (smaller = source) to prevent duplicate edges.
+        Returns True if a new link was created, False if it already existed
+        or the IDs are identical.
+        """
+        if id_a == id_b:
+            return False
+
+        source_id, target_id = sorted([id_a, id_b])
+        strength = self.LINK_STRENGTHS.get(link_type, 1.0)
+        now = time.time()
+
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                cursor = conn.execute(
+                    """INSERT OR IGNORE INTO artifact_links
+                       (source_id, target_id, link_type, strength, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (source_id, target_id, link_type, strength, now),
+                )
+                conn.commit()
+                created = cursor.rowcount > 0
+            except Exception as e:
+                self.logger.warning("create_link failed %s<->%s: %s",
+                                    id_a, id_b, e)
+                return False
+            finally:
+                conn.close()
+
+        if created:
+            self.logger.debug("Linked %s <-> %s [%s, %.1f]",
+                              source_id, target_id, link_type, strength)
+        return created
+
+    def get_linked(self, artifact_id: str,
+                   link_type: str = None) -> list[Artifact]:
+        """Retrieve all artifacts linked to the given artifact ID.
+
+        Returns Artifact objects (from any tier). Optionally filter by
+        link_type. Results ordered by link strength DESC.
+        """
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                if link_type:
+                    rows = conn.execute("""
+                        SELECT a.* FROM artifacts a
+                        JOIN artifact_links l ON (
+                            (l.source_id = ? AND l.target_id = a.artifact_id)
+                            OR
+                            (l.target_id = ? AND l.source_id = a.artifact_id)
+                        )
+                        WHERE l.link_type = ?
+                        ORDER BY l.strength DESC, l.created_at DESC
+                    """, (artifact_id, artifact_id, link_type)).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT a.* FROM artifacts a
+                        JOIN artifact_links l ON (
+                            (l.source_id = ? AND l.target_id = a.artifact_id)
+                            OR
+                            (l.target_id = ? AND l.source_id = a.artifact_id)
+                        )
+                        ORDER BY l.strength DESC, l.created_at DESC
+                    """, (artifact_id, artifact_id)).fetchall()
+                return [_row_to_artifact(r) for r in rows]
+            except Exception as e:
+                self.logger.warning("get_linked failed for %s: %s",
+                                    artifact_id, e)
+                return []
+            finally:
+                conn.close()
+
+    def get_link_count(self, artifact_id: str) -> int:
+        """Count the number of links for an artifact (any direction)."""
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                row = conn.execute(
+                    """SELECT COUNT(*) FROM artifact_links
+                       WHERE source_id = ? OR target_id = ?""",
+                    (artifact_id, artifact_id),
+                ).fetchone()
+                return row[0] if row else 0
+            except Exception:
+                return 0
+            finally:
+                conn.close()
+
+    def _auto_link_co_occurrence(self, new_artifact: Artifact):
+        """Link a newly stored artifact to others in the same turn.
+
+        Only links top-level artifacts (skips sub-items) to avoid noisy
+        edges between a parent and its own decomposed children.
+        """
+        if new_artifact.parent_id:
+            return
+
+        siblings = []
+        for art in self._hot.get(new_artifact.window_id, []):
+            if (art.artifact_id != new_artifact.artifact_id
+                    and art.turn_id == new_artifact.turn_id
+                    and art.parent_id is None):
+                siblings.append(art.artifact_id)
+
+        for sib_id in siblings:
+            self.create_link(new_artifact.artifact_id, sib_id,
+                             "co_occurrence")
+
+    def _auto_link_rehydrated(self, rehydrated: list[Artifact]):
+        """Link all pairs of co-rehydrated artifacts.
+
+        Uses the original cold-tier IDs (from provenance.rehydrated_from)
+        since clones are ephemeral. The durable link is between the
+        persistent cold-tier originals.
+        """
+        original_ids = []
+        for art in rehydrated:
+            orig_id = art.provenance.get("rehydrated_from")
+            if orig_id:
+                original_ids.append(orig_id)
+
+        for i in range(len(original_ids)):
+            for j in range(i + 1, len(original_ids)):
+                self.create_link(original_ids[i], original_ids[j],
+                                 "rehydrated_with")
 
     def get_by_id(self, artifact_id: str) -> Optional[Artifact]:
         """Retrieve a single artifact by ID. Checks hot first, then SQLite."""
@@ -878,7 +1077,8 @@ class InteractionCache:
                     artifact_type: str = None,
                     user_id: str = "primary_user",
                     days: int = 30, limit: int = 10,
-                    artifact_ids: list = None) -> list[Artifact]:
+                    artifact_ids: list = None,
+                    include_linked: bool = False) -> list[Artifact]:
         """Search cold-tier artifacts across all windows.
 
         Two modes:
@@ -887,6 +1087,9 @@ class InteractionCache:
 
         Keyword search checks summary, content[:500], and provenance.query
         (case-insensitive).
+
+        If include_linked=True, expands results with directly linked
+        cold-tier artifacts (deduplicated, re-ranked by effective_score).
         """
         with self._db_lock:
             conn = self._get_conn()
@@ -935,9 +1138,33 @@ class InteractionCache:
                     key=lambda a: self.effective_score(a, now),
                     reverse=True,
                 )
-                return all_arts[:limit]
+                primary = all_arts[:limit]
             finally:
                 conn.close()
+
+        if not include_linked or not primary:
+            return primary
+
+        # Expand with directly linked cold-tier artifacts
+        seen_ids = {a.artifact_id for a in primary}
+        linked_extras = []
+        for art in primary:
+            linked = self.get_linked(art.artifact_id)
+            for la in linked:
+                if la.artifact_id not in seen_ids and la.tier == "cold":
+                    seen_ids.add(la.artifact_id)
+                    linked_extras.append(la)
+
+        if not linked_extras:
+            return primary
+
+        combined = primary + linked_extras
+        now = time.time()
+        combined.sort(
+            key=lambda a: self.effective_score(a, now),
+            reverse=True,
+        )
+        return combined[:limit]
 
     def rehydrate(self, artifact_ids: list[str],
                   window_id: str) -> list[Artifact]:
@@ -986,6 +1213,10 @@ class InteractionCache:
             self.store(clone)
             rehydrated.append(clone)
 
+        # Auto-link co-rehydrated artifacts (original cold-tier IDs)
+        if len(rehydrated) > 1:
+            self._auto_link_rehydrated(rehydrated)
+
         if rehydrated:
             self.logger.info(
                 "Rehydrated %d artifacts into window %s from cold tier",
@@ -1002,6 +1233,557 @@ class InteractionCache:
             conv_state.window_id = uuid.uuid4().hex[:12]
             self.logger.debug("Generated window_id: %s", conv_state.window_id)
         return conv_state.window_id
+
+    # ------------------------------------------------------------------
+    # Consolidation & Abstraction (CMA requirement 5/6)
+    # ------------------------------------------------------------------
+
+    # Regex strips common prefixes from summaries/queries for topic extraction
+    _TOPIC_STRIP_RE = re.compile(
+        r"^(?:Web search:|Weather|File|Developer:|Reminders:|News:|"
+        r"System info:)\s*",
+        re.IGNORECASE,
+    )
+    # Stop words to ignore during keyword overlap detection
+    _STOP_WORDS = frozenset({
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "to", "of", "in", "for",
+        "on", "with", "at", "by", "from", "as", "into", "about", "between",
+        "through", "after", "before", "during", "without", "and", "or",
+        "but", "not", "no", "nor", "so", "yet", "both", "either", "neither",
+        "each", "every", "all", "any", "few", "more", "most", "other", "some",
+        "such", "than", "too", "very", "just", "also", "now", "then", "here",
+        "there", "when", "where", "how", "what", "which", "who", "whom",
+        "this", "that", "these", "those", "it", "its", "i", "me", "my",
+        "you", "your", "he", "him", "his", "she", "her", "we", "our",
+        "they", "them", "their", "up", "out", "if",
+    })
+
+    def _extract_topic(self, row) -> str:
+        """Normalize an artifact row to a topic string for grouping.
+
+        Extracts from provenance.query first (web searches), falls back
+        to summary field. Returns lowercase keyword string, or "" if too short.
+        """
+        # Try provenance.query first (web search, weather, etc.)
+        provenance = row["provenance"]
+        if isinstance(provenance, str):
+            try:
+                provenance = json.loads(provenance) if provenance else {}
+            except (json.JSONDecodeError, TypeError):
+                provenance = {}
+        query = provenance.get("query", "")
+        if query and len(query.strip()) >= 3:
+            return self._normalize_topic(query)
+
+        # Fall back to summary
+        summary = row["summary"] or ""
+        if summary and len(summary.strip()) >= 3:
+            return self._normalize_topic(summary)
+
+        return ""
+
+    def _normalize_topic(self, text: str) -> str:
+        """Strip prefixes, lowercase, remove stop words, return keyword core."""
+        text = self._TOPIC_STRIP_RE.sub("", text).strip()
+        # Keep only word characters and spaces
+        text = re.sub(r"[^\w\s]", " ", text.lower())
+        words = [self._stem(w) for w in text.split()
+                 if w not in self._STOP_WORDS and len(w) > 1]
+        return " ".join(sorted(words))
+
+    @staticmethod
+    def _stem(word: str) -> str:
+        """Minimal English stemmer — strip common suffixes for grouping."""
+        if len(word) <= 3:
+            return word
+        # Plural: flies -> fly, dishes -> dish, containers -> container
+        if word.endswith("ies") and len(word) > 4:
+            return word[:-3] + "y"
+        if word.endswith(("shes", "ches", "xes", "ses", "zes")):
+            return word[:-2]
+        if word.endswith("s") and not word.endswith("ss"):
+            return word[:-1]
+        # Gerund: running -> run (double-letter), networking -> network
+        if word.endswith("ing") and len(word) > 5:
+            base = word[:-3]
+            if len(base) > 2 and base[-1] == base[-2]:
+                return base[:-1]  # running -> run
+            return base
+        return word
+
+    def _extract_keywords(self, row) -> set:
+        """Extract keyword set from an artifact row for overlap detection."""
+        topic = self._extract_topic(row)
+        if not topic:
+            # Fall back to first 200 chars of content
+            content = (row["content"] or "")[:200].lower()
+            content = re.sub(r"[^\w\s]", " ", content)
+            words = {self._stem(w) for w in content.split()
+                     if w not in self._STOP_WORDS and len(w) > 2}
+            return words
+        return set(topic.split())
+
+    def _detect_frequency_patterns(self, user_id, conn):
+        """Find topics queried 3+ times across 2+ distinct windows."""
+        rows = conn.execute("""
+            SELECT artifact_type, summary, provenance, window_id,
+                   artifact_id, created_at
+            FROM artifacts
+            WHERE tier = 'cold' AND user_id = ? AND parent_id IS NULL
+            ORDER BY created_at DESC
+            LIMIT 500
+        """, (user_id,)).fetchall()
+
+        topic_groups = defaultdict(list)
+        for row in rows:
+            topic = self._extract_topic(row)
+            if topic:
+                topic_groups[topic].append(row)
+
+        insights = []
+        for topic, entries in topic_groups.items():
+            windows = {e["window_id"] for e in entries}
+            if len(entries) >= 3 and len(windows) >= 2:
+                # Pick a readable label from the first entry's raw text
+                raw = self._extract_raw_label(entries[0])
+                insights.append({
+                    "pattern_type": "interest",
+                    "content": f"frequently searches for {raw}",
+                    "evidence_count": len(entries),
+                    "evidence_ids": [e["artifact_id"] for e in entries[:20]],
+                    "first_seen": min(e["created_at"] for e in entries),
+                    "last_seen": max(e["created_at"] for e in entries),
+                    "distinct_windows": len(windows),
+                    "topic_key": topic,
+                })
+        return insights
+
+    def _extract_raw_label(self, row) -> str:
+        """Get a human-readable label from a row (un-normalized)."""
+        provenance = row["provenance"]
+        if isinstance(provenance, str):
+            try:
+                provenance = json.loads(provenance) if provenance else {}
+            except (json.JSONDecodeError, TypeError):
+                provenance = {}
+        query = provenance.get("query", "")
+        if query and len(query.strip()) >= 3:
+            return self._TOPIC_STRIP_RE.sub("", query).strip().lower()
+        summary = row["summary"] or ""
+        return self._TOPIC_STRIP_RE.sub("", summary).strip().lower()
+
+    def _detect_temporal_patterns(self, user_id, conn):
+        """Find actions repeated at similar times across 5+ distinct days."""
+        rows = conn.execute("""
+            SELECT artifact_type, source, created_at, artifact_id
+            FROM artifacts
+            WHERE tier = 'cold' AND user_id = ? AND parent_id IS NULL
+            ORDER BY created_at DESC
+            LIMIT 500
+        """, (user_id,)).fetchall()
+
+        type_groups = defaultdict(list)
+        for row in rows:
+            key = (row["artifact_type"], row["source"])
+            type_groups[key].append(row)
+
+        insights = []
+        for (art_type, source), entries in type_groups.items():
+            # Need 5+ entries across distinct days
+            days_seen = {
+                datetime.fromtimestamp(e["created_at"]).date()
+                for e in entries
+            }
+            if len(entries) < 5 or len(days_seen) < 5:
+                continue
+
+            hours = [datetime.fromtimestamp(e["created_at"]).hour
+                     for e in entries]
+
+            # Circular mean for hours (handles wrap-around at midnight)
+            angles = [h * (2 * math.pi / 24) for h in hours]
+            sin_sum = sum(math.sin(a) for a in angles)
+            cos_sum = sum(math.cos(a) for a in angles)
+            mean_angle = math.atan2(sin_sum / len(angles),
+                                    cos_sum / len(angles))
+            if mean_angle < 0:
+                mean_angle += 2 * math.pi
+            mean_hour = mean_angle * 24 / (2 * math.pi)
+
+            # Circular variance
+            R = math.sqrt((sin_sum / len(angles)) ** 2 +
+                          (cos_sum / len(angles)) ** 2)
+            # R close to 1 = tightly clustered, close to 0 = dispersed
+            # Convert to approximate std dev in hours
+            if R > 0.01:
+                circular_std = math.sqrt(-2 * math.log(R)) * (24 / (2 * math.pi))
+            else:
+                circular_std = 12.0  # maximally dispersed
+
+            if circular_std < 2.0:
+                period = self._hour_to_period(mean_hour)
+                label = self._source_to_label(source, art_type)
+                insights.append({
+                    "pattern_type": "habit",
+                    "content": f"checks {label} every {period}",
+                    "evidence_count": len(entries),
+                    "evidence_ids": [e["artifact_id"] for e in entries[:20]],
+                    "first_seen": min(e["created_at"] for e in entries),
+                    "last_seen": max(e["created_at"] for e in entries),
+                    "distinct_windows": len(days_seen),
+                    "topic_key": f"habit_{source}_{art_type}",
+                })
+        return insights
+
+    @staticmethod
+    def _hour_to_period(hour: float) -> str:
+        """Convert hour (0-24) to human period label."""
+        if 5 <= hour < 12:
+            return "morning"
+        elif 12 <= hour < 17:
+            return "afternoon"
+        elif 17 <= hour < 21:
+            return "evening"
+        else:
+            return "night"
+
+    @staticmethod
+    def _source_to_label(source: str, art_type: str) -> str:
+        """Convert source/type to a human-readable action label."""
+        labels = {
+            "get_weather": "weather",
+            "get_news": "news",
+            "get_system_info": "system info",
+            "find_files": "files",
+            "developer_tools": "developer tools",
+            "manage_reminders": "reminders",
+            "web_search": "web search",
+        }
+        return labels.get(source, art_type.replace("_", " "))
+
+    def _detect_interest_clusters(self, user_id, conn):
+        """Find clusters of linked cold-tier artifacts with keyword overlap."""
+        # Get cold-tier artifacts that have links
+        rows = conn.execute("""
+            SELECT DISTINCT a.artifact_id, a.summary, a.provenance,
+                   a.artifact_type, a.content, a.created_at, a.window_id
+            FROM artifacts a
+            WHERE a.tier = 'cold' AND a.user_id = ? AND a.parent_id IS NULL
+            AND (
+                EXISTS (SELECT 1 FROM artifact_links l
+                        WHERE l.source_id = a.artifact_id)
+                OR
+                EXISTS (SELECT 1 FROM artifact_links l
+                        WHERE l.target_id = a.artifact_id)
+            )
+        """, (user_id,)).fetchall()
+
+        if len(rows) < 3:
+            return []
+
+        # Build adjacency map
+        row_by_id = {r["artifact_id"]: r for r in rows}
+        adj = defaultdict(set)
+        link_rows = conn.execute("""
+            SELECT source_id, target_id FROM artifact_links
+        """).fetchall()
+        linked_ids = set(row_by_id.keys())
+        for lr in link_rows:
+            s, t = lr["source_id"], lr["target_id"]
+            if s in linked_ids and t in linked_ids:
+                adj[s].add(t)
+                adj[t].add(s)
+
+        # BFS depth-2 to find clusters
+        visited_clusters = []
+        globally_seen = set()
+        for start_id in row_by_id:
+            if start_id in globally_seen:
+                continue
+            # BFS
+            cluster = set()
+            frontier = {start_id}
+            for _depth in range(2):
+                next_frontier = set()
+                for nid in frontier:
+                    cluster.add(nid)
+                    next_frontier |= adj.get(nid, set())
+                frontier = next_frontier - cluster
+            cluster |= frontier
+
+            if len(cluster) < 3:
+                continue
+
+            # Check keyword overlap across cluster members
+            all_keywords = []
+            for cid in cluster:
+                if cid in row_by_id:
+                    kw = self._extract_keywords(row_by_id[cid])
+                    all_keywords.append(kw)
+
+            if len(all_keywords) < 3:
+                continue
+
+            # Find words that appear in at least half the cluster
+            word_counts = defaultdict(int)
+            for kw_set in all_keywords:
+                for w in kw_set:
+                    word_counts[w] += 1
+
+            threshold = max(2, len(all_keywords) // 2)
+            shared = {w for w, c in word_counts.items() if c >= threshold}
+
+            if not shared:
+                continue
+
+            # This cluster has a coherent theme
+            globally_seen |= cluster
+            cluster_rows = [row_by_id[cid] for cid in cluster
+                            if cid in row_by_id]
+            label = " ".join(sorted(shared)[:4])
+            visited_clusters.append({
+                "pattern_type": "interest",
+                "content": f"interested in {label}",
+                "evidence_count": len(cluster_rows),
+                "evidence_ids": [r["artifact_id"] for r in cluster_rows[:20]],
+                "first_seen": min(r["created_at"] for r in cluster_rows),
+                "last_seen": max(r["created_at"] for r in cluster_rows),
+                "distinct_windows": len({r["window_id"]
+                                         for r in cluster_rows}),
+                "topic_key": f"cluster_{label}",
+            })
+
+        return visited_clusters
+
+    def _detect_engagement_patterns(self, user_id, conn):
+        """High-engagement artifacts (access_count >= 3) indicate important topics."""
+        rows = conn.execute("""
+            SELECT artifact_type, summary, provenance, artifact_id,
+                   importance_score, access_count, created_at, window_id,
+                   content
+            FROM artifacts
+            WHERE tier = 'cold' AND user_id = ? AND parent_id IS NULL
+                  AND access_count >= 3
+            ORDER BY importance_score DESC
+            LIMIT 50
+        """, (user_id,)).fetchall()
+
+        if not rows:
+            return []
+
+        # Group by topic
+        topic_groups = defaultdict(list)
+        for row in rows:
+            topic = self._extract_topic(row)
+            if topic:
+                topic_groups[topic].append(row)
+
+        insights = []
+        for topic, entries in topic_groups.items():
+            raw = self._extract_raw_label(entries[0])
+            insights.append({
+                "pattern_type": "interest",
+                "content": f"frequently engages with {raw}",
+                "evidence_count": len(entries),
+                "evidence_ids": [e["artifact_id"] for e in entries[:20]],
+                "first_seen": min(e["created_at"] for e in entries),
+                "last_seen": max(e["created_at"] for e in entries),
+                "distinct_windows": len({e["window_id"] for e in entries}),
+                "topic_key": f"engagement_{topic}",
+            })
+        return insights
+
+    def _upsert_knowledge(self, conn, insight: dict) -> str:
+        """Insert or update a consolidated knowledge row. Returns knowledge_id."""
+        now = time.time()
+        topic_key = insight["topic_key"]
+        pattern_type = insight["pattern_type"]
+
+        # Check for existing row with same pattern_type + topic_key
+        existing = conn.execute("""
+            SELECT knowledge_id, evidence_count, evidence_ids,
+                   first_seen, confidence
+            FROM consolidated_knowledge
+            WHERE user_id = ? AND pattern_type = ? AND superseded_by IS NULL
+            AND knowledge_id IN (
+                SELECT knowledge_id FROM consolidated_knowledge
+                WHERE content LIKE ? OR knowledge_id LIKE ?
+            )
+        """, (
+            insight.get("user_id", "primary_user"),
+            pattern_type,
+            f"%{topic_key[:30]}%",
+            f"%{topic_key[:16]}%",
+        )).fetchone()
+
+        # Better dedup: search by topic_key stored in evidence_ids metadata
+        if not existing:
+            # Look for a row whose topic_key matches (stored as prefix of kid)
+            kid_prefix = f"ck_{pattern_type}_{topic_key}"[:32]
+            existing = conn.execute("""
+                SELECT knowledge_id, evidence_count, evidence_ids,
+                       first_seen, confidence
+                FROM consolidated_knowledge
+                WHERE user_id = ? AND pattern_type = ?
+                AND knowledge_id LIKE ?
+                AND superseded_by IS NULL
+            """, (
+                insight.get("user_id", "primary_user"),
+                pattern_type,
+                f"{kid_prefix}%",
+            )).fetchone()
+
+        evidence_ids = json.dumps(insight["evidence_ids"][:20])
+        distinct_windows = insight.get("distinct_windows", 2)
+        evidence_count = insight["evidence_count"]
+        confidence = min(0.95, 0.3 + 0.1 * evidence_count
+                         + 0.05 * distinct_windows)
+
+        if existing:
+            # Update existing row
+            kid = existing["knowledge_id"]
+            old_ids = json.loads(existing["evidence_ids"] or "[]")
+            new_ids = list(dict.fromkeys(
+                old_ids + insight["evidence_ids"]
+            ))[:20]
+            new_count = max(existing["evidence_count"], evidence_count)
+            conn.execute("""
+                UPDATE consolidated_knowledge
+                SET evidence_count = ?, evidence_ids = ?,
+                    last_seen = ?, confidence = ?, content = ?,
+                    updated_at = ?
+                WHERE knowledge_id = ?
+            """, (
+                new_count, json.dumps(new_ids),
+                insight["last_seen"], confidence, insight["content"],
+                now, kid,
+            ))
+            return kid
+        else:
+            # Insert new row — use topic_key as deterministic ID prefix
+            kid = f"ck_{pattern_type}_{topic_key}"[:32]
+            # Ensure uniqueness with hash suffix
+            kid_hash = uuid.uuid5(uuid.NAMESPACE_DNS, kid).hex[:8]
+            kid = f"{kid}_{kid_hash}"[:48]
+            conn.execute("""
+                INSERT OR REPLACE INTO consolidated_knowledge
+                    (knowledge_id, user_id, pattern_type, content,
+                     evidence_count, evidence_ids, first_seen, last_seen,
+                     confidence, promoted, superseded_by,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+            """, (
+                kid,
+                insight.get("user_id", "primary_user"),
+                pattern_type,
+                insight["content"],
+                evidence_count,
+                evidence_ids,
+                insight["first_seen"],
+                insight["last_seen"],
+                confidence,
+                now, now,
+            ))
+            return kid
+
+    def _promote_mature_insights(self, conn, user_id, memory_manager=None):
+        """Push high-confidence consolidated knowledge to memory_manager facts."""
+        if not memory_manager:
+            return
+
+        rows = conn.execute("""
+            SELECT * FROM consolidated_knowledge
+            WHERE user_id = ? AND promoted = 0
+            AND confidence >= 0.75 AND evidence_count >= 5
+            AND superseded_by IS NULL
+        """, (user_id,)).fetchall()
+
+        for row in rows:
+            fact_id = memory_manager.store_fact({
+                "user_id": user_id,
+                "category": row["pattern_type"],
+                "subject": row["pattern_type"],
+                "content": row["content"],
+                "source": "consolidated",
+                "confidence": row["confidence"],
+            })
+            if fact_id:
+                conn.execute("""
+                    UPDATE consolidated_knowledge
+                    SET promoted = 1, updated_at = ?
+                    WHERE knowledge_id = ?
+                """, (time.time(), row["knowledge_id"]))
+                self.logger.info(
+                    "Promoted consolidated insight to facts: %s (kid=%s)",
+                    row["content"][:60], row["knowledge_id"][:16],
+                )
+
+    def consolidate(self, user_id="user", memory_manager=None):
+        """Scan cold-tier artifacts and extract/update consolidated knowledge.
+
+        Called from background thread at window close. Safe to run frequently
+        as it's idempotent (updates existing insights, doesn't duplicate).
+        """
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                # Run all four detectors
+                all_insights = []
+                all_insights.extend(
+                    self._detect_frequency_patterns(user_id, conn))
+                all_insights.extend(
+                    self._detect_temporal_patterns(user_id, conn))
+                all_insights.extend(
+                    self._detect_interest_clusters(user_id, conn))
+                all_insights.extend(
+                    self._detect_engagement_patterns(user_id, conn))
+
+                if not all_insights:
+                    return
+
+                # Upsert each insight
+                for insight in all_insights:
+                    insight["user_id"] = user_id
+                    self._upsert_knowledge(conn, insight)
+
+                # Promote mature insights to memory_manager
+                self._promote_mature_insights(conn, user_id, memory_manager)
+
+                conn.commit()
+                self.logger.info(
+                    "Consolidation complete: %d insights processed for %s",
+                    len(all_insights), user_id,
+                )
+            except Exception as e:
+                self.logger.warning("Consolidation failed: %s", e)
+                conn.rollback()
+            finally:
+                conn.close()
+
+    def get_consolidated_knowledge(self, user_id="user",
+                                   pattern_type=None,
+                                   min_confidence=0.0) -> list:
+        """Retrieve consolidated knowledge, optionally filtered."""
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                query = """
+                    SELECT * FROM consolidated_knowledge
+                    WHERE user_id = ? AND superseded_by IS NULL
+                    AND confidence >= ?
+                """
+                params = [user_id, min_confidence]
+                if pattern_type:
+                    query += " AND pattern_type = ?"
+                    params.append(pattern_type)
+                query += " ORDER BY confidence DESC, evidence_count DESC"
+
+                rows = conn.execute(query, params).fetchall()
+                return [dict(row) for row in rows]
+            finally:
+                conn.close()
 
 
 # ----------------------------------------------------------------------

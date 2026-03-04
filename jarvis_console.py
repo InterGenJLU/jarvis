@@ -789,7 +789,7 @@ def run_console(config, mode, user_id="user"):
         reminder_manager.start()
         # Wire reminder manager for tool-calling dispatch
         from core.tool_executor import (set_reminder_manager, set_config as set_tool_config,
-                                        set_current_user_fn)
+                                        set_current_user_fn, set_memory_manager)
         set_reminder_manager(reminder_manager)
         set_current_user_fn(
             lambda: getattr(conversation, 'current_user', None) or 'christopher'
@@ -814,6 +814,7 @@ def run_console(config, mode, user_id="user"):
             embedding_model=skill_manager._embedding_model,
         )
         conversation.set_memory_manager(memory_manager)
+        set_memory_manager(memory_manager)
         vec_count = memory_manager.faiss_index.ntotal if memory_manager.faiss_index else 0
         pro_status = "on" if memory_manager.proactive_enabled else "off"
         pro_color = "green" if memory_manager.proactive_enabled else "red"

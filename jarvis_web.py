@@ -151,7 +151,7 @@ def init_components(config, tts_proxy):
         components['reminder_manager'] = rm
         # Wire reminder manager for tool-calling dispatch
         from core.tool_executor import (set_reminder_manager, set_config as set_tool_config,
-                                        set_current_user_fn)
+                                        set_current_user_fn, set_memory_manager)
         set_reminder_manager(rm)
         set_current_user_fn(
             lambda: getattr(conversation, 'current_user', None) or 'christopher'
@@ -177,6 +177,7 @@ def init_components(config, tts_proxy):
             embedding_model=components['skill_manager']._embedding_model,
         )
         conversation.set_memory_manager(mm)
+        set_memory_manager(mm)
         components['memory_manager'] = mm
 
     # Context window

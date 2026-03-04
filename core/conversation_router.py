@@ -1762,8 +1762,8 @@ class ConversationRouter:
 
         Uses the skill_manager's pre-computed embedding cache to score the
         command against tool-enabled skills' intents.  Returns a list of
-        tool schema dicts (always includes web_search) or None if no
-        skill tools are relevant.
+        tool schema dicts (always includes always-on tools like web_search
+        and recall_memory) or None if no skill tools are relevant.
 
         Critical guard: also scores non-migrated skills.  If a non-migrated
         skill has a higher semantic score than the best migrated skill, we
@@ -1778,7 +1778,7 @@ class ConversationRouter:
             return None
 
         # Lazy import to avoid circular dependency at module load
-        from core.llm_router import WEB_SEARCH_TOOL, SKILL_TOOLS
+        from core.tool_registry import ALWAYS_INCLUDED_TOOLS, SKILL_TOOLS
 
         try:
             from sentence_transformers import util as st_util
@@ -1839,7 +1839,7 @@ class ConversationRouter:
                     f"Tool pruning: no domain tools, but web_navigation scored "
                     f"{web_nav_score:.2f} — routing to LLM with web_search"
                 )
-                return [WEB_SEARCH_TOOL]
+                return list(ALWAYS_INCLUDED_TOOLS.values())
             return None
 
         # Guard: if a non-migrated skill scores higher, defer to P4
@@ -1861,8 +1861,8 @@ class ConversationRouter:
             )
             matched_tools = matched_tools[:self._MAX_DOMAIN_TOOLS]
 
-        # Always include web_search as a core tool
-        return [WEB_SEARCH_TOOL] + [t[1] for t in matched_tools]
+        # Always include always-on tools (web_search, recall_memory)
+        return list(ALWAYS_INCLUDED_TOOLS.values()) + [t[1] for t in matched_tools]
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""

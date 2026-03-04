@@ -17,7 +17,9 @@ Phase 5: Proactive memory surfacing — relevant facts injected into LLM
          Admin-only, confidence-gated, max 1 fact per conversation window.
 Phase 6: Forgetting + transparency — user can review stored memories,
          request targeted deletion with confirmation, and see fact summaries.
-         All 6 phases operational.
+Phase 7: Self-managing memory (MemGPT pattern) — per-turn background
+         extraction (zero latency) + recall_memory LLM tool for proactive
+         memory search. All 7 phases operational.
 
 Uses a singleton pattern (matches reminder_manager.py, news_manager.py).
 """
@@ -107,6 +109,10 @@ class MemoryManager:
         self._pending_forget = None  # Phase 6: pending forget confirmation
         self.last_extracted = []  # Facts extracted from most recent user message
 
+        # Per-turn extraction state (Phase 7 — MemGPT store)
+        self._per_turn_in_progress = False
+        self._last_user_message = None
+
         # FAISS index state (Phase 2)
         self.faiss_index = None
         self.faiss_metadata = []
@@ -116,7 +122,7 @@ class MemoryManager:
         self._init_faiss()
         self.cleanup_old_interactions()
         self.logger.info(
-            f"MemoryManager initialized (Phase 6 complete: facts + FAISS + recall + batch + proactive + forget/transparency "
+            f"MemoryManager initialized (Phase 7: facts + FAISS + recall + batch + proactive + forget/transparency + per-turn "
             f"[{self.faiss_index.ntotal if self.faiss_index else 0} vectors, "
             f"batch every {self.batch_interval} msgs, "
             f"proactive={'on' if self.proactive_enabled else 'off'} "
@@ -840,11 +846,14 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     def on_message(self, message: dict):
-        """Called on every message. Handles FAISS indexing + fact extraction + batch trigger."""
+        """Called on every message. Handles FAISS indexing + fact extraction + batch trigger + per-turn extraction."""
         # Index all messages (user + assistant) in FAISS
         self.index_message(message)
 
         if message.get("role") == "user":
+            # Cache for per-turn extraction pairing
+            self._last_user_message = message.get("content", "")
+
             # Skip fact extraction on meta-commands (forget, recall, transparency)
             content = message.get("content", "").lower().strip()
             is_meta = (self.is_forget_request(content) or
@@ -854,6 +863,17 @@ class MemoryManager:
             self._message_count_since_batch += 1
             if self._message_count_since_batch >= self.batch_interval:
                 self._trigger_batch_extraction()
+
+        elif message.get("role") == "assistant" and self._last_user_message:
+            # Per-turn background extraction (Phase 7 — MemGPT store)
+            if (self.config.get("conversational_memory.per_turn_extraction", True)
+                    and not self._per_turn_in_progress
+                    and len(self._last_user_message) >= 15):
+                self._trigger_per_turn_extraction(
+                    self._last_user_message,
+                    message.get("content", ""),
+                    message.get("user_id") or "primary_user",
+                )
 
     # ------------------------------------------------------------------
     # LLM batch extraction (Phase 4)
@@ -927,6 +947,81 @@ class MemoryManager:
 
         except Exception as e:
             self.logger.warning(f"Batch extraction failed (non-fatal): {e}")
+
+    # ------------------------------------------------------------------
+    # Per-turn LLM extraction (Phase 7 — MemGPT store)
+    # ------------------------------------------------------------------
+
+    PER_TURN_EXTRACTION_PROMPT = (
+        "The user just said:\n\"{user_message}\"\n\n"
+        "The assistant responded:\n\"{assistant_message}\"\n\n"
+        "Extract any NEW personal facts about the user from this exchange "
+        "(preferences, relationships, work, location, health, habits, plans).\n\n"
+        "For each fact, output a JSON line:\n"
+        '- "category": one of [preference, relationship, habit, plan, opinion, location, work, health, general]\n'
+        '- "subject": brief topic (1-3 words)\n'
+        '- "content": the fact in third person (e.g. "User prefers dark roast coffee")\n\n'
+        "Only extract facts the user directly stated or strongly implied. "
+        "DO NOT extract greetings, questions, commands, or transient context.\n"
+        "If no facts found, output nothing."
+    )
+
+    def _trigger_per_turn_extraction(self, user_msg: str, assistant_msg: str, user_id: str):
+        """Launch background thread for per-turn LLM extraction."""
+        self._per_turn_in_progress = True
+        thread = threading.Thread(
+            target=self._run_per_turn_extraction,
+            args=(user_msg, assistant_msg, user_id),
+            daemon=True,
+        )
+        thread.start()
+
+    def _run_per_turn_extraction(self, user_msg: str, assistant_msg: str, user_id: str):
+        """Background: extract facts from a single exchange via Qwen."""
+        try:
+            # Truncate to avoid excessive token usage
+            user_msg = user_msg[:500]
+            assistant_msg = assistant_msg[:500]
+
+            from core.llm_router import get_llm_router
+            llm = get_llm_router(self.config)
+            response = llm.chat(
+                user_message=self.PER_TURN_EXTRACTION_PROMPT.format(
+                    user_message=user_msg,
+                    assistant_message=assistant_msg,
+                ),
+                max_tokens=200,
+            )
+
+            extracted_count = 0
+            for line in response.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    fact_data = json.loads(line)
+                    if "content" not in fact_data:
+                        continue
+                    fact_id = self.store_fact({
+                        "user_id": user_id,
+                        "category": fact_data.get("category", "general"),
+                        "subject": fact_data.get("subject", "unknown"),
+                        "content": fact_data["content"],
+                        "source": "per_turn",
+                        "confidence": 0.75,
+                    })
+                    if fact_id:
+                        extracted_count += 1
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+            if extracted_count:
+                self.logger.info(f"Per-turn extraction: found {extracted_count} facts")
+
+        except Exception as e:
+            self.logger.warning(f"Per-turn extraction failed (non-fatal): {e}")
+        finally:
+            self._per_turn_in_progress = False
 
     # ------------------------------------------------------------------
     # CRUD operations
