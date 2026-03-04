@@ -153,8 +153,10 @@ class LLMRouter:
             return "too_short"
 
         # Repeated token gibberish (e.g. "the the the the")
+        # Exempt short responses (< 10 words) — tool summaries and brief
+        # answers legitimately reuse words (e.g. "The temperature is 72°F")
         words = text.lower().split()
-        if len(words) >= 4:
+        if len(words) >= 10:
             unique_ratio = len(set(words)) / len(words)
             if unique_ratio < 0.25:
                 return "repetitive"

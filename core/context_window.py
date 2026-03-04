@@ -27,8 +27,12 @@ from typing import List, Dict, Optional
 from core.logger import get_logger
 
 
-# Tokens ~ words * 1.3 (no external tokenizer needed)
+# Tokens ~ words * 1.3 for prose (no external tokenizer needed)
 TOKEN_RATIO = 1.3
+# Code/JSON uses chars/4 (operators, brackets inflate token count vs prose)
+_CODE_TOKEN_RATIO = 0.25  # chars-to-tokens for code-like content
+# Safety margin for budget calculations
+_TOKEN_SAFETY_MARGIN = 1.05
 
 # Common stop words (excluded from topic labeling)
 _STOP_WORDS = frozenset({
@@ -48,9 +52,24 @@ _STOP_WORDS = frozenset({
 })
 
 
+def _is_code_like(text: str) -> bool:
+    """Heuristic: text looks like code/JSON if it has many non-word chars."""
+    if not text:
+        return False
+    # Code markers: braces, brackets, semicolons, arrows, triple backticks
+    code_chars = sum(1 for c in text if c in '{}[]();=><|&`')
+    return code_chars > len(text) * 0.05  # >5% structural chars
+
+
 def estimate_tokens(text: str) -> int:
-    """Estimate token count from text (words * 1.3)."""
-    return int(len(text.split()) * TOKEN_RATIO)
+    """Estimate token count from text.
+
+    Uses chars/4 for code-like content (more operators/brackets per token),
+    words*1.3 for prose. Adds 5% safety margin.
+    """
+    if _is_code_like(text):
+        return int(len(text) * _CODE_TOKEN_RATIO * _TOKEN_SAFETY_MARGIN)
+    return int(len(text.split()) * TOKEN_RATIO * _TOKEN_SAFETY_MARGIN)
 
 
 @dataclass

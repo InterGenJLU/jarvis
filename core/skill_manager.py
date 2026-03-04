@@ -374,27 +374,45 @@ class SkillManager:
         tied_skills = []
 
         for skill_name, metadata in self.skill_metadata.items():
-            # Access keywords attribute directly
             keywords = getattr(metadata, 'keywords', [])
             if not keywords:
                 continue
 
-            # Count how many keywords match (whole-word only to avoid substring false positives)
-            # Alias keywords get +1 bonus to win ties against regular keywords
-            matches = sum(
-                (2 if keyword.lower() in _keyword_aliases else 1)
-                for keyword in keywords
-                if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text)
-            )
+            # Count keyword matches. Generic keywords contribute 0 score
+            # (don't block other evidence, but don't count as positive signal).
+            # Alias keywords get +1 bonus to win ties.
+            score = 0
+            matched_kws = []
+            for keyword in keywords:
+                if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text):
+                    if keyword.lower() in _generic_keywords:
+                        matched_kws.append(f"{keyword}(generic)")
+                    elif keyword.lower() in _keyword_aliases:
+                        score += 2
+                        matched_kws.append(f"{keyword}(+2)")
+                    else:
+                        score += 1
+                        matched_kws.append(f"{keyword}(+1)")
 
-            if matches > best_score:
-                best_score = matches
+            if matched_kws:
+                self.logger.debug(
+                    "Keyword routing: %s → score=%d [%s]",
+                    skill_name, score, ", ".join(matched_kws),
+                )
+
+            if score > best_score:
+                best_score = score
                 tied_skills = [skill_name]
-            elif matches == best_score and matches > 0:
+            elif score == best_score and score > 0:
                 tied_skills.append(skill_name)
 
         # Ties fall through to semantic matching (Layer 4) for disambiguation
         if len(tied_skills) != 1:
+            if tied_skills:
+                self.logger.debug(
+                    "Keyword tie (%d skills at score %d), falling to semantic",
+                    len(tied_skills), best_score,
+                )
             return None
 
         best_match = tied_skills[0]
@@ -457,236 +475,343 @@ class SkillManager:
         
         return {}
     
-    def execute_intent(self, user_text: str) -> Optional[str]:
-        """
-        Match and execute an intent
+    # ------------------------------------------------------------------
+    # execute_intent helpers (extracted from monolithic method)
+    # ------------------------------------------------------------------
 
-        Args:
-            user_text: User's input text
+    def _invoke_handler(self, handler, entities: dict):
+        """Call a handler, passing entities if accepted by its signature."""
+        sig = inspect.signature(handler)
+        if 'entities' in sig.parameters:
+            return handler(entities=entities or {})
+        return handler()
 
-        Returns:
-            Response text or None if no match
+    def _check_pending_confirmations(self, user_text: str) -> Optional[str]:
+        """Check for pending 3-tuple confirmations in any skill.
+
+        Must run before routing — "yes, please delete it" would otherwise
+        match delete_file.
         """
-        # Check for pending confirmations in any skill (e.g., file_editor delete/overwrite)
-        # Must run before routing — "yes, please delete it" would otherwise match delete_file
         for skill_name, skill in self.skills.items():
             pending = getattr(skill, '_pending_confirmation', None)
-            # Only handle 3-tuple confirmations (action, detail, expiry) via centralized path.
-            # Skills with other formats (e.g. developer_tools 2-tuple) handle confirmations internally.
             if pending and isinstance(pending, tuple) and len(pending) == 3:
                 action, detail, expiry = pending
                 import time as _time
                 if _time.time() <= expiry:
                     handler = getattr(skill, 'confirm_action', None)
                     if handler:
-                        self.logger.info(f"Pending confirmation for {skill_name}.{action}, routing to confirm_action")
+                        self.logger.info(
+                            "Pending confirmation for %s.%s, routing to confirm_action",
+                            skill_name, action,
+                        )
                         self._last_match_info = {
                             "layer": "pending_confirmation",
                             "skill_name": skill_name,
                             "intent_id": f"confirm_{action}",
                             "confidence": 1.0,
-                            "handler_name": "confirm_action"
+                            "handler_name": "confirm_action",
                         }
                         response = handler(entities={'original_text': user_text})
                         if isinstance(response, str):
                             response = resolve_honorific(response)
                         return response
+        return None
+
+    def _try_keyword_direct_match(self, skill, skill_name: str,
+                                   user_text: str, entities: dict) -> Optional[str]:
+        """LAYER 4a: keyword → handler name suffix match or alias."""
+        skill_keywords = getattr(
+            self.skill_metadata.get(skill_name), 'keywords', [],
+        )
+        matched_kws = sorted(
+            [kw for kw in skill_keywords
+             if re.search(r'\b' + re.escape(kw.lower()) + r'\b', user_text.lower())],
+            key=len, reverse=True,
+        )
+
+        _handler_aliases = {"google": "search_web"}
+
+        for kw in matched_kws:
+            kw_lower = kw.lower()
+
+            # Explicit alias
+            if kw_lower in _handler_aliases:
+                alias_target = _handler_aliases[kw_lower]
+                for intent_id, intent_data in skill.semantic_intents.items():
+                    if intent_data['handler'].__name__.lower() == alias_target:
+                        self.logger.info(
+                            "Keyword->intent alias match: %s (keyword=%s -> %s)",
+                            intent_id, kw_lower, alias_target,
+                        )
+                        self._last_match_info = {
+                            "layer": "keyword_alias",
+                            "skill_name": skill_name,
+                            "intent_id": intent_id,
+                            "confidence": None,
+                            "handler_name": intent_data['handler'].__name__,
+                        }
+                        return self._invoke_handler(intent_data['handler'], entities)
+
+            # Skip generic keywords
+            if kw_lower in _generic_keywords:
+                continue
+
+            # Suffix match
+            suffix_matches = [
+                (iid, idata)
+                for iid, idata in skill.semantic_intents.items()
+                if idata['handler'].__name__.lower().endswith(f"_{kw_lower}")
+            ]
+            if len(suffix_matches) == 1:
+                intent_id, intent_data = suffix_matches[0]
+                self.logger.info(
+                    "Keyword->intent direct match: %s (keyword=%s)",
+                    intent_id, kw_lower,
+                )
+                self._last_match_info = {
+                    "layer": "keyword_direct",
+                    "skill_name": skill_name,
+                    "intent_id": intent_id,
+                    "confidence": None,
+                    "handler_name": intent_data['handler'].__name__.lower(),
+                }
+                return self._invoke_handler(intent_data['handler'], entities)
+
+            if len(suffix_matches) > 1:
+                # Ambiguous — disambiguate via semantic similarity
+                result = self._disambiguate_suffix(
+                    skill_name, suffix_matches, user_text, entities, kw_lower,
+                )
+                if result is not None:
+                    return result
+
+        return None
+
+    def _disambiguate_suffix(self, skill_name: str, suffix_matches: list,
+                              user_text: str, entities: dict,
+                              kw_lower: str) -> Optional[str]:
+        """Resolve ambiguous suffix matches via embedding similarity."""
+        from sentence_transformers import util as _st_util
+        if not hasattr(self, '_embedding_model'):
+            return None
+        _user_emb = self._embedding_model.encode(
+            user_text, convert_to_tensor=True, show_progress_bar=False,
+        )
+        _best_sim, _best_pair = -1.0, None
+        for _sid, _sdata in suffix_matches:
+            _ex = self._semantic_embedding_cache.get((skill_name, _sid))
+            if _ex is not None:
+                _sim = float(_st_util.cos_sim(_user_emb, _ex).max())
+                if _sim > _best_sim:
+                    _best_sim, _best_pair = _sim, (_sid, _sdata)
+        if _best_pair:
+            intent_id, intent_data = _best_pair
+            self.logger.info(
+                "Keyword->intent disambiguated: %s (keyword=%s, score=%.2f)",
+                intent_id, kw_lower, _best_sim,
+            )
+            self._last_match_info = {
+                "layer": "keyword_direct",
+                "skill_name": skill_name,
+                "intent_id": intent_id,
+                "confidence": _best_sim,
+                "handler_name": intent_data['handler'].__name__.lower(),
+            }
+            return self._invoke_handler(intent_data['handler'], entities)
+        return None
+
+    def _try_keyword_semantic_fallback(self, skill, skill_name: str,
+                                        user_text: str,
+                                        entities: dict) -> Optional[str]:
+        """LAYER 4b: Semantic similarity within the keyword-matched skill."""
+        from sentence_transformers import util
+        if not hasattr(self, '_embedding_model'):
+            return None
+
+        user_emb = self._embedding_model.encode(
+            user_text, convert_to_tensor=True, show_progress_bar=False,
+        )
+        best_handler = None
+        best_score = 0.0
+        best_intent = None
+
+        for intent_id, intent_data in skill.semantic_intents.items():
+            cache_key = (skill_name, intent_id)
+            ex_embs = self._semantic_embedding_cache.get(cache_key)
+            if ex_embs is None:
+                continue
+            sims = util.cos_sim(user_emb, ex_embs)
+            max_sim = float(sims.max())
+            if max_sim > best_score:
+                best_score = max_sim
+                best_handler = intent_data['handler']
+                best_intent = intent_id
+
+        if not (best_handler and best_intent):
+            return None
+
+        intent_threshold = skill.semantic_intents[best_intent].get('threshold', 0.55)
+
+        # Direct threshold match
+        if best_score >= intent_threshold:
+            self.logger.info(
+                "Keyword->semantic fallback: %s (score=%.2f)",
+                best_intent, best_score,
+            )
+            self._last_match_info = {
+                "layer": "keyword_semantic",
+                "skill_name": skill_name,
+                "intent_id": best_intent,
+                "confidence": best_score,
+                "handler_name": best_handler.__name__,
+            }
+            return self._invoke_handler(best_handler, entities)
+
+        # Relaxed threshold based on keyword count
+        self.logger.info(
+            "Keyword->semantic fallback rejected: %s (score=%.2f < threshold=%.2f)",
+            best_intent, best_score, intent_threshold,
+        )
+        kw_count = (entities or {}).get('_keyword_count', 1)
+        if kw_count >= 3:
+            relaxed_threshold = max(intent_threshold * 0.4, 0.20)
+        elif kw_count >= 2:
+            relaxed_threshold = max(intent_threshold * 0.6, 0.30)
+        else:
+            relaxed_threshold = max(intent_threshold * 0.7, 0.40)
+
+        if best_score >= relaxed_threshold:
+            self.logger.info(
+                "Keyword->semantic relaxed match: %s (score=%.2f >= relaxed %.2f)",
+                best_intent, best_score, relaxed_threshold,
+            )
+            self._last_match_info = {
+                "layer": "keyword_semantic_relaxed",
+                "skill_name": skill_name,
+                "intent_id": best_intent,
+                "confidence": best_score,
+                "handler_name": best_handler.__name__,
+            }
+            return self._invoke_handler(best_handler, entities)
+
+        # Last resort: global semantic fallback
+        return self._try_global_semantic_fallback(
+            skill_name, user_text, best_score,
+        )
+
+    def _try_global_semantic_fallback(self, original_skill: str,
+                                       user_text: str,
+                                       rejected_score: float) -> Optional[str]:
+        """Cross-skill semantic search when within-skill semantic fails."""
+        self.logger.info(
+            "Keyword->semantic rejected for %s (best=%.2f), trying global semantic",
+            original_skill, rejected_score,
+        )
+        normalized = user_text.strip().lower().translate(
+            str.maketrans('', '', '?.!,;:'),
+        )
+        semantic_match = self._match_semantic_intents(normalized)
+        if semantic_match:
+            fb_skill_name, fb_intent_id, fb_entities = semantic_match
+            fb_skill = self.skills.get(fb_skill_name)
+            if (fb_skill and hasattr(fb_skill, 'semantic_intents')
+                    and fb_intent_id in fb_skill.semantic_intents):
+                fb_entities['original_text'] = user_text
+                fb_skill._last_user_text = user_text
+                handler = fb_skill.semantic_intents[fb_intent_id]['handler']
+                self._last_match_info = {
+                    "layer": "keyword_global_semantic",
+                    "skill_name": fb_skill_name,
+                    "intent_id": fb_intent_id,
+                    "confidence": fb_entities.get("similarity"),
+                    "handler_name": handler.__name__,
+                }
+                response = self._invoke_handler(handler, fb_entities)
+                if isinstance(response, str):
+                    response = resolve_honorific(response)
+                return response
+
+        self.logger.info("Global semantic fallback also failed, falling through to LLM")
+        self._last_match_info = {
+            "layer": "keyword_rejected",
+            "skill_name": original_skill,
+            "intent_id": "rejected",
+            "confidence": rejected_score,
+            "handler_name": "→ LLM fallback",
+        }
+        return None
+
+    # ------------------------------------------------------------------
+    # execute_intent — main entry point
+    # ------------------------------------------------------------------
+
+    def execute_intent(self, user_text: str) -> Optional[str]:
+        """Match and execute an intent.
+
+        Decision chain:
+        1. Pending confirmation check
+        2. Pattern/keyword match via match_intent()
+        3. Semantic intent (direct hit)
+        4a. Keyword → handler name match
+        4b. Keyword → within-skill semantic fallback
+        5. Global semantic fallback
+        6. Pattern-based skill handler
+        Falls through to LLM if nothing matches.
+        """
+        # 1. Pending confirmations
+        result = self._check_pending_confirmations(user_text)
+        if result is not None:
+            return result
 
         match_result = self.match_intent(user_text)
-        
         if not match_result:
             return None
-        
+
         skill_name, pattern, entities = match_result
-        
-        # Get skill
         skill = self.skills.get(skill_name)
         if not skill:
-            self.logger.error(f"Skill {skill_name} not found")
+            self.logger.error("Skill %s not found", skill_name)
             return None
-        
-        try:
-            # Store the original text on the skill so handlers can access it
-            skill._last_user_text = user_text
 
-            # Ensure entities always contains the original user text
+        try:
+            skill._last_user_text = user_text
             if entities is None:
                 entities = {}
             if 'original_text' not in entities:
                 entities['original_text'] = user_text
 
-            # For semantic matches, call the handler directly
+            # 3. Direct semantic intent match
             if hasattr(skill, 'semantic_intents') and pattern in skill.semantic_intents:
                 handler = skill.semantic_intents[pattern]['handler']
                 if self._last_match_info:
                     self._last_match_info["handler_name"] = handler.__name__
-                # Pass entities if handler accepts them
-                sig = inspect.signature(handler)
-                if 'entities' in sig.parameters:
-                    response = handler(entities=entities or {})
-                else:
-                    response = handler()
+                response = self._invoke_handler(handler, entities)
                 if isinstance(response, str):
                     response = resolve_honorific(response)
                 return response
 
-            # If keyword match landed us on a skill with semantic intents,
-            # find the best semantic intent within this skill (relaxed threshold)
+            # 4a + 4b. Keyword-based routing with semantic fallbacks
             if hasattr(skill, 'semantic_intents') and skill.semantic_intents:
-                # LAYER 4a: Check if a matched keyword directly names an intent
-                # e.g. keyword "amazon" → intent "search_amazon", "youtube" → "search_youtube"
-                # Try all matched keywords, longest first (most specific wins)
-                skill_keywords = getattr(self.skill_metadata.get(skill_name), 'keywords', [])
-                matched_kws = sorted(
-                    [kw for kw in skill_keywords if re.search(r'\b' + re.escape(kw.lower()) + r'\b', user_text.lower())],
-                    key=len, reverse=True
+                result = self._try_keyword_direct_match(
+                    skill, skill_name, user_text, entities,
                 )
+                if result is not None:
+                    return result
 
-                # Explicit keyword→handler aliases (keywords that don't suffix-match naturally)
-                _handler_aliases = {
-                    "google": "search_web",
-                }
-                # _generic_keywords is module-level (shared with _match_by_keywords)
+                result = self._try_keyword_semantic_fallback(
+                    skill, skill_name, user_text, entities,
+                )
+                if result is not None:
+                    return result
 
-                for kw in matched_kws:
-                    kw_lower = kw.lower()
-
-                    # Check explicit alias first
-                    if kw_lower in _handler_aliases:
-                        alias_target = _handler_aliases[kw_lower]
-                        for intent_id, intent_data in skill.semantic_intents.items():
-                            if intent_data['handler'].__name__.lower() == alias_target:
-                                self.logger.info(f"Keyword->intent alias match: {intent_id} (keyword={kw_lower} -> {alias_target})")
-                                self._last_match_info = {"layer": "keyword_alias", "skill_name": skill_name, "intent_id": intent_id, "confidence": None, "handler_name": intent_data['handler'].__name__}
-                                h = intent_data['handler']
-                                response = h(entities=entities or {}) if 'entities' in inspect.signature(h).parameters else h()
-                                return response
-
-                    # Skip suffix matching for generic keywords
-                    if kw_lower in _generic_keywords:
-                        continue
-
-                    suffix_matches = [
-                        (iid, idata)
-                        for iid, idata in skill.semantic_intents.items()
-                        if idata['handler'].__name__.lower().endswith(f"_{kw_lower}")
-                    ]
-                    if len(suffix_matches) == 1:
-                        intent_id, intent_data = suffix_matches[0]
-                        handler_name = intent_data['handler'].__name__.lower()
-                        self.logger.info(f"Keyword->intent direct match: {intent_id} (keyword={kw_lower})")
-                        self._last_match_info = {"layer": "keyword_direct", "skill_name": skill_name, "intent_id": intent_id, "confidence": None, "handler_name": handler_name}
-                        h = intent_data['handler']
-                        response = h(entities=entities or {}) if 'entities' in inspect.signature(h).parameters else h()
-                        return response
-                    elif len(suffix_matches) > 1:
-                        # Ambiguous suffix (e.g. "reminder" matches set_reminder AND cancel_reminder)
-                        # Use semantic similarity to disambiguate
-                        from sentence_transformers import util as _st_util
-                        if hasattr(self, '_embedding_model'):
-                            _user_emb = self._embedding_model.encode(user_text, convert_to_tensor=True, show_progress_bar=False)
-                            _best_sim, _best_pair = -1.0, None
-                            for _sid, _sdata in suffix_matches:
-                                _ck = (skill_name, _sid)
-                                _ex = self._semantic_embedding_cache.get(_ck)
-                                if _ex is not None:
-                                    _sim = float(_st_util.cos_sim(_user_emb, _ex).max())
-                                    if _sim > _best_sim:
-                                        _best_sim, _best_pair = _sim, (_sid, _sdata)
-                            if _best_pair:
-                                intent_id, intent_data = _best_pair
-                                handler_name = intent_data['handler'].__name__.lower()
-                                self.logger.info(f"Keyword->intent disambiguated: {intent_id} (keyword={kw_lower}, score={_best_sim:.2f})")
-                                self._last_match_info = {"layer": "keyword_direct", "skill_name": skill_name, "intent_id": intent_id, "confidence": _best_sim, "handler_name": handler_name}
-                                h = intent_data['handler']
-                                response = h(entities=entities or {}) if 'entities' in inspect.signature(h).parameters else h()
-                                return response
-
-                # LAYER 4b: Semantic similarity within the matched skill
-                from sentence_transformers import util
-                if hasattr(self, '_embedding_model'):
-                    user_emb = self._embedding_model.encode(user_text, convert_to_tensor=True, show_progress_bar=False)
-                    best_handler = None
-                    best_score = 0.0
-                    best_intent = None
-                    for intent_id, intent_data in skill.semantic_intents.items():
-                        # Use cached embeddings (populated at skill load time)
-                        cache_key = (skill_name, intent_id)
-                        ex_embs = self._semantic_embedding_cache.get(cache_key)
-                        if ex_embs is None:
-                            continue
-                        sims = util.cos_sim(user_emb, ex_embs)
-                        max_sim = float(sims.max())
-                        if max_sim > best_score:
-                            best_score = max_sim
-                            best_handler = intent_data['handler']
-                            best_intent = intent_id
-                    # Use the intent's own threshold (not a fixed global one)
-                    if best_handler and best_intent:
-                        intent_threshold = skill.semantic_intents[best_intent].get('threshold', 0.55)
-                        if best_score >= intent_threshold:
-                            self.logger.info(f"Keyword->semantic fallback: {best_intent} (score={best_score:.2f})")
-                            self._last_match_info = {"layer": "keyword_semantic", "skill_name": skill_name, "intent_id": best_intent, "confidence": best_score, "handler_name": best_handler.__name__}
-                            response = best_handler(entities=entities or {}) if 'entities' in inspect.signature(best_handler).parameters else best_handler()
-                            return response
-                        else:
-                            self.logger.info(f"Keyword->semantic fallback rejected: {best_intent} (score={best_score:.2f} < threshold={intent_threshold})")
-                            # Keyword already confirmed the skill — scale relaxed threshold
-                            # by keyword count (more keywords = stronger signal, lower bar)
-                            kw_count = (entities or {}).get('_keyword_count', 1)
-                            if kw_count >= 3:
-                                relaxed_threshold = max(intent_threshold * 0.4, 0.20)
-                            elif kw_count >= 2:
-                                relaxed_threshold = max(intent_threshold * 0.6, 0.30)
-                            else:
-                                relaxed_threshold = max(intent_threshold * 0.7, 0.40)
-                            if best_score >= relaxed_threshold:
-                                self.logger.info(f"Keyword->semantic relaxed match: {best_intent} (score={best_score:.2f} >= relaxed {relaxed_threshold:.2f})")
-                                self._last_match_info = {"layer": "keyword_semantic_relaxed", "skill_name": skill_name, "intent_id": best_intent, "confidence": best_score, "handler_name": best_handler.__name__}
-                                response = best_handler(entities=entities or {}) if 'entities' in inspect.signature(best_handler).parameters else best_handler()
-                                return response
-                            else:
-                                # Keyword matched but semantic rejected — try global semantic before LLM
-                                self.logger.info(f"Keyword->semantic rejected for {skill_name} (best={best_score:.2f} < relaxed={relaxed_threshold:.2f}), trying global semantic fallback")
-                                normalized_fallback = user_text.strip().lower().translate(str.maketrans('', '', '?.!,;:'))
-                                semantic_match = self._match_semantic_intents(normalized_fallback)
-                                if semantic_match:
-                                    fb_skill_name, fb_intent_id, fb_entities = semantic_match
-                                    fb_skill = self.skills.get(fb_skill_name)
-                                    if fb_skill and hasattr(fb_skill, 'semantic_intents') and fb_intent_id in fb_skill.semantic_intents:
-                                        fb_entities['original_text'] = user_text  # Use original, not normalized (preserves periods in filenames)
-                                        fb_skill._last_user_text = user_text  # Required by _extract_query() in web_navigation etc.
-                                        handler = fb_skill.semantic_intents[fb_intent_id]['handler']
-                                        self._last_match_info = {
-                                            "layer": "keyword_global_semantic",
-                                            "skill_name": fb_skill_name,
-                                            "intent_id": fb_intent_id,
-                                            "confidence": fb_entities.get("similarity"),
-                                            "handler_name": handler.__name__
-                                        }
-                                        sig = inspect.signature(handler)
-                                        response = handler(entities=fb_entities) if 'entities' in sig.parameters else handler()
-                                        if isinstance(response, str):
-                                            response = resolve_honorific(response)
-                                        return response
-                                self.logger.info(f"Global semantic fallback also failed, falling through to LLM")
-                                self._last_match_info = {
-                                    "layer": "keyword_rejected",
-                                    "skill_name": skill_name,
-                                    "intent_id": "rejected",
-                                    "confidence": best_score,
-                                    "handler_name": "→ LLM fallback"
-                                }
-                                return None
-
-            # Execute skill handler for pattern-based matches
+            # 6. Pattern-based skill handler
             response = skill.handle_intent(pattern, entities)
             if isinstance(response, str):
                 response = resolve_honorific(response)
             return response
 
         except Exception as e:
-            self.logger.error(f"Error executing skill {skill_name}: {e}")
+            self.logger.error("Error executing skill %s: %s", skill_name, e)
             import traceback
             traceback.print_exc()
             return "I'm sorry, I encountered an error processing that request."

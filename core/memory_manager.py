@@ -59,6 +59,14 @@ class MemoryManager:
     # Pattern-based extraction
     # ------------------------------------------------------------------
 
+    # Negation window: if any of these appear within N tokens before a positive
+    # preference verb, the match is stored with low confidence.
+    _NEGATION_WORDS = frozenset({
+        "not", "don't", "doesn't", "didn't", "won't", "wouldn't",
+        "can't", "cannot", "never", "no", "nor", "neither",
+    })
+    _NEGATION_WINDOW = 4  # tokens to look back
+
     EXPLICIT_PATTERNS = [
         # Preferences (positive)
         (re.compile(r"\b(?:i|I) (?:really )?(?:prefer|like|love|enjoy|always use|always go with)\s+(.+)", re.IGNORECASE), "preference"),
@@ -80,6 +88,13 @@ class MemoryManager:
         # Habits
         (re.compile(r"\b(?:i|I) (?:usually|typically|normally|always)\s+(.+?)(?:\s+(?:every|each|in the|at)\s+.+)?$", re.IGNORECASE), "habit"),
     ]
+
+    @classmethod
+    def _has_negation_window(cls, text: str, match_start: int) -> bool:
+        """Check if a negation word appears within N tokens before match_start."""
+        prefix = text[:match_start].lower().split()
+        window = prefix[-cls._NEGATION_WINDOW:]
+        return bool(cls._NEGATION_WORDS & set(window))
 
     def __init__(self, config, conversation, embedding_model=None):
         self.config = config
@@ -800,13 +815,24 @@ class MemoryManager:
                 # Clean up trailing punctuation from fact content
                 fact_content = fact_content.rstrip(".,!?;:")
 
+                # Negation windowing: if a negation word appears near a positive
+                # preference verb, reduce confidence (may be contextual negation
+                # like "I don't think I like X")
+                confidence = 0.90
+                if category == "preference" and self._has_negation_window(content, match.start()):
+                    confidence = 0.50
+                    self.logger.debug(
+                        "Negation detected near preference match: %s",
+                        fact_content,
+                    )
+
                 fact = {
                     "user_id": user_id,
                     "category": category,
                     "subject": subject,
                     "content": fact_content,
                     "source": "explicit",
-                    "confidence": 0.90,
+                    "confidence": confidence,
                     "source_messages": json.dumps([timestamp]),
                 }
 
