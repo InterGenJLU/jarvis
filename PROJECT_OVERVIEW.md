@@ -1,7 +1,7 @@
 # JARVIS - Personal AI Assistant
 
-**Version:** 2.10.0 (Production Ready)
-**Last Updated:** February 26, 2026
+**Version:** 4.0.0 (Production Ready)
+**Last Updated:** March 4, 2026
 **Status:** ✅ Stable, Feature-Rich, Voice-Controlled
 
 ---
@@ -28,9 +28,9 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - ✅ **Natural Conversation** - Semantic understanding
 - ✅ **Production Ready** - Stable, tested, reliable
 
-**Hardware:** Runs on consumer-grade PC (Ryzen 9 5900X, AMD RX 7900 XT)  
-**OS:** Ubuntu 24.04 LTS  
-**Latency:** 300-600ms for skill queries, 2-4s for LLM fallback (streaming)
+**Hardware:** Runs on consumer-grade PC (Ryzen 9 5900X, AMD RX 7900 XT compute + RX 7600 display)
+**OS:** Ubuntu 24.04 LTS
+**Latency:** 300-600ms for skill queries, 2-4s for LLM tool calling (streaming)
 
 ---
 
@@ -43,7 +43,10 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Conversational Flow Engine** - Persona module (24 response pools, ~90 templates), ConversationState (turn tracking), ConversationRouter (shared priority chain)
 - **Text-to-Speech** - Kokoro 82M (primary, CPU, fable+george blend) + Piper ONNX fallback
 - **LLM Intelligence** - Qwen3.5-35B-A3B (Q3_K_M, MoE, 3B active params) via llama.cpp + Claude API fallback with quality gating
-- **LLM-Centric Tool Calling (Phases 1-2)** - Skills migrated to native Qwen3.5 tool calling. 7 tools (6 domain + web_search). Semantic pruning selects tools; LLM decides. Time/date handled by TimeInfoSkill (instant response). 100% accuracy across 1,200+ trials
+- **LLM-Centric Tool Calling (Phases 1-2)** - Skills migrated to native Qwen3.5 tool calling. 8 tools (7 domain + web_search). Semantic pruning selects tools; LLM decides. Time/date handled by TimeInfoSkill (instant response). 100% accuracy across 1,200+ trials
+- **Interaction Artifact Cache** - 5-phase hot/warm/cold tier system for caching interaction results, structured readback ("say that again"), delivery modes (brief/detailed/bullet/full), cross-session retrieval
+- **Self-Managing Memory** - Per-turn fact extraction (MemGPT pattern), recall_memory tool for semantic search, CMA 6/6 (consolidation & abstraction + associative linking)
+- **MCP Bridge** - Bidirectional Model Context Protocol: outbound server exposing 7 native tools + inbound client consuming external MCP servers as native tools
 - **Web Research** - Qwen3.5 native tool calling + DuckDuckGo + trafilatura, multi-source synthesis
 - **Event-Driven Pipeline** - Coordinator with STT/TTS workers, streaming LLM, contextual ack cache (10 tagged phrases)
 - **Gapless TTS Streaming** - StreamingAudioPipeline with single persistent aplay, background Kokoro generation
@@ -56,7 +59,7 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - **Three Frontends** - Voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
 - **Web UI** - aiohttp WebSocket server, streaming LLM, markdown rendering, session sidebar, health HUD, file handling
 
-### Skills (12 Active)
+### Skills (11 Active — conversation disabled, handled natively by LLM)
 
 #### 🌤️ Weather
 - Current conditions, forecasts, rain probability
@@ -108,8 +111,8 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - *"Jarvis, volume up"*
 - *"Jarvis, switch to workspace 2"*
 
-#### 💬 Conversation
-- Greetings, small talk, acknowledgments, butler personality
+#### 💬 Conversation (DISABLED — LLM handles natively)
+- Greetings, small talk, acknowledgments — handled directly by Qwen3.5
 - *"Jarvis, how are you?"*
 
 #### 🤝 Social Introductions
@@ -120,16 +123,19 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 - *"Jarvis, forget Arya"*
 
 ### Additional Systems
-- **Conversational Memory** - SQLite fact store + FAISS semantic search, recall, batch LLM extraction, proactive surfacing, forget/transparency
-- **Context Window** - Topic-segmented working memory, relevance-scored assembly, cross-session persistence
-- **User Profiles** - Speaker identification (resemblyzer d-vectors), dynamic honorifics, voice enrollment
-- **Google Calendar** - OAuth, event CRUD, incremental sync, background polling
+- **Conversational Memory** - SQLite fact store + FAISS semantic search, recall, batch LLM extraction, proactive surfacing, forget/transparency, self-managing per-turn extraction (MemGPT pattern)
+- **CMA (Consolidation, Mapping, Abstraction)** - 6/6 phases: episode-to-semantic knowledge promotion + associative linking (graph edges between related artifacts)
+- **Interaction Artifact Cache** - 5-phase hot/warm/cold tier system, structured readback, delivery modes, cross-session retrieval
+- **Context Window** - Topic-segmented working memory, relevance-scored assembly, cross-session persistence, background Qwen summarization
+- **MCP Bridge** - Bidirectional: outbound server (7 tools) + inbound client (external servers as native tools)
+- **User Profiles** - Speaker identification (resemblyzer d-vectors), dynamic honorifics, voice enrollment, multi-user DB (created_by, origin_endpoint)
+- **Google Calendar** - OAuth, event CRUD, incremental sync, background polling, multi-notification composite keys
 - **Cross-Session Memory** - Last 32 messages loaded from persistent history
 - **Health Check** - 5-layer system diagnostic (ANSI terminal report + voice summary)
 - **Hardware Failure Handling** - Startup retry, device monitoring, degraded mode, graceful recovery
 - **GNOME Desktop Bridge** - Custom GNOME Shell extension (D-Bus), Wayland-native window management, wmctrl fallback
 - **GitHub Publishing** - Automated redaction pipeline, PII verification, non-interactive `--auto` publish
-- **Automated Test Suite** - 270 tests (112 unit + 130 routing + 28 LLM) across 9 phases
+- **Automated Test Suite** - 270+ tests (112 unit + 130 routing + 28 LLM) across 9 phases
 
 ---
 
@@ -164,16 +170,24 @@ JARVIS (Just A Rather Very Intelligent System) is a fully offline, voice-control
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│  CONVERSATION ROUTER - Priority Chain                   │
-│  Layer 1: Confirmation interception                     │
-│  Layer 2: Dismissal / conversation close                │
-│  Layer 2.6: Social introductions (multi-turn)           │
-│  Layer 3: Memory / context / news pull-up               │
-│  Pre-P4: Task planner (compound request detection)      │
-│  Layer 4: Exact match (time, date)                      │
-│  Layer 5: Keyword + semantic verify                     │
-│  Layer 6: Pure semantic matching                        │
-│  Layer 7: LLM fallback (Qwen3.5-35B-A3B)               │
+│  CONVERSATION ROUTER - 16-Layer Priority Chain          │
+│  P0:      Wake-word-only utterance filter               │
+│  P1:      Rundown acceptance/deferral                   │
+│  P1.5:    Delivery mode commands                        │
+│  P2:      Reminder acknowledgment                       │
+│  P2.5:    Memory forget confirmation                    │
+│  P2.6:    Social introductions (multi-turn)             │
+│  P2.7:    Dismissal detection                           │
+│  P2.8:    Bare acknowledgment filter                    │
+│  P3:      Memory operations (forget/recall/transparency)│
+│  P3.1:    Readback / "say that again"                   │
+│  P3.5:    Research follow-up                            │
+│  P3.7:    News article pull-up                          │
+│  Pre-P4:  Task planner (compound detection)             │
+│  P4-LLM:  ★ TOOL CALLING — 8 tools (PRIMARY PATH)      │
+│  P4:      Skill routing (stateful skills)               │
+│  P5:      News continuation                             │
+│  Fallback: LLM streaming (Qwen3.5 → Claude API)        │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -408,6 +422,50 @@ User: Hears response
 - ✅ **Test harness** — `scripts/test_tool_calling.py`: 60 queries, 7-category taxonomy, `--sweep` for sampling matrix
 - ✅ **266/266 existing tests pass** — Zero regressions from migration
 
+### Phase 21: LLM-Centric Tool Calling — Phase 2 + Tool-Connector (Feb 27) 🚀
+- ✅ **Phase 2 complete** — weather, reminders, conversation (disabled), developer_tools, news migrated to tools
+- ✅ **7 tools total** (6 domain + web_search), 1,200+ trials, 99.6% accuracy overall
+- ✅ **Tool-connector plugin system** — one-file tool definitions in `core/tools/`, auto-discovery registry
+- ✅ **5-6 tool cliff DEBUNKED** — tested up to 8 tools, zero XML fallback
+- ✅ **Time injection** — all 5 LLM prompt injection points, correct time-of-day greetings
+
+### Phase 22: Dual GPU + 32K Context (Feb 28) 🚀
+- ✅ **RX 7600 display offload** — GNOME compositor on RX 7600, RX 7900 XT dedicated compute
+- ✅ **ctx-size 7168→32768** — 4.6x context expansion, SSM hybrid verified 9/9 at 25K tokens, peak VRAM 95.6%
+- ✅ **Context enrichment** — user profile + memory injection into LLM prompts
+- ✅ **Doc gen fix** — structured output formatting
+
+### Phase 23: Unified Awareness + Calendar Fixes (Mar 1) 🚀
+- ✅ **Unified awareness layer** — capability manifest + system state injected into LLM context
+- ✅ **Phase 4 routing evaluation RESOLVED** — hybrid architecture retained, skills and tools coexist by design
+- ✅ **Calendar multi-notification support** — composite keys, per-offset dedup
+- ✅ **2 bug fixes** — calendar notification loop, volume slider
+
+### Phase 24: Multi-User + Memory Dashboard (Mar 2) 🚀
+- ✅ **Active user selection (#63)** — console `--user` flag + web UI `<select>` + WebSocket `set_user`
+- ✅ **Multi-user DB migration** — `created_by`, `origin_endpoint` columns, 780 rows corrected
+- ✅ **Memory dashboard** — web page with facts/interactions explorer
+- ✅ **Formal address system** — secondary user honorifics ("ma'am" / "Ms. Guest")
+- ✅ **Readback flow** — structured readback for skill responses
+- ✅ **Rundown bug fixes** — event time dedup, weekly re-offer, missed events
+- ✅ **Reminder staleness guard** — auto-cancel reminders >24h overdue, 5 additional bug fixes
+
+### Phase 25: Artifact Cache + Readback + Delivery Modes (Mar 3) 🚀
+- ✅ **Interaction artifact cache** — 5 phases: hot/warm/cold tiers, cross-session retrieval via embeddings
+- ✅ **Structured readback** — "say that again" replays cached artifact
+- ✅ **Delivery modes** — brief/detailed/bullet/full output styles
+- ✅ **Tool artifact wiring** — all 7 tools centralized in pipeline.py + interaction_cache.py
+- ✅ **Kokoro G2P overrides** — pronunciation corrections for proper nouns
+
+### Phase 26: CMA 6/6 + Self-Managing Memory (Mar 3) 🚀
+- ✅ **CMA 6/6** — Consolidation & Abstraction (episode-to-semantic promotion) + Associative Linking (graph edges)
+- ✅ **Self-managing memory** — per-turn extraction + recall_memory tool (MemGPT pattern)
+- ✅ **recall_memory** — 8th LLM tool, semantic memory search
+
+### Phase 27: MCP Bridge (Mar 3) 🚀
+- ✅ **MCP Bridge Phase 1** — outbound MCP server exposing 7 native tools to external clients
+- ✅ **MCP Bridge Phase 2** — inbound MCP client consuming external servers as native tools
+
 ---
 
 ## 🎨 Design Philosophy
@@ -441,34 +499,36 @@ Optimized for consumer hardware. No expensive GPUs required (though AMD GPU supp
 ## 🗺️ Roadmap
 
 ### Recently Completed
+- MCP Bridge — bidirectional, outbound server + inbound client (Mar 3)
+- Self-managing memory + CMA 6/6 + recall_memory tool (Mar 3)
+- Interaction artifact cache — 5 phases, readback, delivery modes (Mar 3)
+- Multi-user DB + active user selection + memory dashboard (Mar 2)
+- Unified awareness layer + calendar fixes (Mar 1)
+- Dual GPU display offload + ctx-size 32768 (Feb 28)
+- LLM-centric tool calling — Phases 1-2 + tool-connector (Feb 26-27)
 - Social introductions + People Manager (Feb 25)
 - Self-awareness + task planner — 4 phases (Feb 24-25)
-- Qwen3.5-35B-A3B model upgrade — MoE, Q3_K_M, 48-63 tok/s (Feb 24)
-- LLM Metrics Dashboard — 5 phases (Feb 23)
-- Document Generation — PPTX/DOCX/PDF (Feb 22)
-- Whisper v2 fine-tuning — 198 phrases, 94%+ accuracy (Feb 21)
-- Conversational Flow Refactor — 4 phases (Feb 21)
-- Web Chat UI — 5 phases (Feb 20)
-- App launcher + desktop control — 16 intents, GNOME Shell extension (Feb 19)
-- Web research — Qwen tool calling + DuckDuckGo (Feb 18)
+- Qwen3.5-35B-A3B model upgrade — MoE, Q3_K_M (Feb 24)
 
-### Up Next
-- [ ] Inject user facts into web research
-- [ ] "Onscreen please" — retroactive visual display
-- [ ] Document refinement follow-ups
-- [ ] AI image generation (FLUX.1-schnell)
-- [ ] Vision/OCR skill (Phase 1 Tesseract)
+### Up Next (Owner-Directed Sequence)
+- [ ] Profile-aware skill routing (#12) — skills ignore current_user
+- [ ] Mobile iOS app (#60) — plan exists (6 phases)
+- [ ] CalDAV calendar (secondary user) — blocked on credentials
+- [ ] Dual-model STT (#46) — secondary user voice
+- [ ] "Onscreen please" (#11) — retroactive visual display
+- [ ] IMAP email via MCP
 
 ### Medium Term
-- [ ] Audio recording skill
-- [ ] LLM-centric architecture migration
-- [ ] Email skill (Gmail)
+- [ ] Vision Phase 3 — mmproj activation, image input wiring
+- [ ] LLM news classification (#17)
+- [ ] Reminder snooze in P2 chain (#44)
+- [ ] Vision/OCR skill (Phase 1 Tesseract)
 
 ### Long Term
+- [ ] Concurrent multi-user support (#61)
+- [ ] Mobile iOS app deployment
 - [ ] Threat hunting / malware analysis framework
-- [ ] Video / face recognition
 - [ ] Home automation
-- [ ] Mobile access
 - [ ] Emotional context awareness
 
 ---
@@ -592,7 +652,7 @@ Include:
 - Speech recognition: 94%+ (fine-tuned Whisper v2, 198 phrases, Southern accent)
 - Intent matching: 95%+ (semantic embeddings)
 - Routing tests: 38/38 pass (`scripts/test_router.py`)
-- Edge case testing: 100% (236/236 across 106 unit + 130 routing tests + 28 LLM tests)
+- Edge case testing: 100% (270+ across 112 unit + 130 routing + 28 LLM tests)
 
 ### Latency
 - Wake word detection: <100ms
@@ -605,7 +665,7 @@ Include:
 ### Resource Usage
 - RAM: ~4GB (with all models loaded)
 - CPU: 10-30% during processing
-- GPU: RX 7900 XT via ROCm (STT + LLM, 19.5/20.5 GB VRAM used)
+- GPU: RX 7900 XT via ROCm (STT + LLM, ~19.1/20.0 GB VRAM peak) + RX 7600 (display)
 - Disk: ~25GB (models + code)
 
 ---
@@ -646,14 +706,19 @@ Include:
 - ✅ Web research via local LLM tool calling (no cloud required)
 - ✅ Conversational memory with semantic recall across sessions
 - ✅ Speaker identification and dynamic user profiles
-- ✅ 12 modular skills with semantic intent matching (including 16-intent desktop control + social introductions)
+- ✅ 11 modular skills + 8 LLM tools with semantic intent matching (16-intent desktop control + social introductions)
+- ✅ 16-layer priority chain with LLM tool calling as primary path (P4-LLM)
+- ✅ Interaction artifact cache with structured readback and delivery modes
+- ✅ Self-managing memory (MemGPT pattern) + CMA 6/6 (consolidation & associative linking)
+- ✅ Bidirectional MCP bridge (outbound server + inbound client)
 - ✅ Self-awareness layer with capability manifest + system state for LLM context
 - ✅ Task planner with compound detection, LLM planning, per-step evaluation, pause/resume
 - ✅ Conversational flow engine with persona, state tracking, and shared router
 - ✅ Three frontends: voice, console, web UI (all sharing one router)
 - ✅ Web Chat UI with streaming, markdown, session sidebar, and health HUD
 - ✅ Ambient wake word filter (multi-signal, blocks false triggers)
-- ✅ 38 router tests + 270 edge case tests (100%) including 28 live LLM validation tests
+- ✅ 38 router tests + 270+ edge case tests (100%) including 28 live LLM validation tests
+- ✅ Dual GPU setup — RX 7900 XT compute + RX 7600 display, ctx-size 32768
 - ✅ Hardware failure graceful degradation
 - ✅ Sub-600ms skill responses (300-600ms)
 - ✅ Open source on GitHub with automated PII redaction

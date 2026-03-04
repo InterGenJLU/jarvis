@@ -1,8 +1,8 @@
 # JARVIS Development Vision — LLM-Centric Architecture
 
 **Created:** February 18, 2026
-**Updated:** February 27, 2026
-**Context:** Qwen3.5-35B-A3B in production with 7 LLM tools (Phases 1-2 COMPLETE, get_time removed), tool-connector plugin system live
+**Updated:** March 4, 2026
+**Context:** Qwen3.5-35B-A3B in production with 8 LLM tools (Phases 1-2 COMPLETE, Phase 4 RESOLVED, recall_memory added Mar 3), tool-connector plugin system + MCP bridge live
 
 ---
 
@@ -14,10 +14,10 @@ With Qwen3.5's native tool calling proven at 100% accuracy across 1,200+ trials,
 
 **Migration progress (Feb 26-27):**
 - **Phase 1 COMPLETE** — time, system_info, filesystem as tools. 100% accuracy (600/600 trials). Commit `06dd741`
-- **Phase 2 COMPLETE** — weather, reminders, conversation (disabled — LLM handles natively), developer_tools, news. 7 tools total (6 domain + web_search; get_time removed — time/date handled by TimeInfoSkill). 100% accuracy on domain categories; 99.6% overall (523/525, 2 stochastic conversation borderlines). Commits: `1be0cb1` → `49eca5c` → `aa2f524` → `a6ae616` → `578e3c9`
+- **Phase 2 COMPLETE** — weather, reminders, conversation (disabled — LLM handles natively), developer_tools, news. 8 tools total (6 domain + web_search; get_time removed — time/date handled by TimeInfoSkill). 100% accuracy on domain categories; 99.6% overall (523/525, 2 stochastic conversation borderlines). Commits: `1be0cb1` → `49eca5c` → `aa2f524` → `a6ae616` → `578e3c9`
 - **Tool-connector plugin system** — one-file tool definitions, auto-discovery registry, dependency injection. Adding a new tool = create one file in `core/tools/`. Commit `ba80e5a`
-- **5-6 tool cliff DEBUNKED** — tested with up to 8 tools, zero XML fallback, 1,200+ trials. Tool description quality + semantic domain separation matter more than raw count. Now at 7 tools after get_time removal
-- **Vision unblocked** — mmproj-F16.gguf (~900MB) available, llama.cpp support merged. Waiting for RX 7600 display offload (arrives Feb 28)
+- **5-6 tool cliff DEBUNKED** — tested with up to 8 tools, zero XML fallback, 1,200+ trials. Tool description quality + semantic domain separation matter more than raw count. Now at 8 tools (recall_memory added Mar 3)
+- **Vision unblocked** — mmproj-F16.gguf (~900MB) available, llama.cpp support merged. RX 7600 display offload active since Feb 28
 
 ---
 
@@ -37,37 +37,36 @@ The tool-connector plugin system (`core/tool_registry.py` + `core/tools/*.py`) m
 
 ## Routing Architecture — Current State
 
-### Production Architecture (after Phase 2 migration)
+### Production Architecture (16-layer priority chain)
 ```
+P0:       Wake-word-only utterance filter (empty after strip)
 P1:       Rundown acceptance/deferral
+P1.5:     Delivery mode commands (brief/detailed/bullet/full)
 P2:       Reminder acknowledgment
 P2.5:     Memory forget confirmation
 P2.6:     Intro state machine (multi-turn social introductions)
 P2.7:     Dismissal detection (in conversation)
 P2.8:     Bare acknowledgment filter (in conversation)
 P3:       Memory operations (forget, recall, transparency)
+P3.1:     Readback / "say that again" (artifact cache replay)
 P3.5:     Research follow-up (in conversation)
 P3.7:     News article pull-up
 Pre-P4:   Multi-step task planning (compound detection)
 Pre-P4b:  Self-hardware queries ("you/your" + hw keyword → direct LLM answer)
 Pre-P4c:  Pending skill confirmations
-P4-LLM:   ★ TOOL CALLING — semantic pruning → LLM with 7 tools (PRIMARY PATH)
+P4-LLM:   ★ TOOL CALLING — semantic pruning → LLM with 8 tools (PRIMARY PATH)
 P4:       Skill routing — stateful skills (app_launcher, file_editor, social_intros)
 P5:       News continuation
 Fallback:  LLM streaming with tools (Qwen3.5 → quality gate → Claude API)
 ```
 
-**P4-LLM is now the primary routing path** for most queries. The semantic pruner (threshold 0.40, hard cap 4 domain tools) selects relevant tools, then Qwen3.5 decides which to call via `stream_with_tools()`. 7 tools: get_system_info, find_files, get_weather, manage_reminders, developer_tools, get_news, web_search (always included). Time/date queries are handled by the TimeInfoSkill (instant response via semantic matching, no LLM needed).
+**P4-LLM is now the primary routing path** for most queries. The semantic pruner (threshold 0.40, hard cap 4 domain tools) selects relevant tools, then Qwen3.5 decides which to call via `stream_with_tools()`. 8 tools: get_system_info, find_files, get_weather, manage_reminders, developer_tools, get_news, recall_memory, web_search (always included). Time/date queries are handled by the TimeInfoSkill (instant response via semantic matching, no LLM needed).
 
 P4 skill routing handles 3 stateful skills that require deterministic routing: app_launcher (desktop verbs), file_editor (nested LLM doc gen + confirmation), social_introductions (multi-turn state machine). A skill guard in the pruner ensures these still route correctly.
 
-### Future Target Architecture (Phase 4)
-```
-Layer 1: Stateful fast-paths (reminders, memory, intros — deterministic state machines)
-Layer 2: LLM agent with tools (everything else)
-```
+### Architecture Decision (Phase 4 — RESOLVED Mar 1)
 
-Phase 4 will evaluate whether the remaining stateful priorities (P1-P3.7) can be simplified or whether the LLM can handle them directly. The semantic matcher and keyword routing may become fully unnecessary once all skills are migrated.
+Phase 4 evaluated whether the priority chain could be simplified. **Decision: hybrid architecture retained.** The stateful fast-paths (P0-P3.7) are essential deterministic state machines that should NOT hit the LLM. Skills and tools coexist by design — the LLM handles most queries via P4-LLM, while stateful skills (app_launcher, file_editor, social_introductions) route through P4 skill matching.
 
 ---
 
@@ -101,7 +100,7 @@ Phase 4 will evaluate whether the remaining stateful priorities (P1-P3.7) can be
 - **Commit:** `ba80e5a`
 
 **Key findings from Phase 2:**
-- 5-6 tool cliff is DEBUNKED — tested with up to 8 tools, 1,200+ trials, zero XML fallback (now 7 tools after get_time removal)
+- 5-6 tool cliff is DEBUNKED — tested with up to 8 tools, 1,200+ trials, zero XML fallback. Now at 8 tools (7 domain + web_search, recall_memory added Mar 3)
 - Tool description quality + semantic domain separation matter more than raw count
 - Tool-calling latency is LLM-bound (~2.5s total: 1s tool decision + 1.5s response generation), not pipeline-bound
 - Conversation history in tool-calling messages causes over-triggering — keep messages array clean (system + user only)
@@ -191,9 +190,9 @@ Vision is NOT a future dependency — it's available now. Qwen3.5's early-fusion
 
 ---
 
-## Dual-GPU Strategy — RX 7600 (Ordered)
+## Dual-GPU Strategy — RX 7600 (Active)
 
-Adding a second GPU changes the VRAM calculus for this entire migration. An RX 7600 (8GB, RDNA 3, officially ROCm-supported) was ordered and arrives Feb 28, 2026. This section analyzes three potential use cases, from lowest to highest risk.
+Adding a second GPU changed the VRAM calculus for this entire migration. The RX 7600 (8GB, RDNA 3, officially ROCm-supported) was installed Feb 28, 2026. Display offload is active — RX 7900 XT is now a dedicated compute GPU.
 
 ### Current VRAM Budget (Dual GPU — RX 7600 display + RX 7900 XT compute)
 
@@ -225,20 +224,17 @@ Adding a second GPU changes the VRAM calculus for this entire migration. An RX 7
 
 **Hardware compatibility:** X570 Pro4 motherboard has a second PCIe x16 slot (x4 electrical). 850W PSU confirmed adequate for dual GPU (~435W peak realistic draw).
 
-### Use Case A: Display Offload (HIGH VALUE, LOW RISK) — NEXT
+### Use Case A: Display Offload (HIGH VALUE, LOW RISK) — DONE
 
-Move the GNOME compositor to the RX 7600. The RX 7900 XT becomes a dedicated compute GPU.
+GNOME compositor runs on the RX 7600. The RX 7900 XT is a dedicated compute GPU.
 
-**What it gives you:**
-- Frees ~500MB-1GB of VRAM on the primary GPU (compositor overhead eliminated)
-- Eliminates ENOMEM crash risk entirely — compositor can never starve the LLM
-- Total usable VRAM for inference grows from ~19.0 GB to ~19.5-20.0 GB
-- Enough headroom to load mmproj (~900MB) for vision without exceeding budget
-- **Done (session 107):** ctx-size increased from 7168 → 32768 (4.6x). SSM hybrid architecture means KV cache ≈ 0 at typical workloads
+**Results:**
+- ~500MB-1GB VRAM freed on primary GPU (compositor overhead eliminated)
+- ENOMEM crash risk eliminated — compositor can never starve the LLM
+- ctx-size increased from 7168 → 32768 (4.6x). SSM hybrid architecture means KV cache ≈ 0 at typical workloads
+- Stress tested: 9/9 pass at 25K tokens filled, peak VRAM 95.6%, junction temp 87°C
 
-**Implementation:** Connect monitor to RX 7600 output. GNOME/Mutter renders on the display-connected GPU. ROCm is NOT required for this — standard Mesa/AMDGPU kernel driver suffices.
-
-**Risk:** Near-zero. Display offload is a standard multi-GPU configuration. Both GPUs are RDNA 3 — no mixed-architecture driver concerns.
+**Implementation:** Monitor connected to RX 7600 output. GNOME/Mutter renders on display-connected GPU. ROCm NOT required — standard Mesa/AMDGPU kernel driver.
 
 ### Use Case B: Dedicated Image Generation (MEDIUM VALUE, LOW RISK)
 
@@ -286,11 +282,10 @@ Split Qwen3.5 transformer layers across both GPUs to fit a larger quantization (
 
 | Scenario | Primary GPU (RX 7900 XT) | Secondary GPU (RX 7600) | Status |
 |----------|--------------------------|-------------------------|--------|
-| Current (single GPU) | 19.5 / 20.0 GB (~1.8 GB free) | N/A | Stable but tight |
-| + display offload | ~19.0 / 20.0 GB (~2.3-2.8 GB free) | Compositor only | Comfortable |
-| + display offload + mmproj (vision) | ~19.9 / 20.0 GB (~1.4-1.9 GB free) | Compositor | Workable |
-| + display offload + SDXL on secondary | ~19.0 / 20.0 GB | ~7 / 8 GB | Both comfortable |
-| + display offload + mmproj + SDXL | ~19.9 / 20.0 GB | ~7 / 8 GB | Tight primary, good secondary |
+| **Display offload (ACTIVE)** | **~19.1 / 20.0 GB (~0.9 GB free at 25K peak)** | **Compositor only** | **Production** |
+| + mmproj (vision) | ~19.9 / 20.0 GB (~0.1 GB free) | Compositor | Tight — needs testing |
+| + SDXL on secondary | ~19.1 / 20.0 GB | ~7 / 8 GB | Both comfortable |
+| + mmproj + SDXL | ~19.9 / 20.0 GB | ~7 / 8 GB | Tight primary, good secondary |
 | Model split (Q5_K_M across both) | ~20 / 20.0 GB | ~8 / 8 GB | Same-arch — worth testing |
 
 ---
@@ -349,7 +344,7 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 7. **"ALWAYS call the tool" > "call if you can"** — Qwen answers date questions from system prompt unless explicitly told "NEVER answer time/date from the prompt"
 8. **Tool description quality is the differentiator** — well-scoped descriptions prevent cross-tool confusion. "Only use when user explicitly asks about..." eliminates casual misrouting
 9. **Semantic pruner threshold 0.40 is the sweet spot** — sweep across 56 queries at 7 thresholds. 0.35 had cliff breaches, 0.45+ introduced false negatives
-10. **5-6 tool cliff is model-dependent, not universal** — Qwen3.5 Instruct handled 8 tools at 100% (now 7 after get_time removal). The cliff documented for Qwen3-Coder doesn't apply
+10. **5-6 tool cliff is model-dependent, not universal** — Qwen3.5 Instruct handled 8 tools at 100% (now 8: 7 domain + web_search). The cliff documented for Qwen3-Coder doesn't apply
 11. **Tool-calling latency is irreducibly LLM-bound** — ~2.5s total (1s tool decision + 1.5s response generation), all in C++ llama.cpp on GPU. Pipeline refactoring won't help
 12. **Skill guard prevents routing regressions** — pruner must check ALL skills, not just tool-backed ones. If a stateful skill scores higher semantically, defer to skill routing
 
@@ -359,7 +354,7 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 
 ### Completed
 - **Phase 1** (Feb 26): time, system_info, filesystem — 100% accuracy (600/600 trials)
-- **Phase 2** (Feb 26-27): weather, reminders, conversation, developer_tools, news — 7 tools (get_time later removed), 99.6% overall
+- **Phase 2** (Feb 26-27): weather, reminders, conversation, developer_tools, news — 8 tools (get_time later removed), 99.6% overall
 - **Tool-connector** (Feb 27): plugin system for one-file tool definitions
 
 ### Next Steps
@@ -368,11 +363,11 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 3. **Phase 3 (vision)** — activate mmproj (~900MB), add vision tools (screen reading, web nav, image understanding). mmproj smoke-tested at server level, needs console/web input wiring
 4. ~~**Phase 4 (routing evaluation)**~~ — **RESOLVED Mar 1.** Hybrid architecture retained — skills and tools coexist by design
 
-### VRAM Budget With Display Offload
-- Tool schema budget: 7 tools consume ~700-1,400 tokens. Dynamic pruning keeps active set to 4-5 tools per query
-- mmproj: +900MB VRAM when loaded. With display offload, fits within budget (~19.9/20.0 GB)
-- Larger context: could increase ctx-size from 7168 → 8192+ (more room for tool schemas + conversation)
+### VRAM Budget With Display Offload (Active)
+- Tool schema budget: 8 tools consume ~800-1,600 tokens. Dynamic pruning keeps active set to 4-5 tools per query
+- ctx-size 32768 active since Feb 28 — SSM hybrid means KV cache ≈ 0 at typical workloads
+- mmproj: +900MB VRAM when loaded. Tight at current utilization (~19.1/20.0 GB peak) — needs stress testing
 
 ---
 
-*Originally discussed February 18, 2026. Updated March 1, 2026 — Phases 1-2 COMPLETE, Phase 4 RESOLVED (hybrid retained), tool-connector plugin system live, dual GPU active.*
+*Originally discussed February 18, 2026. Updated March 4, 2026 — Phases 1-2 COMPLETE, Phase 4 RESOLVED (hybrid retained), 8 tools (recall_memory added Mar 3), tool-connector plugin system + MCP bridge live, dual GPU active, ctx-size 32768.*

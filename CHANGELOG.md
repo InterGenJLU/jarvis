@@ -1,5 +1,100 @@
 # JARVIS Changelog
 
+## [2026-03-03] - MCP Bridge + Self-Managing Memory + CMA 6/6
+
+### Major Features
+- **MCP Bridge Phase 1** — Outbound MCP server exposing 7 native JARVIS tools to external clients (Claude Code, other MCP consumers). FastMCP-based, auto-discovered from tool registry. Commit `0f1f138`
+- **MCP Bridge Phase 2** — Inbound MCP client consuming external MCP servers as native tools. Subprocess-based stdio transport, auto-discovery, virtual skill registration for semantic pruning. Config-driven (`config.yaml` `mcp_servers:` section). Commit `b9bcca8`
+- **Self-Managing Memory (MemGPT pattern)** — Per-turn fact extraction via LLM + `recall_memory` tool registered in tool registry (ALWAYS_INCLUDED). Qwen decides when to search memory proactively. Replaces old regex-only extraction. Commit `7f51917`
+- **Conversational Memory Architecture (CMA) — All 6 requirements complete:**
+  - Consolidation & Abstraction — episode-to-semantic knowledge promotion. Commit `e75d28e`
+  - Associative Linking — graph edges between related artifacts with bidirectional traversal. Commit `68b808c`
+  - Retrieval-Driven Mutation — time decay + recall frequency tracking, freshness-weighted retrieval. Commit `f95f456`
+  - Importance Scoring — selective retention with weighted engagement tracking (36-test suite). Commits `b6f6fa2`, `070631b`
+- **Kokoro G2P Pronunciation Overrides** — Config-driven lexicon injection for custom word pronunciations (technical terms, names). Commit `ef9154d`
+- **Tool Artifact Wiring** — All 7 tools write typed artifacts to interaction cache. Centralized in `pipeline.py` + `interaction_cache.py`. Commit `45fa266`
+- **Delivery Modes** — Extensible read/display/print/browse with two-turn clarification for ambiguous requests. Commit `2905e52`
+- **Structured Readback Phase 1** — LLM-parsed section navigation with voice control (next/previous/section N). Commit `b7156b0`
+- **Interaction Artifact Cache (5 phases):**
+  - Phase 1: Unified typed cache with readback integration. Commit `8a4f9f9`
+  - Phase 2: Reference resolution via cache-backed P3.5 handler (ordinal, type, recency, generic follow-up). Commit `7effb5f`
+  - Phase 3: Sub-item navigation with on-demand decomposition. Commit `3dcd375`
+  - Phase 3.5: Hierarchical decomposer with drill-in/out navigation. Commit `2de0458`
+  - Phase 4: Memory promotion with session-end summarization. Commit `d92ac5c`
+  - Phase 5: Cross-session retrieval with full rehydration. Commit `f455ec4`
+
+### Other Changes
+- Readback affirm prefix matching, section filter precision improvements. Commit `f32d003`
+
+---
+
+## [2026-03-02] - Memory Dashboard + Active User Selection + Multi-User DB
+
+### Major Features
+- **Memory & System Health Dashboard** — New `/memory` web page with 6 summary cards, per-user chart splits, health sparklines, fact CRUD editor, and card health grid. Commits `ae74d21`, `5d1ce7d`, `8237630`
+- **Active User Selection (#63)** — Web UI header dropdown + console `--user` flag for setting current user per session. Affects reminders, calendar routing, memory injection. User switch reloads sessions + chat. Commits `d5472f0`, `d0c9914`, `6842281`
+- **Formal Address System** — Dynamic honorific system for secondary users. Web TTS for LLM responses. Commit `d7229c1`
+- **Readback Flow + Prompt Hardening** — Structured readback infrastructure, TTS normalizer improvements, web search routing fixes. Commit `8ff387e`
+- **Multi-User DB Migration Wiring** — `add_reminder()` now accepts `created_by` + `origin_endpoint`. All 3 frontends wire `current_user_fn`. 780 Google Calendar rows corrected. Commit `2abea85`
+
+### Bug Fixes
+- Fix fact persistence, sparklines, and subject extraction in memory page. Commit `d5ae7f4`
+- Add conversation logging + thread user_id through `persist_interaction()`. Commit `220a44d`
+- Fix enrollment sample rate for ALSA/PipeWire compatibility. Commit `929d8b8`
+- Add rule against repeating prior response content. Commit `346f152`
+- Fix three rundown bugs: wrong event times (used `reminder_time` instead of `event_time`), same-event duplicates, missed events with far-ahead reminder offsets. Commit `bb57ed1`
+
+---
+
+## [2026-03-01] - Unified Awareness Layer + Calendar Safety Guards
+
+### Major Features
+- **Unified Awareness Layer** — Interaction persistence, proactive memory surfacing, user fact injection into LLM context. Commit `bd3a569`
+- **Google Calendar Multi-Notification Support** — Events with multiple reminder offsets (e.g., 1 week + 4 days) now create separate JARVIS reminders per offset. Composite key `base_event_id:offset` for dedup. 250 events → 530 reminders. Commit `881fd31`
+
+### Bug Fixes
+- Past-reminder-time guard prevents already-due reminders from firing on calendar sync. Commit `53cd0fd`
+- Staleness guard on reminder firing loop — reminders >24h overdue auto-cancelled instead of fired. Commit `2575a75`
+
+---
+
+## [2026-02-28] - Dual GPU + 32K Context + Document Generation Fix
+
+### Major Features
+- **RX 7600 Display Offload** — GNOME compositor moved to RX 7600, RX 7900 XT is dedicated compute GPU. SSD model migration. get_time tool removed (TimeInfoSkill handles time/date). Commit `4632f25`
+- **Context Size 7168→32768 (4.6x)** — SSM hybrid architecture means KV cache ≈ 0 at typical workloads. Stress tested 9/9 pass at 25K tokens, peak VRAM 95.6%. Commit `d9aa23b`
+- **32K Context Enrichment (6 phases)** — Leverages expanded context with richer LLM prompts, targeting 70% utilization. Commit `ffd2d24`
+
+### Test Infrastructure
+- Expanded test suites: +15 tests for 32K context features. Commit `508e153`
+
+### Bug Fixes
+- Fix document generation pipeline: web research integration, streaming output, TTS delivery. Commit `56ed461`
+
+---
+
+## [2026-02-27] - LLM-Centric Tool Calling Phase 2 + Tool-Connector Plugin System
+
+### Major Features
+- **Phase 2 Complete — 7 LLM Tools** — Weather, reminders (5 actions), conversation (disabled — LLM handles natively), developer_tools (13 actions), news. 100% accuracy on domain categories; 99.6% overall (523/525, 1,200+ trials). 5-6 tool cliff DEBUNKED
+  - Phase 2.1a: Weather as tool (270/270). Commit `1be0cb1`
+  - Phase 2.1b: Reminders as tool (add/list/cancel/ack/snooze). Commit `49eca5c`
+  - Phase 2.2: Conversation skill disabled — LLM handles natively. Commit `aa2f524`
+  - Phase 2.3: Developer tools (13 actions). Commit `a6ae616`
+  - Phase 2.4: News headlines. Commit `578e3c9`
+- **Tool-Connector Plugin System** — One-file tool definitions in `core/tools/`, auto-discovery registry (`core/tool_registry.py`), dependency injection. `tool_executor.py` reduced from 1,057 to 27 lines. Adding a new tool = create one file. Commit `ba80e5a`
+- **Multi-Tool Chaining** — Web UI support for compound tool queries. Commit `97bfc5b`
+- **Time-Aware Greetings** — Current time injected into LLM system prompts at all 5 injection points. Commit `5a37159`
+
+### Bug Fixes
+- Fix conversation follow-up context, beep, and TTS pronunciation. Commit `4d66102`
+
+### Documentation
+- Full documentation update for Phase 2 completion and tool-connector system. Commit `c629eb0`
+- README synced with public repo: demo section, PEXELS key, doc gen example. Commit `ceda0e4`
+
+---
+
 ## [2026-02-26] - LLM-Centric Tool Calling Phase 1
 
 ### Major Feature

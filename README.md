@@ -9,13 +9,16 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 ## Highlights
 
 - **0.1-0.2s speech recognition** — Fine-tuned Whisper v2 (198 phrases, 94%+ accuracy) on AMD GPU via CTranslate2 + ROCm
-- **LLM-centric tool calling** — Qwen3.5-35B-A3B (MoE, 3B active params) decides which of 7 tools to call per query, 100% accuracy across 1,200+ trials. Adding a new tool = create one Python file
+- **LLM-centric tool calling** — Qwen3.5-35B-A3B (MoE, 3B active params) decides which of 8 tools to call per query, 100% accuracy across 1,200+ trials. Adding a new tool = create one Python file
 - **Natural blended voice** — Kokoro TTS with custom voice blend (fable + george), gapless streaming playback
 - **Conversational flow engine** — Persona module (24 response pools, ~90 templates), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
 - **Self-awareness + task planning** — capability manifest, system state injection, compound request detection, LLM plan generation, sequential execution with per-step evaluation, pause/resume/cancel
 - **Social introductions** — "Meet my niece Arya" triggers butler-style multi-turn introduction flow with name confirmation, pronunciation checks, and persistent people database
 - **Always-on listening** — Porcupine wake word + WebRTC VAD + ambient wake word filter + multi-turn conversation windows
-- **11 skills + 7 LLM tools** — weather, system info, filesystem, developer tools, reminders, news, web search (LLM tools) + file editor, desktop control, social introductions (skill-only). Time/date handled by TimeInfoSkill (instant response via semantic matching)
+- **11 skills + 8 LLM tools** — weather, system info, filesystem, developer tools, reminders, news, web search, memory recall (LLM tools) + file editor, desktop control, social introductions (skill-only). Time/date handled by TimeInfoSkill (instant response via semantic matching)
+- **Interaction artifact cache** — 5-phase typed cache with reference resolution, sub-item navigation, hierarchical decomposition, memory promotion, and cross-session retrieval
+- **MCP Bridge** — bidirectional Model Context Protocol support: expose JARVIS tools to external clients (Claude Code) and consume external MCP servers as native tools
+- **Self-managing memory** — MemGPT-pattern per-turn fact extraction + LLM-driven memory recall. 6-requirement CMA: importance scoring, retrieval-driven mutation, associative linking, consolidation & abstraction
 - **Three frontends** — voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
 - **Privacy by design** — everything runs locally; Claude API is a last-resort quality fallback only
 
@@ -95,25 +98,26 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
                                      │ text
                   ┌──────────────────▼───────────────────┐
                   │      ConversationRouter               │
-                  │  Shared priority chain:               │
-                  │  1. Confirmations / dismissals        │
-                  │  2. Memory / introductions            │
-                  │  3. Task planner (compound detect)    │
-                  │  ★ P4-LLM: Tool calling (7 tools)    │
+                  │  Shared priority chain (16 layers):   │
+                  │  P1-P2.8: Confirmations/dismissals   │
+                  │  P3: Memory / introductions           │
+                  │  P3.5: Artifact reference resolution  │
+                  │  Pre-P4: Task planner, self-hw, conf  │
+                  │  ★ P4-LLM: Tool calling (8 tools)    │
                   │     semantic pruner → Qwen3.5 decides │
-                  │  4. Skill routing (stateful skills)    │
-                  │  5. LLM fallback (Qwen → Claude)     │
+                  │  P4: Skill routing (stateful skills)  │
+                  │  P5+: LLM fallback (Qwen → Claude)   │
                   └──────┬──────────────┬────────────────┘
                          │              │
               ┌──────────▼───┐   ┌──────▼──────────┐
               │  Skill       │   │  LLM Router     │
               │  Handler     │   │  Qwen → Claude  │
-              │  (3 skills)  │   │  + 7 LLM Tools  │
+              │  (3 skills)  │   │  + 8 LLM Tools  │
               └──────────┬───┘   └──────┬──────────┘
                          │              │
                   ┌──────▼──────────────▼────────┐
                   │   Persona + Contextual Acks   │
-                  │   (10 pools, style-tagged)     │
+                  │   (24 pools, style-tagged)     │
                   └──────────────┬────────────────┘
                                 │
                   ┌──────────────▼────────────────┐
@@ -139,8 +143,8 @@ JARVIS has two extension mechanisms. The distinction matters:
 | **What they are** | Stateless query→response functions the LLM calls | Stateful modules with multi-turn flows, confirmations, or desktop control |
 | **Who decides** | Qwen3.5 selects which tool to call based on the user's query | Priority chain routes to the skill before the LLM sees the query |
 | **How to add one** | Create one `.py` file in `core/tools/` — auto-discovered | Create a skill directory with `skill.py` + `metadata.yaml` |
-| **Examples** | get_weather, find_files, developer_tools | app_launcher (desktop verbs), file_editor (doc gen + confirmation), social_introductions (multi-turn) |
-| **Count** | 7 tools (6 domain + web_search) | 3 skill-only + 7 with companion tools |
+| **Examples** | get_weather, find_files, developer_tools, recall_memory | app_launcher (desktop verbs), file_editor (doc gen + confirmation), social_introductions (multi-turn) |
+| **Count** | 8 tools (6 domain + web_search + recall_memory) | 3 skill-only + 7 with companion tools |
 
 Most functionality lives in **tools** now. Skills remain for things that need deterministic state machines, desktop integration, or nested LLM pipelines — things where "let the LLM decide" isn't reliable enough.
 
@@ -148,10 +152,14 @@ Most functionality lives in **tools** now. Skills remain for things that need de
 
 | Subsystem | What It Does |
 |-----------|-------------|
-| **Conversation Router** | Shared priority chain for voice/console/web — one router, three frontends |
+| **Conversation Router** | 16-layer shared priority chain for voice/console/web — one router, three frontends |
 | **Tool Registry** | Auto-discovers `core/tools/*.py`, builds schemas, injects dependencies — adding a tool = one file |
+| **Interaction Artifact Cache** | 5-phase typed cache: reference resolution, sub-item navigation, hierarchical decomposition, memory promotion, cross-session retrieval |
+| **MCP Bridge** | Bidirectional MCP: outbound server exposes JARVIS tools to external clients; inbound client consumes external MCP servers as native tools |
+| **Self-Managing Memory** | MemGPT-pattern per-turn LLM extraction + `recall_memory` tool. 6-requirement CMA: importance scoring, retrieval-driven mutation, associative linking, consolidation & abstraction |
 | **Self-Awareness** | Capability manifest + system state injected into LLM context — JARVIS knows what it can do |
 | **Task Planner** | Compound request detection (22 signals), LLM plan generation, sequential execution with per-step LLM evaluation, pause/resume/cancel/skip voice interrupts, predictive timing, error-aware planning |
+| **Structured Readback** | LLM-parsed section navigation with voice control (next/previous/section N) + delivery modes (read/display/print/browse) |
 | **Persona Engine** | 24 response pools (~90 templates), system prompts, honorific injection, style-tagged ack selection |
 | **People Manager** | SQLite-backed contacts database with relationship tracking, TTS pronunciation overrides, LLM context injection for known people |
 | **Conversation State** | Turn counting, intent history, question detection, research context tracking |
@@ -180,6 +188,7 @@ These are stateless query→response functions. The LLM receives the user's quer
 | **manage_reminders** | "Remind me at 3pm" / "What's on my schedule?" | 5 actions: add, list, cancel, acknowledge, snooze. Priority tones, nag behavior |
 | **get_news** | "Read me the headlines" / "Any cybersecurity news?" | 16 RSS feeds, urgency classification, semantic dedup, category/priority filtering |
 | **web_search** | "Who won the Super Bowl?" / "How far is NYC from London?" | DuckDuckGo + trafilatura → multi-source synthesis (always available) |
+| **recall_memory** | "What's my favorite color?" / proactive context | Searches stored facts (text + FAISS semantic), returns relevant memories (always available) |
 
 ### Skills (Deterministic routing — state machines and desktop control)
 
@@ -196,11 +205,13 @@ These handle things that need multi-turn flows, confirmations, or direct desktop
 ### Additional Systems
 
 - **GNOME Desktop Bridge** — Custom GNOME Shell extension providing Wayland-native window management, with wmctrl fallback for XWayland
-- **Google Calendar** — Two-way sync with dedicated JARVIS calendar, OAuth, incremental sync, background polling
+- **Google Calendar** — Two-way sync with dedicated JARVIS calendar, OAuth, incremental sync, background polling, multi-notification support
 - **Daily & Weekly Rundowns** — Interactive state machine: offered → re-asked → deferred → retry → pending mention
 - **Health Check** — 5-layer system diagnostic (GPU, LLM, STT, TTS, skills) with ANSI terminal report + voice summary
-- **User Profiles** — Speaker identification via resemblyzer d-vectors, dynamic honorifics, voice enrollment
+- **Memory & System Health Dashboard** — Web page at `/memory` with summary cards, per-user charts, health sparklines, fact CRUD editor
+- **User Profiles** — Speaker identification via resemblyzer d-vectors, dynamic honorifics, voice enrollment, active user selection (web + console)
 - **People Manager** — SQLite contacts database, relationship tracking, TTS pronunciation overrides, LLM context injection
+- **MCP Bridge** — Outbound server (expose tools to Claude Code) + inbound client (consume external MCP servers as native tools)
 
 ---
 
@@ -565,7 +576,8 @@ jarvis/
 │   │   ├── developer_tools.py    # Git, codebase search, shell (13 actions)
 │   │   ├── manage_reminders.py   # Reminder CRUD (5 actions)
 │   │   ├── get_news.py           # News headlines (read/count)
-│   │   └── web_search.py         # Web research (always included, frontend-dispatched)
+│   │   ├── web_search.py         # Web research (always included, frontend-dispatched)
+│   │   └── recall_memory.py     # Memory recall (always included, LLM-driven)
 │   ├── web_research.py           # DuckDuckGo + trafilatura web fetching
 │   ├── pipeline.py               # Event-driven Coordinator + STT/TTS workers
 │   ├── persona.py                # Response pools, system prompts, honorific injection
@@ -590,6 +602,9 @@ jarvis/
 │   ├── user_profile.py           # User profiles + speaker ID
 │   ├── speaker_id.py             # Resemblyzer d-vector enrollment
 │   ├── honorific.py              # Dynamic honorific resolution
+│   ├── interaction_cache.py      # Artifact cache (hot/warm/cold tiers, readback)
+│   ├── mcp_client.py             # Inbound MCP bridge (external server consumer)
+│   ├── mcp_server.py             # Outbound MCP server (expose tools to clients)
 │   ├── config.py                 # Configuration loader
 │   ├── logger.py                 # Logging setup
 │   └── base_skill.py             # Skill base class
@@ -620,11 +635,13 @@ jarvis/
 ├── assets/                       # Audio cues (generate your own .wav files)
 ├── scripts/                      # Utility scripts
 │   ├── install_desktop_extension.sh  # Install GNOME Shell extension
-│   ├── test_edge_cases.py            # Automated test suite (266 tests: 115 unit + 151 routing)
-│   ├── test_tool_calling.py          # Tool-calling harness (175 queries, 10-category taxonomy, --sweep mode)
+│   ├── test_edge_cases.py            # Automated test suite (273+ tests: unit + routing)
+│   ├── test_tool_calling.py          # Tool-calling harness (175+ queries, 10-category taxonomy, --sweep mode)
 │   ├── unit_tests.sh                 # Test runner wrapper
 │   ├── test_router.py                # Router test suite (38 tests)
 │   ├── test_desktop_manager.py       # Test desktop manager module
+│   ├── test_tool_artifacts.py        # Tool artifact wiring tests (175 tests)
+│   ├── test_manage_memory.py         # Memory management tests (39 tests)
 │   ├── enroll_speaker.py             # Speaker voice enrollment
 │   ├── init_profiles.py              # User profile initialization
 │   └── ...
@@ -872,6 +889,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 3.0.0
+**Version:** 4.0.0
 **Status:** Production — actively developed
-**Last Updated:** February 27, 2026
+**Last Updated:** March 4, 2026
