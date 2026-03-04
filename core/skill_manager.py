@@ -378,16 +378,14 @@ class SkillManager:
             if not keywords:
                 continue
 
-            # Count keyword matches. Generic keywords contribute 0 score
-            # (don't block other evidence, but don't count as positive signal).
-            # Alias keywords get +1 bonus to win ties.
+            # Count keyword matches. Alias keywords get +1 bonus to win ties.
+            # Generic keywords score normally — the single-word guard above
+            # handles the "bare generic" case.
             score = 0
             matched_kws = []
             for keyword in keywords:
                 if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text):
-                    if keyword.lower() in _generic_keywords:
-                        matched_kws.append(f"{keyword}(generic)")
-                    elif keyword.lower() in _keyword_aliases:
+                    if keyword.lower() in _keyword_aliases:
                         score += 2
                         matched_kws.append(f"{keyword}(+2)")
                     else:
