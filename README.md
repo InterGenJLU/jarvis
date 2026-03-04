@@ -74,38 +74,38 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 
 ```
                           ┌─────────────────────┐
-                          │   Porcupine Wake     │
-                          │   Word Detection     │
+                          │   Porcupine Wake    │
+                          │   Word Detection    │
                           └──────────┬──────────┘
                                      │ "Jarvis"
                           ┌──────────▼──────────┐
-                          │   Ambient Filter     │
-                          │   (position, copula, │
-                          │    threshold, length) │
+                          │  Ambient Filter     │
+                          │  (position, copula, │
+                          │  threshold, length) │
                           └──────────┬──────────┘
                                      │ verified wake word
                           ┌──────────▼──────────┐
-                          │   WebRTC VAD +       │
-                          │   Continuous Listener │
-                          │   (speech detection) │
+                          │  WebRTC VAD +       │
+                          │ Continuous Listener │
+                          │  (speech detection) │
                           └──────────┬──────────┘
                                      │ audio frames
                           ┌──────────▼──────────┐
-                          │   Whisper STT v2     │
-                          │   (CTranslate2/GPU)  │
-                          │   198 phrases, 94%+  │
+                          │  Whisper STT v2     │
+                          │  (CTranslate2/GPU)  │
+                          │  198 phrases, 94%+  │
                           └──────────┬──────────┘
                                      │ text
                   ┌──────────────────▼───────────────────┐
-                  │      ConversationRouter               │
-                  │  Shared priority chain (16 layers):   │
+                  │      ConversationRouter              │
+                  │  Shared priority chain (16 layers):  │
                   │  P1-P2.8: Confirmations/dismissals   │
-                  │  P3: Memory / introductions           │
-                  │  P3.5: Artifact reference resolution  │
-                  │  Pre-P4: Task planner, self-hw, conf  │
+                  │  P3: Memory / introductions          │
+                  │  P3.5: Artifact reference resolution │
+                  │  Pre-P4: Task planner, self-hw, conf │
                   │  ★ P4-LLM: Tool calling (8 tools)    │
-                  │     semantic pruner → Qwen3.5 decides │
-                  │  P4: Skill routing (stateful skills)  │
+                  │    semantic pruner → Qwen3.5 decides │
+                  │  P4: Skill routing (stateful skills) │
                   │  P5+: LLM fallback (Qwen → Claude)   │
                   └──────┬──────────────┬────────────────┘
                          │              │
@@ -115,9 +115,9 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
               │  (3 skills)  │   │  + 8 LLM Tools  │
               └──────────┬───┘   └──────┬──────────┘
                          │              │
-                  ┌──────▼──────────────▼────────┐
+                  ┌──────▼──────────────▼────────-┐
                   │   Persona + Contextual Acks   │
-                  │   (24 pools, style-tagged)     │
+                  │   (24 pools, style-tagged)    │
                   └──────────────┬────────────────┘
                                 │
                   ┌──────────────▼────────────────┐
