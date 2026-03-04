@@ -155,8 +155,9 @@ def _reminders_add(mgr, args: dict) -> str:
 
 def _reminders_list(mgr) -> str:
     """List upcoming and fired reminders."""
-    pending = mgr.list_reminders("pending", limit=10)
-    fired = mgr.list_reminders("fired", limit=5)
+    created_by = _current_user_fn() if _current_user_fn else 'christopher'
+    pending = mgr.list_reminders("pending", limit=10, created_by=created_by)
+    fired = mgr.list_reminders("fired", limit=5, created_by=created_by)
     all_reminders = fired + pending
 
     if not all_reminders:
@@ -183,7 +184,8 @@ def _reminders_cancel(mgr, args: dict) -> str:
     if not fragment:
         return "Error: cancel_fragment is required (e.g. 'dentist')."
 
-    cancelled = mgr.cancel_by_title(fragment)
+    created_by = _current_user_fn() if _current_user_fn else 'christopher'
+    cancelled = mgr.cancel_by_title(fragment, created_by=created_by)
     if cancelled:
         return f"Cancelled: '{cancelled['title']}'."
     return f"No reminder found matching '{fragment}'."

@@ -199,6 +199,7 @@ class SocialIntroductionsSkill(BaseSkill):
         self._pending_person_id = self.manager.add_person(
             name=self._pending_name,
             relationship=self._pending_rel,
+            user_id=self.current_user,
         )
 
         # Speak the name back and ask if pronunciation is correct
@@ -280,7 +281,7 @@ class SocialIntroductionsSkill(BaseSkill):
             )
 
         # Check if person already exists
-        existing = self.manager.get_person_by_name(name)
+        existing = self.manager.get_person_by_name(name, user_id=self.current_user)
         if existing:
             existing_rel = existing.get("relationship") or "contact"
             return self.respond(
@@ -305,7 +306,7 @@ class SocialIntroductionsSkill(BaseSkill):
                 f"Who are you asking about, {self.honorific}?",
             )
 
-        person = self.manager.get_person_with_facts(name)
+        person = self.manager.get_person_with_facts(name, user_id=self.current_user)
         if not person:
             return self.respond(persona.intro_unknown(name))
 

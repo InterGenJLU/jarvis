@@ -52,6 +52,12 @@ SYSTEM_PROMPT_RULE = (
     "NOT for: specific topic research, historical news, opinion pieces."
 )
 
+DEPENDENCIES = {
+    "current_user_fn": "_current_user_fn",
+}
+
+_current_user_fn = None
+
 
 def handler(args: dict) -> str:
     """Read or count RSS news headlines from the local feed monitor."""
@@ -62,6 +68,7 @@ def handler(args: dict) -> str:
     action = args.get("action", "read")
     category = args.get("category")
     max_priority = args.get("max_priority")
+    user_id = _current_user_fn() if _current_user_fn else 'christopher'
     if action == "count":
-        return mgr.get_headline_count_response()
-    return mgr.read_headlines(category=category, limit=5, max_priority=max_priority)
+        return mgr.get_headline_count_response(user_id=user_id)
+    return mgr.read_headlines(category=category, limit=5, max_priority=max_priority, user_id=user_id)

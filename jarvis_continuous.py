@@ -232,11 +232,24 @@ class JarvisContinuous:
                 except Exception as e:
                     self.logger.warning(f"Google Calendar init failed: {e}")
 
+            # CalDAV (iCloud) calendar integration
+            self.caldav_manager = None
+            if config.get("caldav.enabled", False):
+                try:
+                    from core.caldav_calendar import get_caldav_manager
+                    self.caldav_manager = get_caldav_manager(config)
+                    self.reminder_manager.set_caldav_manager(self.caldav_manager)
+                    self.caldav_manager.start()
+                    self.logger.info("CalDAV calendar sync started")
+                except Exception as e:
+                    self.logger.warning(f"CalDAV init failed: {e}")
+
             self.reminder_manager.start()
             self.logger.info("Reminder system started")
         else:
             self.reminder_manager = None
             self.calendar_manager = None
+            self.caldav_manager = None
 
         # Initialize news system
         if config.get("news.enabled", False):
@@ -874,6 +887,8 @@ class JarvisContinuous:
                     self.news_manager.stop()
                 if self.calendar_manager:
                     self.calendar_manager.stop()
+                if hasattr(self, 'caldav_manager') and self.caldav_manager:
+                    self.caldav_manager.stop()
                 if self.reminder_manager:
                     self.reminder_manager.stop()
                 self.listener.stop_device_monitor()
@@ -896,6 +911,8 @@ class JarvisContinuous:
                     self.news_manager.stop()
                 if self.calendar_manager:
                     self.calendar_manager.stop()
+                if hasattr(self, 'caldav_manager') and self.caldav_manager:
+                    self.caldav_manager.stop()
                 if self.reminder_manager:
                     self.reminder_manager.stop()
                 self.listener.stop_device_monitor()

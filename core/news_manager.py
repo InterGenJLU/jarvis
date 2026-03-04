@@ -155,6 +155,13 @@ class NewsManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_news_announced ON news_headlines(announced)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_news_category ON news_headlines(category)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_news_detected ON news_headlines(detected_at)")
+
+                # Migration: add user_id column for per-user feeds
+                columns = {r[1] for r in conn.execute("PRAGMA table_info(news_headlines)").fetchall()}
+                if "user_id" not in columns:
+                    conn.execute("ALTER TABLE news_headlines ADD COLUMN user_id TEXT DEFAULT NULL")
+                    self.logger.info("Migrated: added user_id column to news_headlines")
+
                 conn.commit()
             finally:
                 conn.close()
@@ -167,7 +174,7 @@ class NewsManager:
 
     def _store_headline(self, source: str, category: str, headline: str,
                         summary: str, url: str, published: Optional[str],
-                        priority: int) -> Optional[int]:
+                        priority: int, user_id: str = None) -> Optional[int]:
         """Store a headline and return its row ID, or None if duplicate."""
         with self._db_lock:
             conn = self._conn()
@@ -182,38 +189,50 @@ class NewsManager:
 
                 cur = conn.execute("""
                     INSERT INTO news_headlines
-                        (source, category, headline, summary, url, published_date, priority)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (source, category, headline, summary, url, published, priority))
+                        (source, category, headline, summary, url, published_date, priority, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (source, category, headline, summary, url, published, priority, user_id))
                 conn.commit()
                 return cur.lastrowid
             finally:
                 conn.close()
 
-    def get_unread_count(self) -> Dict[str, int]:
+    def get_unread_count(self, user_id: str = None) -> Dict[str, int]:
         """Get count of unread headlines per category (last 24h)."""
         cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
         conn = self._conn()
         try:
-            rows = conn.execute("""
+            user_clause = " AND (user_id IS NULL OR user_id = ?)" if user_id else ""
+            params = [cutoff]
+            if user_id:
+                params.append(user_id)
+            rows = conn.execute(f"""
                 SELECT category, COUNT(*) as cnt
                 FROM news_headlines
-                WHERE read = 0 AND detected_at >= ?
+                WHERE read = 0 AND detected_at >= ?{user_clause}
                 GROUP BY category
-            """, (cutoff,)).fetchall()
+            """, params).fetchall()
             return {row["category"]: row["cnt"] for row in rows}
         finally:
             conn.close()
 
     def get_unread_by_category(self, category: str = None, limit: int = 5,
-                               max_priority: int = None) -> List[Dict]:
-        """Get unread headlines, optionally filtered by category and/or priority."""
+                               max_priority: int = None,
+                               user_id: str = None) -> List[Dict]:
+        """Get unread headlines, optionally filtered by category and/or priority.
+
+        When user_id is set, returns shared headlines (user_id IS NULL) plus
+        headlines tagged for that specific user.
+        """
         cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
         conn = self._conn()
         try:
             conditions = ["read = 0", "detected_at >= ?"]
             params = [cutoff]
 
+            if user_id:
+                conditions.append("(user_id IS NULL OR user_id = ?)")
+                params.append(user_id)
             if category:
                 conditions.append("category = ?")
                 params.append(category)
@@ -304,13 +323,15 @@ class NewsManager:
                     url=feed_cfg["url"],
                     source_name=feed_cfg["name"],
                     category=feed_cfg["category"],
+                    user_id=feed_cfg.get("user"),
                 )
                 all_entries.extend(entries)
             except Exception as e:
                 self.logger.warning(f"Failed to fetch {feed_cfg['name']}: {e}")
         return all_entries
 
-    def _fetch_feed(self, url: str, source_name: str, category: str) -> List[Dict]:
+    def _fetch_feed(self, url: str, source_name: str, category: str,
+                    user_id: str = None) -> List[Dict]:
         """Parse a single RSS feed and return normalized entries."""
         try:
             feed = feedparser.parse(url)
@@ -345,6 +366,7 @@ class NewsManager:
                 "summary": summary,
                 "url": url_link,
                 "published_date": published,
+                "user_id": user_id,
             })
 
         return entries
@@ -533,6 +555,7 @@ class NewsManager:
                 url=entry.get("url", ""),
                 published=entry.get("published_date"),
                 priority=priority,
+                user_id=entry.get("user_id"),
             )
 
             if row_id is not None:
@@ -624,9 +647,9 @@ class NewsManager:
     # Rundown Integration
     # ------------------------------------------------------------------
 
-    def get_news_summary_for_rundown(self) -> str:
+    def get_news_summary_for_rundown(self, user_id: str = None) -> str:
         """Get a brief, natural news summary sentence for the daily rundown."""
-        counts = self.get_unread_count()
+        counts = self.get_unread_count(user_id=user_id)
         if not counts:
             return ""
 
@@ -660,12 +683,13 @@ class NewsManager:
     # ------------------------------------------------------------------
 
     def read_headlines(self, category: str = None, limit: int = 5,
-                       max_priority: int = None) -> str:
+                       max_priority: int = None, user_id: str = None) -> str:
         """Read top headlines with natural, varied cadence."""
         import random
 
         headlines = self.get_unread_by_category(
-            category=category, limit=limit, max_priority=max_priority
+            category=category, limit=limit, max_priority=max_priority,
+            user_id=user_id,
         )
 
         # Build label fragments for speech
@@ -828,9 +852,9 @@ class NewsManager:
 
         return text.strip()
 
-    def get_headline_count_response(self) -> str:
+    def get_headline_count_response(self, user_id: str = None) -> str:
         """Generate a spoken count of unread headlines by category."""
-        counts = self.get_unread_count()
+        counts = self.get_unread_count(user_id=user_id)
         if not counts:
             return f"No new headlines at the moment, {get_honorific()}."
 

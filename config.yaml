@@ -177,6 +177,16 @@ google_calendar:
   include_primary_in_rundown: true
   timezone: "America/Your_Timezone"
 
+# CalDAV calendar (iCloud) — secondary user
+caldav:
+  enabled: false  # Enable when app-specific password is ready
+  url: "https://caldav.icloud.com"
+  username: ""    # iCloud Apple ID email
+  password: ""    # App-specific password (NOT iCloud password)
+  calendar_name: null  # null = first available calendar
+  timezone: "America/Your_Timezone"
+  sync_interval_seconds: 300
+
 # News headlines monitoring
 news:
   enabled: true

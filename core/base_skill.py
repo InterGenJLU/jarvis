@@ -57,6 +57,11 @@ class BaseSkill(ABC):
         """Current speaker's honorific (e.g., 'sir', 'mum')."""
         return get_honorific()
 
+    @property
+    def current_user(self) -> str:
+        """Current speaker's user_id (e.g., 'christopher', 'erica')."""
+        return getattr(self.conversation, 'current_user', None) or "primary_user"
+
     @abstractmethod
     def initialize(self) -> bool:
         """

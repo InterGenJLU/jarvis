@@ -178,6 +178,7 @@ class ReminderSkill(BaseSkill):
             title=title,
             reminder_time=reminder_time,
             priority=priority,
+            created_by=self.current_user,
         )
 
         time_desc = self._format_time_natural(reminder_time)
@@ -209,14 +210,15 @@ class ReminderSkill(BaseSkill):
             priority=priority,
             reminder_type="recurring",
             recurrence_rule=rule,
+            created_by=self.current_user,
         )
 
         return self.respond(f"Recurring reminder set, {self.honorific}. I'll remind you to {title} {parsed['description']}.")
 
     def list_reminders(self) -> str:
         """List upcoming reminders."""
-        pending = self.manager.list_reminders("pending", limit=10)
-        fired = self.manager.list_reminders("fired", limit=5)
+        pending = self.manager.list_reminders("pending", limit=10, created_by=self.current_user)
+        fired = self.manager.list_reminders("fired", limit=5, created_by=self.current_user)
         all_reminders = fired + pending  # Show fired (awaiting ack) first
 
         if not all_reminders:
@@ -250,7 +252,7 @@ class ReminderSkill(BaseSkill):
         if not fragment or len(fragment) < 3:
             return self.respond("Which reminder would you like me to cancel?")
 
-        cancelled = self.manager.cancel_by_title(fragment)
+        cancelled = self.manager.cancel_by_title(fragment, created_by=self.current_user)
         if cancelled:
             return self.respond(f"Done, {self.honorific}. I've cancelled the reminder: {cancelled['title']}.")
         else:
@@ -262,7 +264,7 @@ class ReminderSkill(BaseSkill):
             # No reminders awaiting ack — let this fall through to LLM
             return None
 
-        reminder = self.manager.acknowledge_last()
+        reminder = self.manager.acknowledge_last(created_by=self.current_user)
         if reminder:
             responses = [
                 f"Noted, {self.honorific}. '{reminder['title']}' cleared.",

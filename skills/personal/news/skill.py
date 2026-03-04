@@ -174,7 +174,7 @@ class NewsSkill(BaseSkill):
         if category:
             return self._read_for_category(mgr, category, max_priority=max_priority)
 
-        response = mgr.read_headlines(limit=5, max_priority=max_priority)
+        response = mgr.read_headlines(limit=5, max_priority=max_priority, user_id=self.current_user)
 
         # Request follow-up window for "pull that up" / "more headlines"
         self.conversation.request_follow_up = 15.0
@@ -202,7 +202,8 @@ class NewsSkill(BaseSkill):
     def _read_for_category(self, mgr, category: str, max_priority: int = None) -> str:
         """Read headlines for a given category."""
         response = mgr.read_headlines(
-            category=category, limit=5, max_priority=max_priority
+            category=category, limit=5, max_priority=max_priority,
+            user_id=self.current_user,
         )
         self.conversation.request_follow_up = 15.0
         return self.respond(response)
@@ -213,13 +214,13 @@ class NewsSkill(BaseSkill):
         if not mgr:
             return self.respond(f"The news system isn't available at the moment, {self.honorific}.")
 
-        remaining = mgr.get_unread_count()
+        remaining = mgr.get_unread_count(user_id=self.current_user)
         total_remaining = sum(remaining.values())
 
         if total_remaining == 0:
             return self.respond(f"That's all the headlines I have for now, {self.honorific}.")
 
-        response = mgr.read_headlines(limit=5)
+        response = mgr.read_headlines(limit=5, user_id=self.current_user)
         self.conversation.request_follow_up = 15.0
         return self.respond(response)
 
@@ -229,6 +230,6 @@ class NewsSkill(BaseSkill):
         if not mgr:
             return self.respond(f"The news system isn't available at the moment, {self.honorific}.")
 
-        response = mgr.get_headline_count_response()
+        response = mgr.get_headline_count_response(user_id=self.current_user)
         self.conversation.request_follow_up = 15.0
         return self.respond(response)

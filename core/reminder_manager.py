@@ -109,6 +109,8 @@ class ReminderManager:
 
         # Google Calendar integration (set via set_calendar_manager)
         self._calendar_manager = None
+        # CalDAV calendar integration (set via set_caldav_manager)
+        self._caldav_manager = None
 
         self.logger.info("ReminderManager initialized")
 
@@ -274,38 +276,55 @@ class ReminderManager:
             finally:
                 conn.close()
 
-    def list_reminders(self, status: str = "pending", limit: int = 20) -> List[Dict]:
-        """List reminders filtered by status."""
+    def list_reminders(self, status: str = "pending", limit: int = 20,
+                       created_by: str = None) -> List[Dict]:
+        """List reminders filtered by status and optionally by creator."""
         with self._db_lock:
             conn = self._conn()
             try:
-                rows = conn.execute(
-                    "SELECT * FROM reminders WHERE status = ? "
-                    "ORDER BY reminder_time ASC LIMIT ?",
-                    (status, limit)
-                ).fetchall()
+                if created_by:
+                    rows = conn.execute(
+                        "SELECT * FROM reminders WHERE status = ? AND created_by = ? "
+                        "ORDER BY reminder_time ASC LIMIT ?",
+                        (status, created_by, limit)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM reminders WHERE status = ? "
+                        "ORDER BY reminder_time ASC LIMIT ?",
+                        (status, limit)
+                    ).fetchall()
                 return [dict(r) for r in rows]
             finally:
                 conn.close()
 
-    def list_today(self) -> List[Dict]:
+    def list_today(self, created_by: str = None) -> List[Dict]:
         """List all pending/fired reminders for today."""
         today_start = datetime.now().replace(hour=0, minute=0, second=0).strftime("%Y-%m-%d %H:%M:%S")
         today_end = datetime.now().replace(hour=23, minute=59, second=59).strftime("%Y-%m-%d %H:%M:%S")
         with self._db_lock:
             conn = self._conn()
             try:
-                rows = conn.execute(
-                    "SELECT * FROM reminders WHERE status IN ('pending', 'fired') "
-                    "AND reminder_time BETWEEN ? AND ? "
-                    "ORDER BY reminder_time ASC",
-                    (today_start, today_end)
-                ).fetchall()
+                if created_by:
+                    rows = conn.execute(
+                        "SELECT * FROM reminders WHERE status IN ('pending', 'fired') "
+                        "AND reminder_time BETWEEN ? AND ? AND created_by = ? "
+                        "ORDER BY reminder_time ASC",
+                        (today_start, today_end, created_by)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM reminders WHERE status IN ('pending', 'fired') "
+                        "AND reminder_time BETWEEN ? AND ? "
+                        "ORDER BY reminder_time ASC",
+                        (today_start, today_end)
+                    ).fetchall()
                 return [dict(r) for r in rows]
             finally:
                 conn.close()
 
-    def _query_rundown_reminders(self, start_str: str, end_str: str) -> List[Dict]:
+    def _query_rundown_reminders(self, start_str: str, end_str: str,
+                                created_by: str = None) -> List[Dict]:
         """Query reminders for rundown display over a date window.
 
         Calendar-synced reminders (have google_event_id + event_time) are filtered
@@ -316,19 +335,23 @@ class ReminderManager:
         Local reminders (no google_event_id) are filtered by reminder_time as usual.
         Cancelled events are excluded.
         """
+        user_clause = " AND created_by = ?" if created_by else ""
         with self._db_lock:
             conn = self._conn()
             try:
+                args = [start_str, end_str, start_str, end_str]
+                if created_by:
+                    args.extend([created_by, created_by])
                 rows = conn.execute(
                     "SELECT * FROM reminders WHERE ("
                     "  (google_event_id IS NOT NULL AND event_time IS NOT NULL"
-                    "   AND event_time BETWEEN ? AND ? AND status != 'cancelled')"
+                    f"   AND event_time BETWEEN ? AND ? AND status != 'cancelled'{user_clause})"
                     "  OR"
                     "  (google_event_id IS NULL"
                     "   AND reminder_time BETWEEN ? AND ?"
-                    "   AND status IN ('pending', 'fired'))"
+                    f"   AND status IN ('pending', 'fired'){user_clause})"
                     ") ORDER BY reminder_time ASC",
-                    (start_str, end_str, start_str, end_str)
+                    tuple(args)
                 ).fetchall()
                 return [dict(r) for r in rows]
             finally:
@@ -358,15 +381,16 @@ class ReminderManager:
 
         return True
 
-    def cancel_by_title(self, title_fragment: str) -> Optional[Dict]:
+    def cancel_by_title(self, title_fragment: str,
+                        created_by: str = None) -> Optional[Dict]:
         """Cancel the first pending reminder whose title contains the fragment.
 
         Returns the cancelled reminder dict, or None if not found.
         """
         fragment_lower = title_fragment.strip().lower()
-        pending = self.list_reminders("pending", limit=100)
+        pending = self.list_reminders("pending", limit=100, created_by=created_by)
         # Also check fired (unacked) reminders
-        pending.extend(self.list_reminders("fired", limit=100))
+        pending.extend(self.list_reminders("fired", limit=100, created_by=created_by))
 
         for r in pending:
             if fragment_lower in r["title"].lower():
@@ -736,22 +760,26 @@ class ReminderManager:
         self.logger.info(f"Reminder #{reminder_id} acknowledged")
         return True
 
-    def acknowledge_last(self) -> Optional[Dict]:
+    def acknowledge_last(self, created_by: str = None) -> Optional[Dict]:
         """Acknowledge the most recently announced reminder.
 
+        If created_by is set, only acknowledge if the reminder belongs to that user.
         Returns the acknowledged reminder or None.
         """
         # Try the last announced first
         if self._last_announced_id:
             reminder = self.get_reminder(self._last_announced_id)
             if reminder and reminder["status"] == "fired":
+                if created_by and reminder.get("created_by") != created_by:
+                    return None  # Not this user's reminder
                 self.acknowledge_reminder(self._last_announced_id)
                 return reminder
 
         # Fall back to oldest unacked
         pending = self.get_pending_acks()
-        if pending:
-            r = pending[0]
+        for r in pending:
+            if created_by and r.get("created_by") != created_by:
+                continue
             self.acknowledge_reminder(r["id"])
             return r
 
@@ -1002,13 +1030,13 @@ class ReminderManager:
     # Daily Rundown
     # ------------------------------------------------------------------
 
-    def get_daily_rundown(self) -> str:
+    def get_daily_rundown(self, created_by: str = None) -> str:
         """Format today's reminders and calendar events as natural flowing speech."""
         now = datetime.now()
         start_str = now.replace(hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
         end_str = now.replace(hour=23, minute=59, second=59, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
 
-        reminders = self._query_rundown_reminders(start_str, end_str)
+        reminders = self._query_rundown_reminders(start_str, end_str, created_by=created_by)
 
         # Build items list — calendar events deduped by base google_event_id,
         # displayed at event_time (actual event time, not reminder fire time).
@@ -1047,6 +1075,20 @@ class ReminderManager:
             except Exception as e:
                 self.logger.error(f"Failed to fetch calendar events for rundown: {e}")
 
+        if self._caldav_manager:
+            try:
+                caldav_events = self._caldav_manager.get_primary_events_today()
+                for ev in caldav_events:
+                    try:
+                        t = ev["start_time"]
+                        if isinstance(t, str):
+                            t = datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+                        items.append({"time": t, "title": ev["title"]})
+                    except (ValueError, KeyError):
+                        continue
+            except Exception as e:
+                self.logger.error(f"Failed to fetch CalDAV events for rundown: {e}")
+
         # Sort by time and format naturally
         if items:
             items.sort(key=lambda x: x["time"])
@@ -1059,7 +1101,7 @@ class ReminderManager:
             from core.news_manager import get_news_manager
             news_mgr = get_news_manager()
             if news_mgr:
-                news_summary = news_mgr.get_news_summary_for_rundown()
+                news_summary = news_mgr.get_news_summary_for_rundown(user_id=created_by)
                 if news_summary:
                     rundown_text += f" {news_summary}"
         except Exception:
@@ -1428,6 +1470,11 @@ class ReminderManager:
             on_cancel_event=self._on_google_cancel_event,
         )
         self.logger.info("Google Calendar integration active")
+
+    def set_caldav_manager(self, caldav_manager):
+        """Set the CalDAV calendar manager for iCloud sync."""
+        self._caldav_manager = caldav_manager
+        self.logger.info("CalDAV calendar integration active")
 
     def _on_google_new_event(self, title: str, start_time: datetime,
                              priority: int, google_event_id: str,

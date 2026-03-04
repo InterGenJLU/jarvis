@@ -126,6 +126,11 @@ class ConversationRouter:
         self.people_manager = people_manager
         self.awareness = awareness
 
+    @property
+    def _user_id(self) -> str:
+        """Current user ID, defaulting to 'christopher'."""
+        return getattr(self.conversation, 'current_user', None) or "primary_user"
+
     def route(self, command: str, *,
               in_conversation: bool = False,
               doc_buffer=None) -> RouteResult:
@@ -328,7 +333,7 @@ class ConversationRouter:
         if not rm or not rm.is_awaiting_ack():
             return None
         logger.info("Treating response as reminder acknowledgment")
-        rm.acknowledge_last()
+        rm.acknowledge_last(created_by=self._user_id)
         return RouteResult(
             text=persona.pick("reminder_ack"), intent="reminder_ack",
             source="canned", handled=True,
@@ -528,7 +533,7 @@ class ConversationRouter:
         if not mm:
             return None
 
-        user_id = getattr(self.conversation, 'current_user', None) or "primary_user"
+        user_id = self._user_id
 
         if mm.is_forget_request(command):
             text = mm.handle_forget(command, user_id)
@@ -1957,7 +1962,7 @@ class ConversationRouter:
             context_messages = self.context_window.assemble_context(command)
 
         # Unified awareness context assembly
-        user_id = getattr(self.conversation, 'current_user', None) or "primary_user"
+        user_id = self._user_id
         memory_context = None
 
         if self.awareness:
