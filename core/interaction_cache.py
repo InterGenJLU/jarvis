@@ -111,6 +111,7 @@ class InteractionCache:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._db_lock = threading.Lock()
+        self._hot_lock = threading.Lock()  # protects _hot dict mutations/iterations
         self._hot: dict[str, list[Artifact]] = {}  # window_id → artifacts
 
         self.logger = get_logger(__name__, config)
@@ -278,9 +279,10 @@ class InteractionCache:
             artifact.created_at = time.time()
 
         # Hot tier
-        if artifact.window_id not in self._hot:
-            self._hot[artifact.window_id] = []
-        self._hot[artifact.window_id].append(artifact)
+        with self._hot_lock:
+            if artifact.window_id not in self._hot:
+                self._hot[artifact.window_id] = []
+            self._hot[artifact.window_id].append(artifact)
 
         # SQLite (crash safety)
         with self._db_lock:
@@ -312,7 +314,35 @@ class InteractionCache:
         if artifact.window_id and artifact.turn_id is not None:
             self._auto_link_co_occurrence(artifact)
 
+        # Evict lowest-scoring hot artifacts if over capacity
+        self._evict_hot_if_needed()
+
         return artifact.artifact_id
+
+    def _evict_hot_if_needed(self):
+        """Evict lowest effective_score hot artifacts when over _MAX_HOT_ARTIFACTS."""
+        with self._hot_lock:
+            total = sum(len(arts) for arts in self._hot.values())
+            if total <= self._MAX_HOT_ARTIFACTS:
+                return
+
+            # Collect all hot artifacts with effective scores
+            now = time.time()
+            all_hot = []
+            for wid, arts in self._hot.items():
+                for art in arts:
+                    all_hot.append((self.effective_score(art, now), wid, art))
+
+            # Sort by effective score ascending — evict lowest
+            all_hot.sort(key=lambda x: x[0])
+            to_evict = total - self._MAX_HOT_ARTIFACTS
+            for _, wid, art in all_hot[:to_evict]:
+                self._hot[wid].remove(art)
+                if not self._hot[wid]:
+                    del self._hot[wid]
+
+        self.logger.debug("Evicted %d hot artifacts (cap=%d)",
+                          to_evict, self._MAX_HOT_ARTIFACTS)
 
     # ------------------------------------------------------------------
     # Importance scoring + retrieval-driven mutation (CMA)
@@ -322,6 +352,12 @@ class InteractionCache:
     # every N days without access. 7 days balances responsiveness
     # with stability — weekly-unused artifacts fade, daily-used persist.
     HALF_LIFE_DAYS = 7.0
+
+    # Hard cap on importance_score to prevent unbounded parent bubble.
+    _MAX_IMPORTANCE_SCORE = 100.0
+
+    # Maximum hot-tier artifacts across all windows before LRU eviction.
+    _MAX_HOT_ARTIFACTS = 200
 
     # Frequency weight: how much repeated recall compounds.
     # 0.15 * log2(1 + count) gives gentle boost:
@@ -390,16 +426,20 @@ class InteractionCache:
 
         # Update in-memory hot tier
         target_art = None
-        for artifacts in self._hot.values():
-            for art in artifacts:
-                if art.artifact_id == artifact_id:
-                    art.importance_score += weight
-                    art.last_accessed_at = now
-                    art.access_count += 1
-                    target_art = art
+        with self._hot_lock:
+            for artifacts in self._hot.values():
+                for art in artifacts:
+                    if art.artifact_id == artifact_id:
+                        art.importance_score = min(
+                            art.importance_score + weight,
+                            self._MAX_IMPORTANCE_SCORE,
+                        )
+                        art.last_accessed_at = now
+                        art.access_count += 1
+                        target_art = art
+                        break
+                if target_art:
                     break
-            if target_art:
-                break
 
         # Update SQLite
         with self._db_lock:
@@ -407,31 +447,36 @@ class InteractionCache:
             try:
                 conn.execute(
                     "UPDATE artifacts "
-                    "SET importance_score = importance_score + ?, "
+                    "SET importance_score = MIN(importance_score + ?, ?), "
                     "    last_accessed_at = ?, "
                     "    access_count = access_count + 1 "
                     "WHERE artifact_id = ?",
-                    (weight, now, artifact_id),
+                    (weight, self._MAX_IMPORTANCE_SCORE, now, artifact_id),
                 )
                 # Bubble to parent — sub-item engagement reflects on parent
                 if target_art and target_art.parent_id:
                     half = weight * 0.5
                     conn.execute(
                         "UPDATE artifacts "
-                        "SET importance_score = importance_score + ?, "
+                        "SET importance_score = MIN(importance_score + ?, ?), "
                         "    last_accessed_at = ?, "
                         "    access_count = access_count + 1 "
                         "WHERE artifact_id = ?",
-                        (half, now, target_art.parent_id),
+                        (half, self._MAX_IMPORTANCE_SCORE, now,
+                         target_art.parent_id),
                     )
                     # Hot tier parent too
-                    for artifacts in self._hot.values():
-                        for art in artifacts:
-                            if art.artifact_id == target_art.parent_id:
-                                art.importance_score += half
-                                art.last_accessed_at = now
-                                art.access_count += 1
-                                break
+                    with self._hot_lock:
+                        for artifacts in self._hot.values():
+                            for art in artifacts:
+                                if art.artifact_id == target_art.parent_id:
+                                    art.importance_score = min(
+                                        art.importance_score + half,
+                                        self._MAX_IMPORTANCE_SCORE,
+                                    )
+                                    art.last_accessed_at = now
+                                    art.access_count += 1
+                                    break
                 conn.commit()
             except Exception as e:
                 self.logger.warning("record_access failed for %s: %s",
@@ -746,6 +791,8 @@ class InteractionCache:
     # Minimum content size for decomposition (skip short prose)
     _MIN_DECOMPOSE_CHARS = 200
     _MIN_DECOMPOSE_NEWLINES = 3
+    _MAX_DECOMPOSE_DEPTH = 3    # prevent unbounded recursive decomposition
+    _MAX_CHILDREN_PER_ROOT = 200
 
     # Bold-wrapped numbered step (NOT a section header)
     _BOLD_NUMBERED = re.compile(r'^\d+[\.\)]')
@@ -835,16 +882,40 @@ class InteractionCache:
             finally:
                 conn.close()
 
+    def _get_ancestor_depth(self, artifact_id: str) -> int:
+        """Count how many parent_id hops to reach a root (no parent)."""
+        depth = 0
+        current_id = artifact_id
+        visited = set()
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            parent = self.get_by_id(current_id)
+            if not parent or not parent.parent_id:
+                break
+            current_id = parent.parent_id
+            depth += 1
+        return depth
+
     def decompose(self, parent_id: str, window_id: str,
                   llm=None) -> list[Artifact]:
         """Decompose a parent artifact into child sub-item artifacts.
 
         Idempotent — returns existing children if already decomposed.
         Regex-first (numbered steps, bullets, sections), LLM fallback.
+        Respects _MAX_DECOMPOSE_DEPTH to prevent unbounded nesting.
         """
         existing = self.get_children(parent_id, window_id)
         if existing:
             return existing
+
+        # Depth guard
+        depth = self._get_ancestor_depth(parent_id)
+        if depth >= self._MAX_DECOMPOSE_DEPTH:
+            self.logger.info(
+                "decompose: depth %d >= max %d for %s, skipping",
+                depth, self._MAX_DECOMPOSE_DEPTH, parent_id,
+            )
+            return []
 
         parent = self.get_by_id(parent_id)
         if not parent:
@@ -861,6 +932,10 @@ class InteractionCache:
         if not items:
             self.logger.info("decompose: no sub-items found for %s", parent_id)
             return []
+
+        # Cap total children per decomposition
+        if len(items) > self._MAX_CHILDREN_PER_ROOT:
+            items = items[:self._MAX_CHILDREN_PER_ROOT]
 
         children = []
         for idx, (label, text, item_type) in enumerate(items):
@@ -959,7 +1034,8 @@ class InteractionCache:
             return
 
         # Remove from hot dict
-        removed = self._hot.pop(window_id, [])
+        with self._hot_lock:
+            removed = self._hot.pop(window_id, [])
 
         # Update tier in SQLite
         if removed:

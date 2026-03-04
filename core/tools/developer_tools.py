@@ -187,6 +187,8 @@ def _run_cmd(cmd: str, cwd: str = None, timeout: int = 15) -> str:
 # Pending confirmation state for run_command -> confirm_pending flow
 # ---------------------------------------------------------------------------
 
+import threading as _threading
+_pending_lock = _threading.Lock()
 _pending_command = None  # (command_str, expiry_time) or None
 
 
@@ -398,7 +400,8 @@ def _devtools_run_command(args: dict) -> str:
     if tier == 'blocked':
         return f"BLOCKED: {reason}. This command is not allowed."
     if tier == 'confirmation':
-        _pending_command = (command, _time.time() + 30)
+        with _pending_lock:
+            _pending_command = (command, _time.time() + 30)
         return f"CONFIRMATION REQUIRED: `{command}` — {reason}. Shall I proceed?"
     # Tier 1 (allowed) or Tier 2 (safe_write) — execute
     output = _run_cmd(command, cwd='/home/user/jarvis', timeout=30)
@@ -408,13 +411,14 @@ def _devtools_run_command(args: dict) -> str:
 @_register_devtool("confirm_pending")
 def _devtools_confirm_pending(args: dict) -> str:
     global _pending_command
-    if _pending_command is None:
-        return "No pending command to confirm."
-    command, expiry = _pending_command
-    if _time.time() > expiry:
+    with _pending_lock:
+        if _pending_command is None:
+            return "No pending command to confirm."
+        command, expiry = _pending_command
+        if _time.time() > expiry:
+            _pending_command = None
+            return "That confirmation has expired. Please issue the command again."
         _pending_command = None
-        return "That confirmation has expired. Please issue the command again."
-    _pending_command = None
     safety = _get_safety()
     output = _run_cmd(command, cwd='/home/user/jarvis', timeout=30)
     return safety.sanitize_output(output)

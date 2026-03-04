@@ -188,6 +188,9 @@ def build_tool_prompt_rules(active_tool_names: set) -> str:
 # Tool execution
 # ---------------------------------------------------------------------------
 
+_REGISTRY_READY = False  # Set True after inject_dependencies()
+
+
 def execute_tool(tool_name: str, arguments: dict) -> str:
     """Dispatch a tool call to the appropriate handler.
 
@@ -199,6 +202,10 @@ def execute_tool(tool_name: str, arguments: dict) -> str:
         Plain-text result string for the LLM to synthesize.
         On error, returns an error description (not an exception).
     """
+    if not _REGISTRY_READY:
+        logger.warning("execute_tool called before inject_dependencies(): %s",
+                        tool_name)
+        return f"Error: tool registry not initialized yet"
     handler = TOOL_HANDLERS.get(tool_name)
     if not handler:
         logger.warning(f"Unknown tool: {tool_name}")
@@ -227,9 +234,12 @@ def inject_dependencies(deps: dict):
         deps: Mapping of dependency name -> runtime object.
               e.g. {"reminder_manager": <ReminderManager>, "config": <Config>}
     """
+    global _REGISTRY_READY
     for mod in _tool_modules:
         declared = getattr(mod, 'DEPENDENCIES', {})
         for dep_name, var_name in declared.items():
             if dep_name in deps and var_name:
                 setattr(mod, var_name, deps[dep_name])
                 logger.debug(f"Injected {dep_name} into {mod.TOOL_NAME}")
+    _REGISTRY_READY = True
+    logger.info("Tool registry ready — dependencies injected")
