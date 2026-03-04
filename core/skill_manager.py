@@ -788,7 +788,11 @@ class SkillManager:
                     response = resolve_honorific(response)
                 return response
 
-            # 4a + 4b. Keyword-based routing with semantic fallbacks
+            # 4a + 4b. Keyword-based routing with semantic fallbacks.
+            # If the skill has semantic intents, this block is authoritative:
+            # either a semantic handler matches or we return None (→ LLM).
+            # We do NOT fall through to handle_intent because the keyword
+            # pattern (e.g. "open") is not a real intent for handle_intent.
             if hasattr(skill, 'semantic_intents') and skill.semantic_intents:
                 result = self._try_keyword_direct_match(
                     skill, skill_name, user_text, entities,
@@ -799,10 +803,11 @@ class SkillManager:
                 result = self._try_keyword_semantic_fallback(
                     skill, skill_name, user_text, entities,
                 )
-                if result is not None:
-                    return result
+                # Whether matched or not, this block is terminal for
+                # keyword-routed skills with semantic intents.
+                return result
 
-            # 6. Pattern-based skill handler
+            # 6. Pattern-based skill handler (skills without semantic intents)
             response = skill.handle_intent(pattern, entities)
             if isinstance(response, str):
                 response = resolve_honorific(response)

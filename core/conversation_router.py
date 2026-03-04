@@ -1806,6 +1806,7 @@ class ConversationRouter:
         # Score ALL skills (migrated and non-migrated) to find the best match
         best_migrated_score = 0.0
         best_non_migrated_score = 0.0
+        best_non_migrated_name = ""
         web_nav_score = 0.0
         matched_tools = []  # [(score, tool_schema), ...]
 
@@ -1843,26 +1844,52 @@ class ConversationRouter:
                     web_nav_score = skill_best
                 elif skill_best > best_non_migrated_score:
                     best_non_migrated_score = skill_best
+                    best_non_migrated_name = skill_name
+
+        logger.debug(
+            "Tool pruning summary: migrated=%.2f, non_migrated=%.2f (%s), "
+            "web_nav=%.2f, domain_tools=%d",
+            best_migrated_score, best_non_migrated_score,
+            best_non_migrated_name or "none", web_nav_score, len(matched_tools),
+        )
 
         if not matched_tools:
-            # No domain tools matched, but if web_navigation scored well,
-            # route through LLM with web_search instead of letting P4 open
-            # a browser (which makes no sense in web UI, and web_search gives
-            # better in-chat results for informational queries).
+            # No domain tools matched.  If web_navigation scored well we
+            # *may* route to LLM with web_search, but only if no other
+            # non-migrated skill (e.g. app_launcher) scored higher — those
+            # need P4 skill routing, not tool-calling.
             if web_nav_score >= self._TOOL_PRUNE_THRESHOLD:
+                if best_non_migrated_score > web_nav_score:
+                    logger.info(
+                        "Tool pruning: web_nav scored %.2f but %s scored "
+                        "%.2f — deferring to P4 skill routing",
+                        web_nav_score, best_non_migrated_name,
+                        best_non_migrated_score,
+                    )
+                    return None
+                # Web navigation scored highest among non-migrated skills.
+                # Still defer to P4 so the native web_navigation handlers
+                # (YouTube/Amazon/Reddit search, URL open, etc.) can run
+                # instead of the generic web_search tool.
                 logger.info(
-                    f"Tool pruning: no domain tools, but web_navigation scored "
-                    f"{web_nav_score:.2f} — routing to LLM with web_search"
+                    "Tool pruning: web_nav scored %.2f — deferring to P4 "
+                    "for native web_navigation handlers",
+                    web_nav_score,
                 )
-                return list(ALWAYS_INCLUDED_TOOLS.values())
+                return None
             return None
 
-        # Guard: if a non-migrated skill scores higher, defer to P4
-        if best_non_migrated_score > best_migrated_score:
-            logger.debug(
-                f"Tool pruning: non-migrated skill scored higher "
-                f"({best_non_migrated_score:.2f} > {best_migrated_score:.2f}), "
-                f"deferring to P4"
+        # Guard: if a non-migrated skill (including web_navigation) scores
+        # higher than the best migrated skill, defer to P4 so native skill
+        # handlers run instead of LLM tool-calling.
+        effective_non_migrated = max(best_non_migrated_score, web_nav_score)
+        if effective_non_migrated > best_migrated_score:
+            winner = (best_non_migrated_name if best_non_migrated_score >= web_nav_score
+                      else "web_navigation")
+            logger.info(
+                "Tool pruning: non-migrated skill '%s' scored higher "
+                "(%.2f > migrated %.2f) — deferring to P4",
+                winner, effective_non_migrated, best_migrated_score,
             )
             return None
 
