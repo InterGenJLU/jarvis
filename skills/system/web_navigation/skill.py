@@ -266,9 +266,9 @@ class WebNavigationSkill(BaseSkill):
         # Wikipedia search
         self.register_semantic_intent(
             examples=[
-                "look up quantum mechanics on Wikipedia",
-                "search Wikipedia for Abraham Lincoln",
-                "check Wikipedia for the history of computing",
+                "pull up the Wikipedia page on ROCm",
+                "search Wikipedia for Gardendale Alabama",
+                "check the Wikipedia article about Vulkan graphics",
             ],
             handler=self.search_wikipedia,
             threshold=0.60,

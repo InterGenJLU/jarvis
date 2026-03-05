@@ -299,11 +299,29 @@ class ConversationRouter:
                 return result
 
         # --- LLM fallback: prepare context ---
-        return self._prepare_llm_context(
+        # Attach always-on tools (web_search, recall_memory) even when no
+        # domain tool matched.  This ensures queries like "Alabama football
+        # score" or "gas prices in Gardendale" can still trigger web_search.
+        from core.tool_registry import ALWAYS_INCLUDED_TOOLS
+        result = self._prepare_llm_context(
             command,
             in_conversation=in_conversation,
             doc_buffer=doc_buffer,
         )
+        if not result.use_tools and not result.handled:
+            always_on = list(ALWAYS_INCLUDED_TOOLS.values())
+            if self._is_guest:
+                always_on = [t for t in always_on
+                             if t["function"]["name"] in self._GUEST_ALLOWED_TOOLS]
+            if self._is_mobile:
+                always_on = [t for t in always_on
+                             if t["function"]["name"] not in self._MOBILE_EXCLUDED_TOOLS]
+            if always_on:
+                result.use_tools = always_on
+                result.tool_temperature = 0.0
+                result.tool_presence_penalty = 0.0
+                result.intent = "tool_calling"
+        return result
 
     # -------------------------------------------------------------------
     # Priority handlers
@@ -1906,10 +1924,9 @@ class ConversationRouter:
         )
 
         if not matched_tools:
-            # No domain tools matched.  If web_navigation scored well we
-            # *may* route to LLM with web_search, but only if no other
-            # non-migrated skill (e.g. app_launcher) scored higher — those
-            # need P4 skill routing, not tool-calling.
+            # No domain tools matched.  If web_navigation scored well,
+            # defer to P4 so the native handlers (YouTube, Amazon, etc.)
+            # can run instead of the generic web_search tool.
             if web_nav_score >= self._TOOL_PRUNE_THRESHOLD:
                 if best_non_migrated_score > web_nav_score:
                     logger.info(
@@ -1919,17 +1936,25 @@ class ConversationRouter:
                         best_non_migrated_score,
                     )
                     return None
-                # Web navigation scored highest among non-migrated skills.
-                # Still defer to P4 so the native web_navigation handlers
-                # (YouTube/Amazon/Reddit search, URL open, etc.) can run
-                # instead of the generic web_search tool.
                 logger.info(
                     "Tool pruning: web_nav scored %.2f — deferring to P4 "
                     "for native web_navigation handlers",
                     web_nav_score,
                 )
                 return None
-            return None
+            # If a non-migrated skill (not web_nav) scored well, defer to P4.
+            if best_non_migrated_score >= self._TOOL_PRUNE_THRESHOLD:
+                logger.info(
+                    "Tool pruning: non-migrated '%s' scored %.2f — "
+                    "deferring to P4 skill routing",
+                    best_non_migrated_name, best_non_migrated_score,
+                )
+                return None
+            # No domain tools AND no non-migrated skill matched.
+            # Still give the LLM always-on tools (web_search, recall_memory)
+            # so queries like "Alabama football score" can trigger web_search.
+            logger.debug("P4-LLM: no domain tools, falling through with always-on tools")
+            return list(ALWAYS_INCLUDED_TOOLS.values())
 
         # Guard: if a non-migrated skill (including web_navigation) scores
         # higher than the best migrated skill, defer to P4 so native skill
@@ -1960,15 +1985,16 @@ class ConversationRouter:
 
     def _handle_skill_routing(self, command: str) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""
+        # Mobile mode: check match BEFORE executing to prevent side effects
+        # (e.g. opening a browser on the server desktop)
+        if self._is_mobile:
+            match = self.skill_manager.match_intent(command)
+            if match and match[0] in self._MOBILE_EXCLUDED_SKILLS:
+                logger.debug(f"P4: blocked desktop-only skill '{match[0]}' on mobile (pre-exec)")
+                return None
+
         response = self.skill_manager.execute_intent(command)
         match_info = self.skill_manager._last_match_info
-
-        # Mobile mode: block desktop-only skills after matching
-        if self._is_mobile and match_info:
-            matched_skill = match_info.get("skill", "")
-            if matched_skill in self._MOBILE_EXCLUDED_SKILLS:
-                logger.debug(f"P4: blocked desktop-only skill '{matched_skill}' on mobile")
-                return None
 
         if response:
             logger.info("Handled by skill")
