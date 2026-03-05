@@ -7,6 +7,14 @@
 (function () {
     'use strict';
 
+    // --- Auth token (from URL query param) ---
+    const _urlToken = new URLSearchParams(location.search).get('token') || '';
+    function authUrl(url) {
+        if (!_urlToken) return url;
+        const sep = url.includes('?') ? '&' : '?';
+        return url + sep + 'token=' + encodeURIComponent(_urlToken);
+    }
+
     // --- State ---
     let currentHours = 24;
     let explorerOffset = 0;
@@ -103,7 +111,7 @@
     // --- API Fetchers ---
     async function fetchSummary() {
         try {
-            const r = await fetch(`/api/metrics/summary?hours=${currentHours}`);
+            const r = await fetch(authUrl(`/api/metrics/summary?hours=${currentHours}`));
             if (!r.ok) return;
             const d = await r.json();
             valInteractions.textContent = formatNum(d.total_interactions);
@@ -128,7 +136,7 @@
     async function fetchTimeseries() {
         try {
             const bucket = currentHours > 48 ? 'day' : 'hour';
-            const r = await fetch(`/api/metrics/timeseries?hours=${currentHours}&bucket=${bucket}`);
+            const r = await fetch(authUrl(`/api/metrics/timeseries?hours=${currentHours}&bucket=${bucket}`));
             if (!r.ok) return;
             const data = await r.json();
 
@@ -221,7 +229,7 @@
             if (summaryData) {
                 providers = summaryData;
             } else {
-                const r = await fetch(`/api/metrics/summary?hours=${currentHours}`);
+                const r = await fetch(authUrl(`/api/metrics/summary?hours=${currentHours}`));
                 if (!r.ok) return;
                 const d = await r.json();
                 providers = d.provider_breakdown;
@@ -262,7 +270,7 @@
 
     async function fetchSkillsChart() {
         try {
-            const r = await fetch(`/api/metrics/skills?hours=${currentHours}`);
+            const r = await fetch(authUrl(`/api/metrics/skills?hours=${currentHours}`));
             if (!r.ok) return;
             const data = await r.json();
 
@@ -305,7 +313,7 @@
             params.set('offset', explorerOffset);
             params.set('limit', explorerLimit);
 
-            const r = await fetch(`/api/metrics/interactions?${params}`);
+            const r = await fetch(authUrl(`/api/metrics/interactions?${params}`));
             if (!r.ok) return;
             const d = await r.json();
 
@@ -360,7 +368,7 @@
 
     async function fetchFilters() {
         try {
-            const r = await fetch('/api/metrics/filters');
+            const r = await fetch(authUrl('/api/metrics/filters'));
             if (!r.ok) return;
             const d = await r.json();
 
@@ -399,7 +407,7 @@
             fetchFilters(),
         ]);
         // Provider chart uses summary data, fetch separately
-        const r = await fetch(`/api/metrics/summary?hours=${currentHours}`);
+        const r = await fetch(authUrl(`/api/metrics/summary?hours=${currentHours}`));
         if (r.ok) {
             const d = await r.json();
             await fetchProviderChart(d.provider_breakdown);
@@ -411,7 +419,7 @@
         if (ws && ws.readyState <= 1) return;
 
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${proto}//${location.host}/ws/dashboard`);
+        ws = new WebSocket(authUrl(`${proto}//${location.host}/ws/dashboard`));
 
         ws.onopen = () => {
             wsBadge.classList.remove('disconnected');

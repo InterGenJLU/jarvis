@@ -5,6 +5,14 @@
 (function () {
     'use strict';
 
+    // --- Auth token (from URL query param) ---
+    const _urlToken = new URLSearchParams(location.search).get('token') || '';
+    function authUrl(url) {
+        if (!_urlToken) return url;
+        const sep = url.includes('?') ? '&' : '?';
+        return url + sep + 'token=' + encodeURIComponent(_urlToken);
+    }
+
     // --- DOM refs ---
     const messagesEl = document.getElementById('messages');
     const chatArea = document.getElementById('chat-area');
@@ -129,7 +137,7 @@
     function connect() {
         setStatus('connecting');
         const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(`${protocol}//${location.host}/ws`);
+        ws = new WebSocket(authUrl(`${protocol}//${location.host}/ws`));
 
         ws.onopen = function () {
             setStatus('connected');
@@ -670,23 +678,23 @@
     // --- Button handlers ---
     btnSend.addEventListener('click', sendMessage);
 
-    btnPaste.addEventListener('click', function () {
+    if (btnPaste) btnPaste.addEventListener('click', function () {
         pasteTextarea.value = '';
         pasteModal.classList.remove('hidden');
         pasteTextarea.focus();
     });
 
-    btnClear.addEventListener('click', function () {
+    if (btnClear) btnClear.addEventListener('click', function () {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'slash_command', command: '/clear' }));
         }
     });
 
-    btnHelp.addEventListener('click', function () {
+    if (btnHelp) btnHelp.addEventListener('click', function () {
         helpModal.classList.remove('hidden');
     });
 
-    btnRestart.addEventListener('click', function () {
+    if (btnRestart) btnRestart.addEventListener('click', function () {
         if (!confirm('Restart J.A.R.V.I.S. server?')) return;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'restart' }));
@@ -723,13 +731,13 @@
     });
 
     // --- New toolbar button handlers ---
-    btnAppend.addEventListener('click', function () {
+    if (btnAppend) btnAppend.addEventListener('click', function () {
         appendTextarea.value = '';
         appendModal.classList.remove('hidden');
         appendTextarea.focus();
     });
 
-    btnFile.addEventListener('click', function () {
+    if (btnFile) btnFile.addEventListener('click', function () {
         filePathInput.value = '';
         fileBrowser.classList.add('hidden');
         browserVisible = false;
@@ -738,13 +746,13 @@
         filePathInput.focus();
     });
 
-    btnClipboard.addEventListener('click', function () {
+    if (btnClipboard) btnClipboard.addEventListener('click', function () {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'slash_command', command: '/clipboard' }));
         }
     });
 
-    btnContext.addEventListener('click', function () {
+    if (btnContext) btnContext.addEventListener('click', function () {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'slash_command', command: '/context' }));
         }
@@ -820,7 +828,7 @@
         browserCurrentPath.textContent = path;
         browserList.innerHTML = '<div class="file-browser-loading">Loading...</div>';
 
-        fetch('/api/browse?path=' + encodeURIComponent(path))
+        fetch(authUrl('/api/browse?path=' + encodeURIComponent(path)))
             .then(function (resp) { return resp.json(); })
             .then(function (data) {
                 if (data.error) {
@@ -953,7 +961,7 @@
             var formData = new FormData();
             formData.append('file', file);
             var xhr = new XMLHttpRequest();
-            xhr.open('POST', '/api/upload');
+            xhr.open('POST', authUrl('/api/upload'));
             xhr.onload = function () {
                 if (xhr.status === 200) {
                     var resp = JSON.parse(xhr.responseText);
@@ -1193,7 +1201,7 @@
     }
 
     function fetchSessions(offset) {
-        fetch('/api/sessions?offset=' + offset + '&limit=10&user=' + encodeURIComponent(userSelect.value))
+        fetch(authUrl('/api/sessions?offset=' + offset + '&limit=10&user=' + encodeURIComponent(userSelect.value)))
             .then(function (resp) { return resp.json(); })
             .then(function (data) {
                 if (data.sessions) {
@@ -1287,7 +1295,7 @@
         messagesEl.innerHTML = '';
         addInfoMessage('Loading session...');
 
-        fetch('/api/session/' + encodeURIComponent(sessionId) + '?user=' + encodeURIComponent(userSelect.value))
+        fetch(authUrl('/api/session/' + encodeURIComponent(sessionId) + '?user=' + encodeURIComponent(userSelect.value)))
             .then(function (resp) { return resp.json(); })
             .then(function (data) {
                 messagesEl.innerHTML = '';
@@ -1354,7 +1362,7 @@
             var newName = input.value.trim();
             if (newName && newName !== currentName) {
                 session.custom_name = newName;
-                fetch('/api/session/' + encodeURIComponent(sessionId) + '/rename', {
+                fetch(authUrl('/api/session/' + encodeURIComponent(sessionId) + '/rename'), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: newName }),

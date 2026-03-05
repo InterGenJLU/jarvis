@@ -35,10 +35,18 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
     background: var(--bg-primary);
     color: var(--text-primary);
-    height: 100vh;
+    height: 100dvh;
+    height: 100vh; /* fallback for older browsers */
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+}
+
+@supports (height: 100dvh) {
+    body { height: 100dvh; }
 }
 
 /* Header */
@@ -183,6 +191,14 @@ header h1 {
     gap: 2px;
     cursor: pointer;
     user-select: none;
+}
+
+.header-voice-toggle {
+    margin-left: 8px;
+}
+
+.header-voice-toggle .voice-label {
+    font-size: 0.6rem;
 }
 
 /* Action buttons (Metrics + Restart) — stacked in input-col-right */
@@ -485,19 +501,13 @@ header h1 {
     opacity: 1;
 }
 
-/* Input area — 3-column layout */
+/* Input area */
 #input-area {
-    padding: 12px 20px 16px;
+    padding: 10px 20px 14px;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     background: var(--bg-secondary);
     border-top: 1px solid var(--border);
     flex-shrink: 0;
-}
-
-.input-columns {
-    display: grid;
-    grid-template-columns: 1fr 3fr 1fr;
-    gap: 32px;
-    align-items: center;
 }
 
 /* Left column — toolbar icons in two rows */
@@ -575,7 +585,7 @@ header h1 {
     border-radius: 10px;
     color: var(--text-primary);
     font-family: inherit;
-    font-size: 0.9rem;
+    font-size: 16px; /* >= 16px prevents iOS Safari auto-zoom on focus */
     padding: 10px 14px;
     resize: none;
     outline: none;
@@ -1341,25 +1351,6 @@ header h1 {
         min-width: 100px;
     }
 
-    .input-columns {
-        grid-template-columns: 1fr;
-        gap: 8px;
-    }
-
-    .input-col-left {
-        flex-direction: row;
-        gap: 4px;
-    }
-
-    .toolbar-sep {
-        width: 1px;
-        height: 24px;
-    }
-
-    .input-col-right {
-        justify-content: center;
-    }
-
     .header-stats {
         display: none;
     }
@@ -1376,7 +1367,8 @@ header h1 {
     }
 
     #input-area {
-        padding: 8px 12px 12px;
+        padding: 8px 12px;
+        padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     }
 
     header {
@@ -1389,19 +1381,6 @@ header h1 {
     }
 
     .voice-label {
-        display: none;
-    }
-
-    .toolbar-group {
-        gap: 2px;
-    }
-
-    .toolbar-btn svg {
-        width: 18px;
-        height: 18px;
-    }
-
-    .restart-label {
         display: none;
     }
 
@@ -1464,7 +1443,7 @@ header h1 {
     top: 0;
     left: 0;
     width: 280px;
-    height: 100vh;
+    height: 100dvh;
     background: var(--bg-secondary);
     border-right: 1px solid var(--border);
     z-index: 40;
@@ -1669,5 +1648,78 @@ header h1 {
     .sidebar {
         width: 260px;
         transform: translateX(-260px);
+    }
+}
+
+/* =========================================================================
+   Mobile Landscape — short viewport (phones turned sideways)
+   ========================================================================= */
+@media (max-height: 500px) and (orientation: landscape) {
+    .header-stats {
+        display: flex;
+        gap: 14px;
+        padding: 4px 12px;
+        background: var(--stats-bg);
+        border: 1px solid rgba(56, 189, 248, 0.15);
+        border-radius: 4px;
+        flex-shrink: 1;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .header-stats::before {
+        height: 1px;
+    }
+
+    /* Show only the most useful stats in landscape */
+    .header-stats .hud-stat {
+        padding: 0;
+        gap: 4px;
+    }
+
+    .header-stats .hud-stat:nth-child(n+5) {
+        display: none;
+    }
+
+    .header-stats .hud-label {
+        font-size: 0.5rem;
+        min-width: auto;
+    }
+
+    .header-stats .hud-value {
+        font-size: 0.6rem;
+    }
+
+    header {
+        padding: 4px 12px;
+        padding-left: calc(12px + env(safe-area-inset-left, 0px));
+        padding-right: calc(12px + env(safe-area-inset-right, 0px));
+    }
+
+    header h1 {
+        font-size: 1rem;
+    }
+
+    .voice-label {
+        display: none;
+    }
+
+    #chat-area {
+        padding: 4px 12px;
+        padding-left: calc(12px + env(safe-area-inset-left, 0px));
+        padding-right: calc(12px + env(safe-area-inset-right, 0px));
+    }
+
+    #input-area {
+        padding: 4px 12px 6px;
+        padding-left: calc(12px + env(safe-area-inset-left, 0px));
+        padding-right: calc(12px + env(safe-area-inset-right, 0px));
+        padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .message {
+        padding: 6px 10px;
+        margin-bottom: 4px;
+        font-size: 0.9rem;
     }
 }

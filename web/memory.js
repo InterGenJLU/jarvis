@@ -2,6 +2,14 @@
 
 'use strict';
 
+// --- Auth token (from URL query param) ---
+const _memUrlToken = new URLSearchParams(location.search).get('token') || '';
+function memAuthUrl(url) {
+    if (!_memUrlToken) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return url + sep + 'token=' + encodeURIComponent(_memUrlToken);
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -47,7 +55,7 @@ function escHtml(s) {
 }
 
 async function apiFetch(url) {
-    const r = await fetch(url);
+    const r = await fetch(memAuthUrl(url));
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     return r.json();
 }
@@ -361,7 +369,7 @@ function makeCellEditable(td, field, factId) {
         const newVal = el.value.trim();
         if (!newVal || newVal === original) { restore(original); return; }
         try {
-            const r = await fetch(`/api/memory/facts/${encodeURIComponent(factId)}`, {
+            const r = await fetch(memAuthUrl(`/api/memory/facts/${encodeURIComponent(factId)}`), {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ [field]: newVal }),
@@ -435,7 +443,7 @@ function renderFacts(facts) {
         btn.addEventListener('click', async () => {
             if (!confirm('Delete this fact?')) return;
             try {
-                const r = await fetch(`/api/memory/facts/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+                const r = await fetch(memAuthUrl(`/api/memory/facts/${encodeURIComponent(btn.dataset.id)}`), { method: 'DELETE' });
                 if (r.ok) { btn.closest('tr').remove(); state.facts.total--; updatePagination('facts', state.facts.offset, state.facts.limit, state.facts.total); }
             } catch (e) { console.error('Delete failed:', e); }
         });
@@ -483,7 +491,7 @@ function renderInteractions(rows) {
         btn.addEventListener('click', async () => {
             if (!confirm('Delete this interaction log entry?')) return;
             try {
-                const resp = await fetch(`/api/memory/interactions/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+                const resp = await fetch(memAuthUrl(`/api/memory/interactions/${encodeURIComponent(btn.dataset.id)}`), { method: 'DELETE' });
                 if (resp.ok) { btn.closest('tr').remove(); state.ilog.total--; updatePagination('ilog', state.ilog.offset, state.ilog.limit, state.ilog.total); }
             } catch (e) { console.error('Delete failed:', e); }
         });

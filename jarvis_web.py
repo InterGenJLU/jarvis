@@ -56,6 +56,39 @@ from core.self_awareness import SelfAwareness
 from core.task_planner import TaskPlanner
 from core.interaction_cache import get_interaction_cache, Artifact
 from core.readback_session import ReadbackSession
+import hmac
+
+
+def _check_auth_token(request) -> bool:
+    """Validate bearer token from header or query param. Returns True if OK."""
+    token = request.app.get('auth_token')
+    if not token:
+        return True  # No token configured — allow all (localhost mode)
+
+    # Check Authorization header
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        if hmac.compare_digest(auth_header[7:], token):
+            return True
+
+    # Check query param
+    if hmac.compare_digest(request.query.get('token', ''), token):
+        return True
+
+    return False
+
+
+_PUBLIC_EXTENSIONS = {'.css', '.js', '.svg', '.png', '.ico', '.woff', '.woff2'}
+
+
+@web.middleware
+async def auth_middleware(request, handler):
+    """Reject requests without a valid auth token."""
+    if Path(request.path).suffix in _PUBLIC_EXTENSIONS:
+        return await handler(request)
+    if not _check_auth_token(request):
+        raise web.HTTPUnauthorized(text='Invalid or missing auth token')
+    return await handler(request)
 
 
 def _make_artifact_id() -> str:
@@ -1670,6 +1703,8 @@ def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end) -> dict:
 
 async def websocket_handler(request):
     """Handle a single WebSocket client connection."""
+    if not _check_auth_token(request):
+        raise web.HTTPUnauthorized(text='Invalid or missing auth token')
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -1748,6 +1783,13 @@ async def websocket_handler(request):
                 if msg_type == 'message':
                     content = data.get('content', '').strip()
                     if not content:
+                        continue
+
+                    # Hidden restart command (replaces UI button)
+                    if content == '_restart_serv':
+                        logger.info("Restart requested via _restart_serv command")
+                        await ws.send_json({'type': 'info', 'content': 'Restarting...'})
+                        asyncio.get_event_loop().call_later(0.5, _restart_server)
                         continue
 
                     async with cmd_lock:
@@ -3070,6 +3112,8 @@ async def memory_interaction_delete_handler(request):
 
 async def dashboard_ws_handler(request):
     """WebSocket endpoint for live dashboard metric updates."""
+    if not _check_auth_token(request):
+        raise web.HTTPUnauthorized(text='Invalid or missing auth token')
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -3095,7 +3139,7 @@ async def index_handler(request):
 
 def create_app(config) -> web.Application:
     """Create and configure the aiohttp application."""
-    app = web.Application()
+    app = web.Application(middlewares=[auth_middleware])
 
     web_dir = Path(__file__).parent / 'web'
 
@@ -3215,6 +3259,8 @@ def main():
 
     app = create_app(config)
     app['config'] = config
+    app['auth_token'] = config.get('web.auth_token', '')
+
 
     if args.voice:
         # Will be set once TTS proxy is created in on_startup
