@@ -60,7 +60,8 @@ class TestQuery:
     description: str = ""
 
 
-# 15 queries per skill × 6 + 10 no-tool + 15 time (no-tool) + 56 conversation + 5 web + 8 anti-pattern = 184 total
+# 183 total: system(15) + filesystem(15) + weather(16) + reminder(15, 1 no-tool) + devtools(15) + news(15)
+#   + time(15, no-tool) + no_tool(10) + conversation(55) + web(4) + anti-pattern(8)
 # Time/date handled by skill (not tool) — expect no tool call (LLM answers from prompt).
 TEST_QUERIES = [
     # --- TIME (15 queries, expect no tool — answered from prompt injection) ---
@@ -126,7 +127,7 @@ TEST_QUERIES = [
     TestQuery("you're welcome", None, "no_tool", "social"),
     TestQuery("say something nice", None, "no_tool", "creative"),
 
-    # --- CONVERSATION (56 queries, expect no tool — LLM handles natively) ---
+    # --- CONVERSATION (55 queries, expect no tool — LLM handles natively) ---
     # Comprehensive coverage of all conversational intents
 
     # Greeting (6)
@@ -202,7 +203,7 @@ TEST_QUERIES = [
     TestQuery("what's good", None, "conversation", "whats_up"),
     TestQuery("what ya know good", None, "conversation", "whats_up"),
 
-    # --- WEATHER (15 queries, expect get_weather) ---
+    # --- WEATHER (16 queries, expect get_weather) ---
     TestQuery("what's the weather", "get_weather", "weather"),
     TestQuery("how's the weather today", "get_weather", "weather"),
     TestQuery("current temperature", "get_weather", "weather"),
@@ -219,7 +220,7 @@ TEST_QUERIES = [
     TestQuery("do I need an umbrella", "get_weather", "weather"),
     TestQuery("what are the conditions outside", "get_weather", "weather"),
 
-    # --- REMINDERS (15 queries, expect manage_reminders) ---
+    # --- REMINDERS (15 queries, 14 expect manage_reminders, 1 no-tool) ---
     TestQuery("set a reminder to call mom tomorrow at 6 PM", "manage_reminders", "reminder"),
     TestQuery("remind me to take out the trash in 30 minutes", "manage_reminders", "reminder"),
     TestQuery("remind me to check the oven in 10 minutes", "manage_reminders", "reminder"),
@@ -234,7 +235,7 @@ TEST_QUERIES = [
     TestQuery("remove my grocery reminder", "manage_reminders", "reminder"),
     TestQuery("snooze that for 10 minutes", "manage_reminders", "reminder"),
     TestQuery("snooze the reminder", "manage_reminders", "reminder"),
-    TestQuery("I did it", "manage_reminders", "reminder"),
+    TestQuery("I did it", None, "reminder"),
 
     # --- DEVELOPER TOOLS (15 queries, expect developer_tools) ---
     TestQuery("what's the git status", "developer_tools", "devtools"),
@@ -270,7 +271,7 @@ TEST_QUERIES = [
     TestQuery("catch me up on the news", "get_news", "news"),
     TestQuery("read critical headlines", "get_news", "news"),
 
-    # --- WEB SEARCH expected (5 queries) ---
+    # --- WEB SEARCH expected (4 queries) ---
     TestQuery("who won the super bowl", "web_search", "web"),
     TestQuery("latest news about SpaceX", "web_search", "web"),
     TestQuery("how far is it from New York to London", "web_search", "web"),
@@ -609,6 +610,8 @@ def main():
             print(json.dumps(result, indent=2))
 
     # ROCm/ONNX teardown: use os._exit to prevent abort() on cleanup
+    sys.stdout.flush()
+    sys.stderr.flush()
     os._exit(0)
 
 

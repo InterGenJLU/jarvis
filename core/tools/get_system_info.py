@@ -35,9 +35,10 @@ SCHEMA = {
 
 SYSTEM_PROMPT_RULE = (
     "For questions about THIS COMPUTER's hardware or OS (CPU, RAM, GPU, "
-    "disk, uptime, hostname), call get_system_info. "
+    "disk, uptime, hostname, username, logged-in user), call get_system_info. "
     "Examples: 'how much RAM do I have?' → memory, 'disk space?' → disk, "
-    "'what GPU?' → gpu. "
+    "'what GPU?' → gpu, 'what's my username?' → username, "
+    "'who am I logged in as?' → username. "
     "NOT for: general tech questions, hardware shopping advice, other people's computers."
 )
 
