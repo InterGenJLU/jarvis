@@ -402,7 +402,7 @@
         if (data.context_window) {
             statContext.textContent = data.context_window.segments + ' seg · ' +
                 data.context_window.tokens + ' tok';
-            statContext.className = 'hud-value';
+            statContext.className = 'hud-value active';
         } else {
             statContext.textContent = 'OFF';
             statContext.className = 'hud-value inactive';

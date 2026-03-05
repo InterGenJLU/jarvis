@@ -1671,14 +1671,16 @@ header h1 {
         height: 1px;
     }
 
-    /* Show only the most useful stats in landscape */
+    /* Show only MEMORY + CONTEXT in landscape (items 3 and 4) */
     .header-stats .hud-stat {
         padding: 0;
         gap: 4px;
+        display: none;
     }
 
-    .header-stats .hud-stat:nth-child(n+5) {
-        display: none;
+    .header-stats .hud-stat:nth-child(3),
+    .header-stats .hud-stat:nth-child(4) {
+        display: flex;
     }
 
     .header-stats .hud-label {

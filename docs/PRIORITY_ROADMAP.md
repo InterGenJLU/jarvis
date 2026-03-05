@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 4, 2026 (session 154 — synced with verified_outstanding_items.md from session 152 audit)
+**Updated:** March 5, 2026 (session 165 — Tier 1 status sync, #16/#30 moved to completed)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -43,11 +43,11 @@
 
 | # | Item | Effort | Status | Notes |
 |---|------|--------|--------|-------|
-| 12 | **Profile-aware skill routing** — "my calendar" loads correct user's data based on who spoke | 3-4 hours | PARTIAL — speaker ID works, skills ignore `current_user` | Infrastructure built (speaker ID + profiles). Needs skill-level integration |
-| 60 | **Mobile iOS app** — native Swift app with always-listening wake word + full chat UI + real-time voice | 5-8 days | NOT STARTED — plan exists (6 phases) | Plan: `memory/plan_mobile_ios_app.md`. Porcupine wake word, WebRTC voice, Tailscale VPN, Apple Shortcuts |
-| — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | DB column exists (`caldav_event_id`), zero CalDAV code | Blocked on credentials |
-| 46 | **Dual-model STT (secondary user voice)** — speaker-ID routes to user-specific fine-tuned vs stock Whisper | 4-6 hours | Single model only | Enrollment infrastructure ready. See `memory/plan_erica_voice_windows_port.md` |
-| 61 | **Concurrent multi-user support** — handle two simultaneous mobile users | 4-8 hours | Single global `current_user`, no session isolation | Depends on #60. Needs `--parallel 2`, per-user history, STT/TTS queuing |
+| 12 | ~~**Profile-aware skill routing**~~ — "my calendar" loads correct user's data based on who spoke | 3-4 hours | **DONE** (session 158) | Speaker ID + profiles + skill-level `current_user` routing |
+| 46 | ~~**Dual-model STT (secondary user voice)**~~ — speaker-ID routes to user-specific fine-tuned vs stock Whisper | 4-6 hours | **DONE** (session 159) | Two Whisper models, speaker-ID-first routing |
+| 60 | **Mobile app** — web UI phase 1 done (auth + responsive layout + mobile routing). Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** — web UI works on mobile | Plan: `memory/plan_mobile_ios_app.md`. Routing fixes: skill filtering, tool exclusion, pre-exec blocking, always-on tool fallback, 82-test suite |
+| — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | DB column exists (`caldav_event_id`), zero CalDAV code |
+| 61 | **Concurrent multi-user support** — handle two simultaneous mobile users | 4-8 hours | NOT STARTED | Depends on #60. Needs `--parallel 2`, per-user history, STT/TTS queuing |
 | 11 | **"Onscreen please" — retroactive visual display** — buffer last raw output, display on command | 2-3 hours | NOT STARTED | Bridge voice-to-visual gap |
 
 ---
@@ -80,8 +80,8 @@
 | 13 | **Audio recording skill** — voice-triggered recording, date-based playback, 6 intents | 4-6 hours | Meeting notes, voice memos, dictation | skills/personal/audio_recording/ |
 | 14 | **Music control (Apple Music)** — playlist learning, volume via pactl | 6-10 hours | Entertainment integration | Per-user playlists. Apple Music web interface finicky |
 | 15 | **Screenshot via GNOME extension** — add screenshot D-Bus method, bypass portal dialog | 2-3 hours | Developer tools "show me" integration | Phase 5c from desktop plan |
-| 16 | **Unknown speaker / guest mode** — unknown voice → limited access, no personal data | 3-4 hours | Security + graceful handling of guests | **DONE** — `__guest__` sentinel, HAL 9000 greeting, tool filtering, LLM guest context |
-| 30 | **Multi-speaker conversation tracking** — who said what when both speak | 4-6 hours | Persistent "who said what" history | **DONE** — speaker-attributed history, LLM multi-speaker context, rapid-switch retort |
+| 16 | ~~**Unknown speaker / guest mode**~~ | 3-4 hours | — | **DONE** — moved to Completed Items |
+| 30 | ~~**Multi-speaker conversation tracking**~~ | 4-6 hours | — | **DONE** — moved to Completed Items |
 
 ---
 
@@ -201,6 +201,14 @@
 - Context window Phase 3 — background Qwen summarization (`context_window.py:610-663`) (verified Mar 4)
 - Context window Phase 4 — SQLite persistence (`context_window.py:385-549`) (verified Mar 4)
 - Memory _pending_forget Phase 6 — full confirm/cancel at P2.5 (verified Mar 4)
+- Mobile routing fixes A-D — web_navigation semantic tightening, web_search guardrails, mobile skill/tool filtering, always-on tool fallback, pre-exec skill blocking (Mar 5)
+
+### Tier 1 (Owner Priority)
+- #12: Profile-aware skill routing — speaker ID + profiles + skill-level current_user routing (Mar 4, session 158)
+- #46: Dual-model STT — two Whisper models, speaker-ID-first routing (Mar 4, session 159)
+- #16: Unknown speaker / guest mode — `__guest__` sentinel, HAL 9000 greeting, tool filtering, LLM guest context (Mar 4, session 160)
+- #30: Multi-speaker conversation tracking — speaker-attributed history, LLM multi-speaker context, rapid-switch retort, 61/61 tests (Mar 4, session 161)
+- #60 Phase 1: Mobile web UI — auth layer, responsive layout, mobile routing (skill filtering, tool exclusion, pre-exec blocking, always-on tool fallback), 82-test e2e suite (Mar 4-5, sessions 163-165)
 
 ### Other Completed (non-roadmap enhancements)
 - Time injection into LLM system prompts — all 5 prompt injection points, correct time-of-day greetings (Feb 27)
