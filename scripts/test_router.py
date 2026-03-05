@@ -413,6 +413,89 @@ def test_news_continuation(router, news_manager):
               f"handled={r.handled}, intent={r.intent}")
 
 
+def test_guest_mode(router):
+    """Test guest (unrecognized speaker) security boundary."""
+    section("Guest Mode (#16)")
+
+    conversation = router.conversation
+
+    # Activate guest mode
+    conversation.current_user = "__guest__"
+    from core.honorific import set_honorific
+    set_honorific("friend")
+
+    try:
+        # 1. Guest greeting — HAL 9000 easter egg
+        r = router.route("jarvis_only")
+        check("guest greeting → intent=guest_greeting",
+              r.intent == "guest_greeting",
+              f"intent={r.intent}")
+        check("  handled + canned",
+              r.handled and r.source == "canned")
+        check("  opens conversation window",
+              r.open_window is not None and r.open_window > 0)
+
+        # 2. Weather query — should route to tool_calling with get_weather
+        r = router.route("what's the weather like")
+        if r.use_tools:
+            tool_names = {t["function"]["name"] for t in r.use_tools}
+            check("guest weather → tool_calling with get_weather",
+                  "get_weather" in tool_names,
+                  f"tools={tool_names}")
+            check("  no personal tools (recall_memory blocked)",
+                  "recall_memory" not in tool_names,
+                  f"tools={tool_names}")
+        else:
+            # Might fall through to LLM — still acceptable
+            check("guest weather → LLM fallback (acceptable)",
+                  not r.handled,
+                  f"intent={r.intent}")
+
+        # 3. Reminder request — should NOT route to manage_reminders
+        r = router.route("set a reminder for 5pm")
+        if r.use_tools:
+            tool_names = {t["function"]["name"] for t in r.use_tools}
+            check("guest reminder → no manage_reminders tool",
+                  "manage_reminders" not in tool_names,
+                  f"tools={tool_names}")
+        else:
+            check("guest reminder → no skill routing (LLM fallback)",
+                  not r.handled or r.intent not in ("skill",),
+                  f"intent={r.intent}, handled={r.handled}")
+
+        # 4. Memory recall — should NOT have recall_memory tool
+        r = router.route("what's my favorite color")
+        if r.use_tools:
+            tool_names = {t["function"]["name"] for t in r.use_tools}
+            check("guest memory → no recall_memory tool",
+                  "recall_memory" not in tool_names,
+                  f"tools={tool_names}")
+        else:
+            check("guest memory → LLM fallback (no memory ops)",
+                  r.intent != "memory_recall",
+                  f"intent={r.intent}")
+
+        # 5. LLM fallback — guest context injected, no personal context
+        r = router.route("tell me a joke")
+        check("guest general Q&A → LLM fallback",
+              not r.handled,
+              f"handled={r.handled}, intent={r.intent}")
+        check("  memory_context has GUEST MODE",
+              r.memory_context and "GUEST MODE" in r.memory_context,
+              f"memory_context={r.memory_context[:100] if r.memory_context else None!r}")
+
+        # 6. Dismissal still works for guests
+        r = router.route("that's all thanks", in_conversation=True)
+        check("guest dismissal works",
+              r.handled and r.close_window,
+              f"handled={r.handled}, close={r.close_window}")
+
+    finally:
+        # Restore primary user context
+        conversation.current_user = "user"
+        set_honorific("sir")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -433,6 +516,7 @@ def main():
     test_priority_ordering(router, memory_manager, conv_state)
     test_llm_fallback(router)
     test_news_continuation(router, news_manager)
+    test_guest_mode(router)
 
     # Summary
     total = _total_passed + _total_failed

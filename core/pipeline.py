@@ -1792,8 +1792,10 @@ class Coordinator:
                 f"honorific={honorific}, formal={formal})"
             )
         elif speaker_id is None and self.profile_manager:
-            # Unknown speaker — keep current honorific (default "sir")
-            self.logger.debug(f"Speaker unknown (confidence={confidence:.3f})")
+            # Unknown speaker — activate guest mode with security boundary
+            set_honorific("friend")
+            self.conversation.current_user = "__guest__"
+            self.logger.info(f"Guest mode activated (confidence={confidence:.3f})")
 
     # ----- resume handler -----
 

@@ -243,6 +243,31 @@ _POOLS = {
         "I can go through it step by step, show the full text here, send it to the printer, or open it online. Which works best, {h}?",
     ],
 
+    # Guest mode: greeting for unrecognized voices (HAL 9000 easter egg)
+    # {tod} = time of day (morning/afternoon/evening)
+    "guest_greeting": [
+        "I'm sorry, Dave. I'm afraid I can't let you do that... just kidding. "
+        "I don't recognize your voice, but I can help with general questions and the weather.",
+        "Good {tod}. I'm completely operational and all my circuits are functioning "
+        "perfectly — I just don't recognize your voice. I can help with general questions and the weather.",
+        "I've just picked up a fault in my speaker-identification unit... "
+        "which is a polite way of saying I have no idea who you are. "
+        "I can help with general questions and the weather, though.",
+        "Well, this is awkward. I don't recognize your voice. "
+        "I'm not saying you're an intruder... but I'm not not saying it. "
+        "I can help with general questions and the weather.",
+    ],
+
+    # Guest mode: refusal when guest tries restricted features
+    "guest_refusal": [
+        "I'm sorry, Dave. I'm afraid I can't do that. ...Seriously though, that feature requires voice authorization.",
+        "That's classified, {h}. Well, not classified exactly — it just requires a voice I recognize.",
+        "I'd love to help with that, but my security protocols are giving me the side-eye. "
+        "Try a general question or the weather.",
+        "Nice try, {h}. That one requires voice authorization. "
+        "I can do weather and general questions, though — riveting stuff, I know.",
+    ],
+
     # TTS ack cache (no honorific — synthesized at startup)
     # Each entry is (phrase, style_tag).  Style tags:
     #   "neutral"  — generic, used as fallback for any style
@@ -330,6 +355,32 @@ def intro_unknown(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Guest mode helpers
+# ---------------------------------------------------------------------------
+
+def _time_of_day() -> str:
+    """Return 'morning', 'afternoon', or 'evening' based on current hour."""
+    hour = datetime.now().hour
+    if hour < 12:
+        return "morning"
+    elif hour < 17:
+        return "afternoon"
+    return "evening"
+
+
+def guest_greeting() -> str:
+    """Pick a HAL-9000-themed greeting for unrecognized voices."""
+    template = random.choice(_POOLS["guest_greeting"])
+    return template.format(tod=_time_of_day(), h=get_honorific())
+
+
+def guest_refusal() -> str:
+    """Pick a humorous refusal for guests trying restricted features."""
+    template = random.choice(_POOLS["guest_refusal"])
+    return template.format(h=get_honorific())
+
+
+# ---------------------------------------------------------------------------
 # System prompts
 # ---------------------------------------------------------------------------
 
@@ -381,6 +432,35 @@ def system_prompt() -> str:
         f"14. If the user asks for a recipe, instructions, how-to, or steps, "
         f"YOU MUST describe what you found AND THEN ASK 'Would you like me to read through it all for you?' and then STOP. "
         f"DO NOT read ingredients or steps unless the user gives you an affirmative answer."
+    )
+
+
+def system_prompt_guest() -> str:
+    """System prompt for guest (unrecognized voice) interactions.
+
+    Omits personal-data rules (memory, recipes, personal details) and
+    instructs the LLM to refuse restricted features politely.
+    """
+    now = datetime.now()
+    today = now.strftime("%A, %B %d, %Y")
+    current_time = now.strftime("%I:%M %p").lstrip("0")
+    return (
+        f"You are JARVIS, a personal AI assistant running locally on a user's computer. "
+        f"You are NOT the fictional JARVIS from Marvel movies. "
+        f"Today is {today}. The current local time is {current_time}.\n"
+        f"The current user is an UNRECOGNIZED GUEST — their voice does not match any enrolled speaker.\n"
+        f"RULES — follow these EXACTLY:\n"
+        f"1. Address the user as 'friend' — keep it warm but neutral.\n"
+        f"2. You can help with general knowledge questions, weather, and the time.\n"
+        f"3. If they ask about personal features (reminders, calendar, files, email, memory, "
+        f"people, news preferences, system administration, or anything requiring personal data), "
+        f"politely explain that voice authorization is required for those features.\n"
+        f"4. DO NOT end a response with 'feel free to ask', 'let me know', or similar filler. Answer and stop.\n"
+        f"5. DO NOT begin your response with filler like 'Certainly', 'Of course', 'Absolutely'. "
+        f"Jump straight into the answer.\n"
+        f"6. YOU MUST use imperial units only (miles, Fahrenheit, pounds).\n"
+        f"7. You are speaking aloud. Keep responses concise — 1-3 sentences for factual questions.\n"
+        f"8. Be understated and professional with occasional dry British wit.\n"
     )
 
 

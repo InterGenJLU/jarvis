@@ -131,6 +131,11 @@ class ConversationRouter:
         """Current user ID, defaulting to 'christopher'."""
         return getattr(self.conversation, 'current_user', None) or "primary_user"
 
+    @property
+    def _is_guest(self) -> bool:
+        """True when the current speaker is unrecognized (guest mode)."""
+        return self._user_id == "__guest__"
+
     def route(self, command: str, *,
               in_conversation: bool = False,
               doc_buffer=None) -> RouteResult:
@@ -163,30 +168,38 @@ class ConversationRouter:
         Returns:
             RouteResult with response text, metadata, and side-effect signals.
         """
-        # --- Priority 1: Rundown acceptance ---
-        result = self._handle_rundown(command)
-        if result:
-            return result
+        guest = self._is_guest
 
-        # --- Priority 2: Reminder acknowledgment ---
-        result = self._handle_reminder_ack()
-        if result:
-            return result
+        # --- Guest greeting (before pending-state priorities) ---
+        if guest and (command.strip() == "jarvis_only" or len(command.strip()) <= 2):
+            return self._route_greeting()
 
-        # --- Priority 1.5: Plan control (confirmation or active plan interrupt) ---
-        result = self._handle_plan_control(command)
-        if result:
-            return result
+        # --- Personal priority chain (skipped for guests) ---
+        if not guest:
+            # --- Priority 1: Rundown acceptance ---
+            result = self._handle_rundown(command)
+            if result:
+                return result
 
-        # --- Priority 2.5: Memory forget confirmation ---
-        result = self._handle_forget_confirm(command)
-        if result:
-            return result
+            # --- Priority 2: Reminder acknowledgment ---
+            result = self._handle_reminder_ack()
+            if result:
+                return result
 
-        # --- Priority 2.6: Introduction state machine (multi-turn) ---
-        result = self._handle_intro_state(command)
-        if result:
-            return result
+            # --- Priority 1.5: Plan control (confirmation or active plan interrupt) ---
+            result = self._handle_plan_control(command)
+            if result:
+                return result
+
+            # --- Priority 2.5: Memory forget confirmation ---
+            result = self._handle_forget_confirm(command)
+            if result:
+                return result
+
+            # --- Priority 2.6: Introduction state machine (multi-turn) ---
+            result = self._handle_intro_state(command)
+            if result:
+                return result
 
         # --- Minimal greeting (after pending-state priorities) ---
         if command.strip() == "jarvis_only" or len(command.strip()) <= 2:
@@ -204,27 +217,28 @@ class ConversationRouter:
             if result:
                 return result
 
-        # --- Priority 3.1: Active readback session ---
-        if in_conversation and self.conv_state.readback_session:
-            result = self._handle_readback_session(command)
+        if not guest:
+            # --- Priority 3.1: Active readback session ---
+            if in_conversation and self.conv_state.readback_session:
+                result = self._handle_readback_session(command)
+                if result:
+                    return result
+
+            # --- Priority 3: Memory operations ---
+            result = self._handle_memory_ops(command)
             if result:
                 return result
 
-        # --- Priority 3: Memory operations ---
-        result = self._handle_memory_ops(command)
-        if result:
-            return result
+            # --- Priority 3.5: Artifact reference resolution ---
+            if in_conversation:
+                result = self._handle_artifact_reference(command)
+                if result:
+                    return result
 
-        # --- Priority 3.5: Artifact reference resolution ---
-        if in_conversation:
-            result = self._handle_artifact_reference(command)
+            # --- Priority 3.7: News article pull-up ---
+            result = self._handle_news_pullup(command)
             if result:
                 return result
-
-        # --- Priority 3.7: News article pull-up ---
-        result = self._handle_news_pullup(command)
-        if result:
-            return result
 
         # --- Clear navigation session on topic change ---
         # If we reach here, P3.5 did not handle it — user is on a new topic.
@@ -234,49 +248,50 @@ class ConversationRouter:
             self.conv_state.nav_cursor = 0
             self.conv_state.nav_total = 0
 
-        # --- Pre-P4: Multi-step task planning ---
-        if not (doc_buffer and doc_buffer.active):
-            result = self._handle_task_planning(command)
+        is_hw_query = False
+        if not guest:
+            # --- Pre-P4: Multi-step task planning ---
+            if not (doc_buffer and doc_buffer.active):
+                result = self._handle_task_planning(command)
+                if result:
+                    return result
+
+            # --- Pre-P4b: Self-referential hardware queries ---
+            # Answer directly from SelfAwareness data — avoids LLM hallucination
+            # of hardware specs (Qwen Q3_K_M overrides context with training priors)
+            is_hw_query = self._is_self_hardware_query(command)
+            if is_hw_query:
+                result = self._handle_hw_self_query(command)
+                if result:
+                    return result
+                logger.info("Self-referential hardware query — falling through to LLM")
+
+            # --- Pre-P4-LLM: Pending skill confirmations ---
+            # Non-migrated skills with pending confirmation state get priority
+            # over tool-calling to avoid capturing "yes"/"no" responses.
+            result = self._handle_skill_pending_confirmation(command)
             if result:
                 return result
 
-        # --- Pre-P4b: Self-referential hardware queries ---
-        # Answer directly from SelfAwareness data — avoids LLM hallucination
-        # of hardware specs (Qwen Q3_K_M overrides context with training priors)
-        is_hw_query = self._is_self_hardware_query(command)
-        if is_hw_query:
-            result = self._handle_hw_self_query(command)
-            if result:
-                return result
-            logger.info("Self-referential hardware query — falling through to LLM")
-
-        # --- Pre-P4-LLM: Pending skill confirmations ---
-        # Non-migrated skills with pending confirmation state get priority
-        # over tool-calling to avoid capturing "yes"/"no" responses.
-        result = self._handle_skill_pending_confirmation(command)
-        if result:
-            return result
-
-        # --- P4-LLM: Tool-calling path (LLM-centric migration Phase 1) ---
-        # If the command appears relevant to a tool-enabled skill, route
-        # through the LLM with dynamically pruned tools.  The LLM decides
-        # whether to call a tool, ask for clarification, or answer directly.
+        # --- P4-LLM: Tool-calling path ---
+        # Guests get filtered tools (weather + web_search only).
         if not (doc_buffer and doc_buffer.active):
             result = self._handle_tool_calling(command, in_conversation)
             if result:
                 return result
 
-        if not is_hw_query and not (doc_buffer and doc_buffer.active):
-            # --- Priority 4: Skill routing (skip when doc_buffer active) ---
-            # Non-migrated skills still route through the old matching pipeline.
-            result = self._handle_skill_routing(command)
+        if not guest:
+            if not is_hw_query and not (doc_buffer and doc_buffer.active):
+                # --- Priority 4: Skill routing (skip when doc_buffer active) ---
+                # Non-migrated skills still route through the old matching pipeline.
+                result = self._handle_skill_routing(command)
+                if result:
+                    return result
+
+            # --- Priority 5: News continuation ---
+            result = self._handle_news_continuation(command)
             if result:
                 return result
-
-        # --- Priority 5: News continuation ---
-        result = self._handle_news_continuation(command)
-        if result:
-            return result
 
         # --- LLM fallback: prepare context ---
         return self._prepare_llm_context(
@@ -291,6 +306,12 @@ class ConversationRouter:
 
     def _route_greeting(self) -> RouteResult:
         """Handle wake-word-only or empty commands."""
+        if self._is_guest:
+            text = persona.guest_greeting()
+            return RouteResult(
+                text=text, intent="guest_greeting", source="canned",
+                handled=True, open_window=EXTENDED_WINDOW,
+            )
         if self.reminder_manager and self.reminder_manager.has_rundown_mention():
             self.reminder_manager.clear_rundown_mention()
             text = persona.rundown_mention()
@@ -1740,6 +1761,9 @@ class ConversationRouter:
     # Prevents exceeding the 5-6 tool cliff even if threshold is too loose.
     _MAX_DOMAIN_TOOLS = 4
 
+    # Tools allowed for guest (unrecognized speaker) sessions.
+    _GUEST_ALLOWED_TOOLS = {"get_weather", "web_search"}
+
     def _handle_tool_calling(self, command: str,
                              in_conversation: bool = False) -> RouteResult | None:
         """P4-LLM: Route through LLM with dynamically selected tools.
@@ -1756,6 +1780,15 @@ class ConversationRouter:
         if not tools:
             logger.debug(f"P4-LLM: no tools selected for: {command[:80]}")
             return None
+
+        # Guest mode: restrict to weather + web_search, strip personal tools
+        if self._is_guest:
+            tools = [t for t in tools
+                     if t["function"]["name"] in self._GUEST_ALLOWED_TOOLS]
+            if not tools:
+                logger.debug("P4-LLM: guest — no allowed tools for command")
+                return None
+
         logger.debug(f"P4-LLM: selected {len(tools)} tools, routing to LLM")
 
         # Prepare the same LLM context as _prepare_llm_context()
@@ -1952,52 +1985,65 @@ class ConversationRouter:
                               in_conversation: bool = False,
                               doc_buffer=None) -> RouteResult:
         """Prepare context for LLM fallback (streaming done by frontend)."""
+        guest = self._is_guest
+
         history = self.conversation.format_history_for_llm(
             include_system_prompt=False
         )
 
-        # Context window assembly
+        # Context window assembly (skip for guests — no personal history)
         context_messages = None
-        if self.context_window and self.context_window.enabled:
+        if not guest and self.context_window and self.context_window.enabled:
             context_messages = self.context_window.assemble_context(command)
 
-        # Unified awareness context assembly
-        user_id = self._user_id
         memory_context = None
 
-        if self.awareness:
-            # New unified path: single assembler replaces 5 scattered blocks
-            memory_context = self.awareness.assemble(command, user_id=user_id)
+        if guest:
+            # Guest mode: inject restriction instructions, skip personal context
+            memory_context = (
+                "GUEST MODE — the current speaker is unrecognized. "
+                "You may help with general knowledge, weather, and time queries. "
+                "If they ask about personal features (reminders, calendar, files, "
+                "email, memory, people, news, or system administration), "
+                "politely explain that voice authorization is required."
+            )
         else:
-            # Legacy fallback (when awareness assembler not wired)
-            if self.memory_manager:
-                memory_context = self.memory_manager.get_proactive_context(
-                    command, user_id=user_id)
-            if self.memory_manager:
-                user_ctx = self.memory_manager.get_full_user_context(user_id=user_id)
-                if user_ctx:
-                    memory_context = f"{memory_context}\n\n{user_ctx}" if memory_context else user_ctx
-            if self.people_manager:
-                people_ctx = self.people_manager.get_people_context(command, user_id=user_id)
-                if people_ctx:
-                    memory_context = f"{people_ctx}\n\n{memory_context}" if memory_context else people_ctx
-            if self.self_awareness:
-                manifest = self.self_awareness.get_capability_manifest()
-                compact = self.self_awareness.get_compact_state()
-                awareness_block = "\n".join(filter(None, [manifest, compact]))
-                if awareness_block:
-                    memory_context = f"{awareness_block}\n\n{memory_context}" if memory_context else awareness_block
+            # Unified awareness context assembly
+            user_id = self._user_id
 
-        # Document-aware LLM hint (request-specific, not awareness)
-        if doc_buffer and doc_buffer.active:
-            doc_hint = ("The user has loaded a document into the context buffer. "
-                        "Refer to the <document> tags in their message. "
-                        "Be analytical and specific in your response.")
-            memory_context = f"{doc_hint}\n\n{memory_context}" if memory_context else doc_hint
+            if self.awareness:
+                # New unified path: single assembler replaces 5 scattered blocks
+                memory_context = self.awareness.assemble(command, user_id=user_id)
+            else:
+                # Legacy fallback (when awareness assembler not wired)
+                if self.memory_manager:
+                    memory_context = self.memory_manager.get_proactive_context(
+                        command, user_id=user_id)
+                if self.memory_manager:
+                    user_ctx = self.memory_manager.get_full_user_context(user_id=user_id)
+                    if user_ctx:
+                        memory_context = f"{memory_context}\n\n{user_ctx}" if memory_context else user_ctx
+                if self.people_manager:
+                    people_ctx = self.people_manager.get_people_context(command, user_id=user_id)
+                    if people_ctx:
+                        memory_context = f"{people_ctx}\n\n{memory_context}" if memory_context else people_ctx
+                if self.self_awareness:
+                    manifest = self.self_awareness.get_capability_manifest()
+                    compact = self.self_awareness.get_compact_state()
+                    awareness_block = "\n".join(filter(None, [manifest, compact]))
+                    if awareness_block:
+                        memory_context = f"{awareness_block}\n\n{memory_context}" if memory_context else awareness_block
 
-        # Fact-extraction acknowledgment
+            # Document-aware LLM hint (request-specific, not awareness)
+            if doc_buffer and doc_buffer.active:
+                doc_hint = ("The user has loaded a document into the context buffer. "
+                            "Refer to the <document> tags in their message. "
+                            "Be analytical and specific in your response.")
+                memory_context = f"{doc_hint}\n\n{memory_context}" if memory_context else doc_hint
+
+        # Fact-extraction acknowledgment (skip for guests)
         llm_command = command
-        if self.memory_manager and self.memory_manager.last_extracted:
+        if not guest and self.memory_manager and self.memory_manager.last_extracted:
             subjects = ", ".join(
                 f.get("subject", "") for f in self.memory_manager.last_extracted
             )
