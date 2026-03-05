@@ -80,8 +80,8 @@
 | 13 | **Audio recording skill** — voice-triggered recording, date-based playback, 6 intents | 4-6 hours | Meeting notes, voice memos, dictation | skills/personal/audio_recording/ |
 | 14 | **Music control (Apple Music)** — playlist learning, volume via pactl | 6-10 hours | Entertainment integration | Per-user playlists. Apple Music web interface finicky |
 | 15 | **Screenshot via GNOME extension** — add screenshot D-Bus method, bypass portal dialog | 2-3 hours | Developer tools "show me" integration | Phase 5c from desktop plan |
-| 16 | **Unknown speaker / guest mode** — unknown voice → limited access, no personal data | 3-4 hours | Security + graceful handling of guests | PARTIAL — speaker ID returns None, no distinct guest behavior |
-| 30 | **Multi-speaker conversation tracking** — who said what when both speak | 4-6 hours | Persistent "who said what" history | Basic ID per turn, no persistent tracking |
+| 16 | **Unknown speaker / guest mode** — unknown voice → limited access, no personal data | 3-4 hours | Security + graceful handling of guests | **DONE** — `__guest__` sentinel, HAL 9000 greeting, tool filtering, LLM guest context |
+| 30 | **Multi-speaker conversation tracking** — who said what when both speak | 4-6 hours | Persistent "who said what" history | **DONE** — speaker-attributed history, LLM multi-speaker context, rapid-switch retort |
 
 ---
 
