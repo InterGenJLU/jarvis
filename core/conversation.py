@@ -45,6 +45,7 @@ class ConversationManager:
         
         # Current conversation state
         self.current_user = None
+        self.client_type = "desktop"  # "desktop" or "mobile" — set by web frontend
         self.conversation_active = False
         
         # Follow-up window state

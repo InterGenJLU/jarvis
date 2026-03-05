@@ -225,13 +225,13 @@ class WebNavigationSkill(BaseSkill):
         # General web search
         self.register_semantic_intent(
             examples=[
-                "search for quantum computing",
+                "search for quantum computing news",
                 "look up ROCm drivers",
                 "google best pizza near me",
-                "find information about black holes",
                 "search the web for python tutorials",
                 "can you look up how to install docker",
-                "I need to find a good mechanic",
+                "search for reviews of the new iPhone",
+                "find me a good mechanic near Gardendale",
             ],
             handler=self.search_web,
             threshold=0.55,

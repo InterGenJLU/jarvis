@@ -136,6 +136,11 @@ class ConversationRouter:
         """True when the current speaker is unrecognized (guest mode)."""
         return self._user_id == "__guest__"
 
+    @property
+    def _is_mobile(self) -> bool:
+        """True when the session is from a mobile client."""
+        return getattr(self.conversation, 'client_type', 'desktop') == "mobile"
+
     def route(self, command: str, *,
               in_conversation: bool = False,
               doc_buffer=None) -> RouteResult:
@@ -1764,6 +1769,10 @@ class ConversationRouter:
     # Tools allowed for guest (unrecognized speaker) sessions.
     _GUEST_ALLOWED_TOOLS = {"get_weather", "web_search"}
 
+    # Skills/tools excluded on mobile (desktop-only: open browser, launch apps, etc.)
+    _MOBILE_EXCLUDED_SKILLS = {"web_navigation", "app_launcher", "file_editor"}
+    _MOBILE_EXCLUDED_TOOLS = {"developer_tools"}
+
     def _handle_tool_calling(self, command: str,
                              in_conversation: bool = False) -> RouteResult | None:
         """P4-LLM: Route through LLM with dynamically selected tools.
@@ -1788,6 +1797,11 @@ class ConversationRouter:
             if not tools:
                 logger.debug("P4-LLM: guest — no allowed tools for command")
                 return None
+
+        # Mobile mode: strip desktop-only tools (browser, app launcher, etc.)
+        if self._is_mobile:
+            tools = [t for t in tools
+                     if t["function"]["name"] not in self._MOBILE_EXCLUDED_TOOLS]
 
         logger.debug(f"P4-LLM: selected {len(tools)} tools, routing to LLM")
 
@@ -1948,6 +1962,14 @@ class ConversationRouter:
         """P4: Skill routing (semantic + keyword matching)."""
         response = self.skill_manager.execute_intent(command)
         match_info = self.skill_manager._last_match_info
+
+        # Mobile mode: block desktop-only skills after matching
+        if self._is_mobile and match_info:
+            matched_skill = match_info.get("skill", "")
+            if matched_skill in self._MOBILE_EXCLUDED_SKILLS:
+                logger.debug(f"P4: blocked desktop-only skill '{matched_skill}' on mobile")
+                return None
+
         if response:
             logger.info("Handled by skill")
             return RouteResult(
@@ -2057,6 +2079,18 @@ class ConversationRouter:
                 memory_context = (
                     f"{speaker_note}\n\n{memory_context}" if memory_context
                     else speaker_note
+                )
+
+            # Mobile context: tell LLM not to suggest desktop actions
+            if self._is_mobile:
+                mobile_note = (
+                    "MOBILE SESSION — the user is on a phone. Do NOT suggest opening "
+                    "browsers, launching apps, editing files on the server, or any "
+                    "desktop-only actions. Prefer concise answers."
+                )
+                memory_context = (
+                    f"{mobile_note}\n\n{memory_context}" if memory_context
+                    else mobile_note
                 )
 
             # Document-aware LLM hint (request-specific, not awareness)

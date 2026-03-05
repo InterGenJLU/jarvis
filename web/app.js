@@ -154,6 +154,13 @@
             const savedUser = localStorage.getItem('jarvis-user') || 'christopher';
             userSelect.value = savedUser;
             ws.send(JSON.stringify({ type: 'set_user', user_id: savedUser }));
+            // Tell server about client type (mobile detection)
+            ws.send(JSON.stringify({
+                type: 'client_info',
+                user_agent: navigator.userAgent,
+                screen_width: screen.width,
+                screen_height: screen.height,
+            }));
         };
 
         ws.onmessage = function (event) {

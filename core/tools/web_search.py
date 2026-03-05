@@ -27,11 +27,13 @@ SCHEMA = {
 }
 
 SYSTEM_PROMPT_RULE = (
-    "For factual questions about the OUTSIDE WORLD (people, "
-    "events, specific news topics, scores, prices, etc.), call web_search. "
-    "When building the query, extract ONLY the informational need — strip "
-    "conversational filler like 'can you find me', 'I need', 'please', "
-    "'I'm hungry'. Example: 'Can you find me a good homemade pizza recipe?' "
+    "Call web_search ONLY for CURRENT or SPECIFIC real-world data: "
+    "breaking news, live scores, stock prices, product reviews, event dates, "
+    "weather alerts, people in the news, recent releases, local businesses. "
+    "Do NOT search for general knowledge you already know (science facts, "
+    "history, definitions, how things work, famous people's biographies). "
+    "When building the query, strip conversational filler ('can you find me', "
+    "'I need', 'please'). Example: 'Can you find me a good pizza recipe?' "
     "→ query: 'best homemade pizza recipe'. "
     "NOT for: opinions, creative writing, math, coding help, local system info."
 )

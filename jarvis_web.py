@@ -1938,6 +1938,15 @@ async def websocket_handler(request):
                     except Exception:
                         logger.exception("Failed to reload history after user switch")
 
+                elif msg_type == 'client_info':
+                    ua = data.get('user_agent', '')
+                    sw = data.get('screen_width', 9999)
+                    # Mobile heuristic: UA contains mobile keywords OR narrow screen
+                    _mobile_kw = ('iPhone', 'iPad', 'Android', 'Mobile')
+                    is_mobile = any(k in ua for k in _mobile_kw) or sw < 768
+                    conversation.client_type = "mobile" if is_mobile else "desktop"
+                    logger.info(f"Client type: {conversation.client_type} (screen_width={sw})")
+
                 elif msg_type == 'restart':
                     logger.info("Restart requested via web UI")
                     await ws.send_json({'type': 'info', 'content': 'Restarting...'})
