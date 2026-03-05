@@ -17,7 +17,6 @@ import re
 import threading
 import time
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from typing import Optional
 
@@ -94,7 +93,8 @@ class STTWorker(threading.Thread):
     and emits TRANSCRIPTION_READY events to the coordinator.
 
     When a SpeakerIdentifier is provided, speaker identification runs
-    in parallel with Whisper transcription via a ThreadPoolExecutor.
+    first (~5 ms) so the result can route transcription to the correct
+    per-speaker Whisper model.
     """
 
     def __init__(self, stt, event_queue: queue.Queue, audio_queue: queue.Queue,
@@ -117,12 +117,14 @@ class STTWorker(threading.Thread):
                 sample_rate = 16000  # audio is always resampled to 16 kHz
 
                 if self.speaker_id is not None:
-                    # Run Whisper + speaker ID in parallel
-                    with ThreadPoolExecutor(max_workers=2) as pool:
-                        stt_future = pool.submit(self.stt.transcribe, audio, sample_rate)
-                        sid_future = pool.submit(self.speaker_id.identify, audio, sample_rate)
-                        text = stt_future.result()
-                        speaker_user_id, speaker_confidence = sid_future.result()
+                    # Identify speaker first (~5 ms) so we can pick the
+                    # right Whisper model for transcription.
+                    speaker_user_id, speaker_confidence = self.speaker_id.identify(
+                        audio, sample_rate
+                    )
+                    text = self.stt.transcribe(
+                        audio, sample_rate, speaker_user_id=speaker_user_id
+                    )
                 else:
                     text = self.stt.transcribe(audio, sample_rate)
                     speaker_user_id, speaker_confidence = None, 0.0

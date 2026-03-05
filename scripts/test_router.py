@@ -229,22 +229,47 @@ def test_bare_ack_filter(router, conv_state):
 
 
 def test_skill_routing(router):
-    section("Skill Routing")
+    section("Skill Routing — P4 legacy (non-migrated skills)")
 
-    tests = [
+    # Non-migrated skills still route through keyword/semantic matching
+    legacy_tests = [
         ("what time is it", "time_info"),
-        ("what's the weather", "weather"),
-        ("how are you", "conversation"),
-        ("how are you feeling this morning", "conversation"),
-        ("thank you", "conversation"),
-        ("goodbye", "conversation"),
     ]
-    for cmd, expected_skill in tests:
+    for cmd, expected_skill in legacy_tests:
         r = router.route(cmd)
         skill_name = r.match_info.get("skill_name", "") if r.match_info else ""
         check(f"'{cmd}' → {expected_skill}",
               r.handled and r.source == "skill" and expected_skill in skill_name.lower(),
               f"handled={r.handled}, source={r.source}, skill={skill_name}")
+
+    section("Skill Routing — P4-LLM tool-calling (migrated skills)")
+
+    # Migrated skills go through LLM tool-calling: handled=False, intent=tool_calling,
+    # use_tools contains the expected tool schema.
+    tool_tests = [
+        ("what's the weather", "get_weather"),
+        ("show me the git log", "developer_tools"),
+        ("how many files in my documents folder", "find_files"),
+    ]
+    for cmd, expected_tool in tool_tests:
+        r = router.route(cmd)
+        tool_names = [t["function"]["name"] for t in r.use_tools] if r.use_tools else []
+        check(f"'{cmd}' → tool_calling ({expected_tool})",
+              r.intent == "tool_calling" and expected_tool in tool_names,
+              f"intent={r.intent}, tools={tool_names}")
+
+    section("Skill Routing — LLM-native (no skill/tool needed)")
+
+    # Conversation skill is disabled — LLM handles greetings, thanks, farewells
+    # natively. These should fall through to LLM fallback (handled=False, llm_command set).
+    native_llm = ["how are you", "thank you", "goodbye"]
+    for cmd in native_llm:
+        r = router.route(cmd)
+        # Either LLM fallback or tool_calling is acceptable — both mean the LLM handles it
+        fell_through = (not r.handled and r.llm_command) or r.intent == "tool_calling"
+        check(f"'{cmd}' → LLM (no skill)",
+              fell_through,
+              f"handled={r.handled}, intent={r.intent}")
 
 
 def test_memory_ops(router, memory_manager):
@@ -373,19 +398,18 @@ def test_news_continuation(router, news_manager):
     remaining = news_manager.get_unread_count()
     total_unread = sum(remaining.values()) if remaining else 0
 
-    # News continuation phrases may be caught by the news skill at P4
-    # (keyword "headlines") OR by P5 news continuation handler. Either
-    # way, the command should be handled and produce a response.
+    # "read more" can be handled by P4-LLM tool-calling (get_news tool),
+    # P5 news_continue handler, or fall through to LLM.
+    r = router.route("read more")
     if total_unread == 0:
-        r = router.route("read more")
-        check("'read more' with no unread → falls through to LLM or skill",
-              not (r.intent == "news_continue"),
+        check("'read more' with no unread → not news_continue",
+              r.intent != "news_continue",
               f"intent={r.intent}")
     else:
-        # "read more" should be handled by either news skill (P4) or P5
-        r = router.route("read more")
-        check("'read more' with unread → handled (skill or news_continue)",
-              r.handled,
+        # With unread articles: tool-calling, news_continue, or skill are all valid
+        routed = r.handled or r.intent == "tool_calling"
+        check("'read more' with unread → routed (tool_calling or news_continue)",
+              routed,
               f"handled={r.handled}, intent={r.intent}")
 
 

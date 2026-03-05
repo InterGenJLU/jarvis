@@ -299,6 +299,8 @@ web:
 stt_finetuned:
   enabled: true
   model_path: /mnt/storage/jarvis/models/voice_training/whisper_finetuned/final
+  user: christopher              # speaker this fine-tuned model belongs to
+  fallback_model: base           # stock model for other / unknown speakers
 
 # External MCP servers (inbound bridge — consumed as native JARVIS tools)
 # Each entry spawns a subprocess, discovers its tools, and registers them

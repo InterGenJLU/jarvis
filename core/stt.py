@@ -1,53 +1,58 @@
 """
 Speech-to-Text Engine using faster-whisper
 
-Ultra-fast inference with CTranslate2 backend
+Ultra-fast inference with CTranslate2 backend.
+Supports multiple models keyed by speaker — fine-tuned for known users,
+stock base for everyone else.
 """
 
 import numpy as np
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 from core.logger import get_logger
 
 
 class SpeechToText:
-    """Speech-to-text engine using faster-whisper"""
-    
+    """Speech-to-text engine using faster-whisper with per-speaker model routing"""
+
     def __init__(self, config):
         """
-        Initialize STT engine
-        
-        Args:
-            config: Configuration object
+        Initialize STT engine.
+
+        When stt_finetuned is enabled, loads two models:
+        - Fine-tuned model keyed to ``stt_finetuned.user`` (default ``christopher``)
+        - Stock whisper-base keyed to ``default`` (for all other / unknown speakers)
         """
         self.config = config
         self.logger = get_logger(__name__, config)
-        
+        self.models: Dict[str, object] = {}  # user_id | "default" → WhisperModel
+
         # Check for fine-tuned model
         self.use_finetuned = config.get("stt_finetuned.enabled", False)
-        
+
         if self.use_finetuned:
             model_path = config.get("stt_finetuned.model_path")
-            # Use CTranslate2 version if available
-            # CTranslate2 model is in voice_training directory
-            model_parent = Path(model_path).parent.parent  # Go up from final/ to voice_training/
+            model_parent = Path(model_path).parent.parent
             ct2_path = str(model_parent / "whisper_finetuned_ct2")
-            
-            if Path(ct2_path).exists():
-                self.logger.info("Using fine-tuned Whisper (faster-whisper/CTranslate2)")
-                self._init_faster_whisper(ct2_path)
-            else:
-                # CTranslate2 model not found
+
+            if not Path(ct2_path).exists():
                 self.logger.error("CTranslate2 model not found at expected location")
                 self.logger.error(f"Expected: {ct2_path}")
-                self.logger.error("Run conversion first!")
                 raise FileNotFoundError(f"CTranslate2 model not found: {ct2_path}")
+
+            finetuned_user = config.get("stt_finetuned.user", "primary_user")
+            fallback_model = config.get("stt_finetuned.fallback_model", "base")
+
+            self.logger.info(f"Loading fine-tuned Whisper for '{finetuned_user}'")
+            self._load_model(finetuned_user, ct2_path)
+
+            self.logger.info(f"Loading fallback Whisper ({fallback_model}) for other speakers")
+            self._load_model("default", fallback_model)
         else:
-            # Use base model with faster-whisper
             self.logger.info("Using base Whisper (faster-whisper)")
-            self._init_faster_whisper("base")
-        
+            self._load_model("default", "base")
+
         self.use_fallback = False
         self.language = config.get("stt.language", "en")
 
@@ -58,47 +63,39 @@ class SpeechToText:
 
         # Debug audio saving — disabled by default to save ~5-15ms per transcription
         self.debug_save_audio = config.get("stt.debug_save_audio", False)
-    
-    def _init_faster_whisper(self, model_path: str):
-        """Initialize faster-whisper"""
+
+    def _load_model(self, key: str, model_path: str):
+        """Load a WhisperModel and store it under *key*, then warm it up."""
         try:
             from faster_whisper import WhisperModel
             import ctranslate2
-            
+
             # Assert GPU availability early (production safeguard)
             devs = ctranslate2.get_supported_compute_types("cuda")
             if not devs:
                 raise RuntimeError("ROCm GPU not available to CTranslate2")
-            
-            self.logger.info(f"Loading model from {model_path}...")
-            
-            # GPU mode - no torch import to avoid ROCm library conflicts
-            device = "cuda"
-            compute_type = "float16"
-            
-            self.logger.info("Initializing faster-whisper on GPU")
-            
-            self.model = WhisperModel(
-                model_path,
-                device=device,
-                compute_type=compute_type,
-                num_workers=1
-            )
-            
-            self.logger.info("🚀 GPU ACTIVE")
 
-            # Warm-up: run a dummy transcription to force CTranslate2 to
-            # fully load weights into GPU memory.  Without this, the first
-            # real transcription pays a ~500ms-1s lazy-load penalty.
-            dummy = np.zeros(16000, dtype=np.float32)  # 1s silence
-            list(self.model.transcribe(dummy, language="en")[0])
-            self.logger.info("✓ faster-whisper model loaded (warm-up complete)")
+            self.logger.info(f"Loading model '{key}' from {model_path}...")
+
+            model = WhisperModel(
+                model_path,
+                device="cuda",
+                compute_type="float16",
+                num_workers=1,
+            )
+
+            # Warm-up: force CTranslate2 to fully load weights into GPU memory.
+            dummy = np.zeros(16000, dtype=np.float32)
+            list(model.transcribe(dummy, language="en")[0])
+
+            self.models[key] = model
+            self.logger.info(f"Model '{key}' ready (warm-up complete)")
 
         except ImportError:
             self.logger.error("faster-whisper not available")
             raise ImportError("Install: pip install faster-whisper")
         except Exception as e:
-            self.logger.error(f"Failed to load model: {e}")
+            self.logger.error(f"Failed to load model '{key}': {e}")
             raise
     def _apply_gain(self, audio: np.ndarray) -> np.ndarray:
         """Normalize audio to target peak level.
@@ -173,20 +170,32 @@ class SpeechToText:
         except Exception as e:
             self.logger.debug(f"Debug save failed: {e}")
 
-    def transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000) -> str:
+    def transcribe(self, audio_data: np.ndarray, sample_rate: int = 16000,
+                   speaker_user_id: Optional[str] = None) -> str:
         """
-        Transcribe audio data to text
-        
+        Transcribe audio data to text using the speaker-appropriate model.
+
         Args:
             audio_data: Audio samples as numpy array (float32, mono)
             sample_rate: Sample rate of audio (default: 16000)
-            
+            speaker_user_id: Identified speaker; selects fine-tuned model if
+                available, otherwise falls back to ``default``.
+
         Returns:
             Transcribed text
         """
         if self.use_fallback:
             return self.fallback.transcribe(audio_data, sample_rate)
-        
+
+        # Select the right model for this speaker
+        model = self.models.get(speaker_user_id) if speaker_user_id else None
+        if model is None:
+            model = self.models["default"]
+            used_key = "default"
+        else:
+            used_key = speaker_user_id
+        self.logger.debug(f"STT model: '{used_key}' (speaker={speaker_user_id})")
+
         try:
             # Ensure mono
             if len(audio_data.shape) > 1:
@@ -217,7 +226,7 @@ class SpeechToText:
                 self._debug_save_audio(audio_data)
 
             # Transcribe with optimizations
-            segments, info = self.model.transcribe(
+            segments, info = model.transcribe(
                 audio_data,
                 language=self.language,
                 beam_size=3,  # Sweet spot for short voice commands (was 5)
