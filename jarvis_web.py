@@ -241,6 +241,13 @@ def init_components(config, tts_proxy):
     from core.interaction_cache import get_interaction_cache
     components['interaction_cache'] = get_interaction_cache(config=config)
 
+    # Desktop manager (for take_screenshot tool)
+    if config.get("desktop.enabled", False):
+        from core.desktop_manager import get_desktop_manager
+        from core.tool_executor import set_desktop_manager
+        dm = get_desktop_manager(config)
+        set_desktop_manager(dm)
+
     # LLM metrics tracking
     components['metrics'] = get_metrics_tracker(config)
 
@@ -1303,6 +1310,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
 
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
+            tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
 
             logger.info(f"Tool call: {tool_call_request.name}({tool_call_request.arguments})")
             if tool_call_request.name == 'web_search':
@@ -1357,14 +1365,16 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             else:
                 # Skill tool — dispatch via tool_executor
                 from core.tool_executor import execute_tool
+                from core.tool_registry import parse_tool_result
                 await ws.send_json({
                     'type': 'info',
                     'content': f'Running: {tool_call_request.name}',
                 })
-                tool_result = await asyncio.to_thread(
+                raw_result = await asyncio.to_thread(
                     execute_tool, tool_call_request.name,
                     tool_call_request.arguments,
                 )
+                tool_result, tool_image_data = parse_tool_result(raw_result)
 
                 # Artifact cache — store non-web-search tool results
                 _cache = get_interaction_cache()
@@ -1380,12 +1390,14 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             synthesis_queue = asyncio.Queue()
             _current_tcr = tool_call_request
             _current_tr = tool_result
+            _current_img = tool_image_data
 
-            def _synthesis_producer(tcr=_current_tcr, tr=_current_tr):
+            def _synthesis_producer(tcr=_current_tcr, tr=_current_tr, img=_current_img):
                 try:
                     for token in llm.continue_after_tool_call(
                         tcr, tr,
                         tools=use_tools_list,
+                        image_data=img,
                     ):
                         asyncio.run_coroutine_threadsafe(
                             synthesis_queue.put(('item', token)), loop

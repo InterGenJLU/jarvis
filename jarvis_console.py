@@ -351,6 +351,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
 
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
+            tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
 
             if tool_call_request.name == "web_search":
                 query = tool_call_request.arguments.get("query", command)
@@ -393,10 +394,12 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                     ))
             else:
                 from core.tool_executor import execute_tool
+                from core.tool_registry import parse_tool_result
                 console.print(f"\n[dim]Running: {tool_call_request.name}[/dim]")
-                tool_result = execute_tool(
+                raw_result = execute_tool(
                     tool_call_request.name, tool_call_request.arguments
                 )
+                tool_result, tool_image_data = parse_tool_result(raw_result)
 
                 # Artifact cache — non-web-search tool results
                 from core.interaction_cache import get_interaction_cache, store_tool_artifact
@@ -417,6 +420,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
             for item in llm.continue_after_tool_call(
                 tool_call_request, tool_result,
                 tools=use_tools_list,
+                image_data=tool_image_data if tool_call_request.name != "web_search" else None,
             ):
                 if isinstance(item, ToolCallRequest):
                     next_tool_call = item
@@ -962,10 +966,12 @@ def run_console(config, mode, user_id="user"):
                        f"threshold={context_window.topic_shift_threshold}, "
                        f"prior={cw_stats['segments']} seg(s))")
 
-    # Desktop manager (for /screenshot)
+    # Desktop manager (for /screenshot and take_screenshot tool)
     if config.get("desktop.enabled", False):
         from core.desktop_manager import get_desktop_manager
-        get_desktop_manager(config)
+        from core.tool_executor import set_desktop_manager
+        dm = get_desktop_manager(config)
+        set_desktop_manager(dm)
 
     # LLM metrics tracking
     metrics = get_metrics_tracker(config)

@@ -1796,7 +1796,7 @@ class ConversationRouter:
 
     # Skills/tools excluded on mobile (desktop-only: open browser, launch apps, etc.)
     _MOBILE_EXCLUDED_SKILLS = {"web_navigation", "app_launcher", "file_editor"}
-    _MOBILE_EXCLUDED_TOOLS = {"developer_tools"}
+    _MOBILE_EXCLUDED_TOOLS = {"developer_tools", "take_screenshot"}
 
     def _handle_tool_calling(self, command: str,
                              in_conversation: bool = False) -> RouteResult | None:

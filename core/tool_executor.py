@@ -43,3 +43,11 @@ def set_memory_manager(mgr):
     Called during init in pipeline.py, jarvis_console.py, jarvis_web.py.
     """
     inject_dependencies({"memory_manager": mgr})
+
+
+def set_desktop_manager(mgr):
+    """Wire the desktop manager singleton for take_screenshot tool dispatch.
+
+    Called during init in pipeline.py, jarvis_console.py, jarvis_web.py.
+    """
+    inject_dependencies({"desktop_manager": mgr})

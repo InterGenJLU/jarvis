@@ -474,10 +474,12 @@ class Coordinator:
             set_current_user_fn(
                 lambda: getattr(self.conversation, 'current_user', None) or 'christopher'
             )
-        from core.tool_executor import set_config as set_tool_config, set_memory_manager
+        from core.tool_executor import set_config as set_tool_config, set_memory_manager, set_desktop_manager
         set_tool_config(config)
         if memory_manager:
             set_memory_manager(memory_manager)
+        if desktop_manager:
+            set_desktop_manager(desktop_manager)
         self.news_manager = news_manager
         self.calendar_manager = calendar_manager
         self.profile_manager = profile_manager
@@ -1158,6 +1160,7 @@ class Coordinator:
                 )
 
                 # Execute the tool
+                tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
                 if tool_call_request.name == "web_search":
                     query = tool_call_request.arguments.get("query", command)
                     print(f"🔍 Searching: {query}")
@@ -1200,10 +1203,12 @@ class Coordinator:
                         ))
                 else:
                     from core.tool_executor import execute_tool
+                    from core.tool_registry import parse_tool_result
                     print(f"🔧 Running: {tool_call_request.name}")
-                    tool_result = execute_tool(
+                    raw_result = execute_tool(
                         tool_call_request.name, tool_call_request.arguments
                     )
+                    tool_result, tool_image_data = parse_tool_result(raw_result)
                     self.logger.info(f"Tool result: {tool_result[:100]}")
 
                     # Artifact cache — store non-web-search tool results
@@ -1236,6 +1241,7 @@ class Coordinator:
                 for item in self.llm.continue_after_tool_call(
                     tool_call_request, tool_result,
                     tools=use_tools,
+                    image_data=tool_image_data if tool_call_request.name != "web_search" else None,
                 ):
                     if isinstance(item, ToolCallRequest):
                         next_tool_call = item

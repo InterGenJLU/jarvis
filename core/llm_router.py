@@ -1184,7 +1184,8 @@ class LLMRouter:
     def continue_after_tool_call(self, tool_call: ToolCallRequest,
                                   tool_result: str,
                                   max_tokens: int = 400,
-                                  tools: list | None = None) -> Iterator[str]:
+                                  tools: list | None = None,
+                                  image_data: str | None = None) -> Iterator[str]:
         """Continue LLM generation after a tool call completes.
 
         Sends the tool result back to the LLM and streams its synthesized answer.
@@ -1242,51 +1243,46 @@ class LLMRouter:
             honorific_rule = f"YOU MUST address the user as '{h}' naturally in your response."
         if tools:
             # Multi-tool mode: allow LLM to call remaining tools before answering
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"Today's date is {today}. Current time: {current_time}.\n"
-                    "RULES — follow these EXACTLY:\n"
-                    "1. Check the user's ORIGINAL request. If they asked for multiple things "
-                    "(e.g. 'time AND weather'), YOU MUST call the next tool NOW. "
-                    "DO NOT give a final answer until you have ALL requested information.\n"
-                    "2. If the user asked for a recipe, instructions, how-to, or steps: "
-                    "YOU MUST pick the single best result from the search results. "
-                    "Describe it briefly (title, source, why it's a good pick) "
-                    "AND THEN ASK 'Would you like me to read through it all for you?' and then STOP. "
-                    "DO NOT list ingredients or steps. DO NOT list multiple results.\n"
-                    f"3. {honorific_rule}\n"
-                    "4. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
-                    "YOU MUST jump straight into the answer."
-                ),
-            })
+            synthesis_text = (
+                f"Today's date is {today}. Current time: {current_time}.\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. Check the user's ORIGINAL request. If they asked for multiple things "
+                "(e.g. 'time AND weather'), YOU MUST call the next tool NOW. "
+                "DO NOT give a final answer until you have ALL requested information.\n"
+                "2. If the user asked for a recipe, instructions, how-to, or steps: "
+                "YOU MUST pick the single best result from the search results. "
+                "Describe it briefly (title, source, why it's a good pick) "
+                "AND THEN ASK 'Would you like me to read through it all for you?' and then STOP. "
+                "DO NOT list ingredients or steps. DO NOT list multiple results.\n"
+                f"3. {honorific_rule}\n"
+                "4. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
+                "YOU MUST jump straight into the answer."
+            )
         else:
-            messages.append({
-                "role": "user",
-                "content": (
-                    f"Today's date is {today}. Current time: {current_time}.\n"
-                    "RULES — follow these EXACTLY:\n"
-                    "1. If the user asked for a recipe, instructions, how-to, or steps: "
-                    "YOU MUST describe what you found (title, source, why it's good) "
-                    "AND THEN ASK 'Would you like me to read through it all for you?' and then STOP. "
-                    "DO NOT list ingredients or steps unless the user gives you an affirmative answer.\n"
-                    "2. YOU MUST give a direct answer based on the search results above. "
-                    "YOU MUST include specific details like scores, dates, and numbers when available. "
-                    "YOU MUST pick the best result and present it as your own answer.\n"
-                    "3. YOU MUST maintain strict political neutrality — present facts objectively. "
-                    "DO NOT add editorial bias, emphasis on controversies, or opinionated framing.\n"
-                    "4. YOU MUST compare any event dates in the results against today's date. "
-                    "If an event is scheduled for a FUTURE date, YOU MUST clearly state it hasn't "
-                    "happened yet. DO NOT report predictions, odds, or speculation as fact.\n"
-                    "5. If the results DO NOT contain a clear answer, YOU MUST say so honestly. "
-                    "DO NOT fabricate or guess.\n"
-                    f"6. {honorific_rule}\n"
-                    "7. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
-                    "YOU MUST jump straight into the answer. "
-                    "DO NOT tell the user to check another website or look elsewhere. "
-                    "You ARE their source of information."
-                ),
-            })
+            synthesis_text = (
+                f"Today's date is {today}. Current time: {current_time}.\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. If the user asked for a recipe, instructions, how-to, or steps: "
+                "YOU MUST describe what you found (title, source, why it's good) "
+                "AND THEN ASK 'Would you like me to read through it all for you?' and then STOP. "
+                "DO NOT list ingredients or steps unless the user gives you an affirmative answer.\n"
+                "2. YOU MUST give a direct answer based on the search results above. "
+                "YOU MUST include specific details like scores, dates, and numbers when available. "
+                "YOU MUST pick the best result and present it as your own answer.\n"
+                "3. YOU MUST maintain strict political neutrality — present facts objectively. "
+                "DO NOT add editorial bias, emphasis on controversies, or opinionated framing.\n"
+                "4. YOU MUST compare any event dates in the results against today's date. "
+                "If an event is scheduled for a FUTURE date, YOU MUST clearly state it hasn't "
+                "happened yet. DO NOT report predictions, odds, or speculation as fact.\n"
+                "5. If the results DO NOT contain a clear answer, YOU MUST say so honestly. "
+                "DO NOT fabricate or guess.\n"
+                f"6. {honorific_rule}\n"
+                "7. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
+                "YOU MUST jump straight into the answer. "
+                "DO NOT tell the user to check another website or look elsewhere. "
+                "You ARE their source of information."
+            )
+        messages.append(self._build_user_message(synthesis_text, image_data))
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()

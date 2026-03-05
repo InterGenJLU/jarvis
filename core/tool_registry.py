@@ -191,7 +191,21 @@ def build_tool_prompt_rules(active_tool_names: set) -> str:
 _REGISTRY_READY = False  # Set True after inject_dependencies()
 
 
-def execute_tool(tool_name: str, arguments: dict) -> str:
+def parse_tool_result(result) -> tuple:
+    """Extract text and optional image data from a tool handler result.
+
+    Tool handlers may return a plain string or a dict with
+    {"text": str, "image_data": str} for multimodal results (e.g. screenshots).
+
+    Returns:
+        (text: str, image_data: str | None)
+    """
+    if isinstance(result, dict):
+        return result.get("text", str(result)), result.get("image_data")
+    return result, None
+
+
+def execute_tool(tool_name: str, arguments: dict) -> str | dict:
     """Dispatch a tool call to the appropriate handler.
 
     Args:
@@ -199,8 +213,8 @@ def execute_tool(tool_name: str, arguments: dict) -> str:
         arguments: The parsed arguments dict.
 
     Returns:
-        Plain-text result string for the LLM to synthesize.
-        On error, returns an error description (not an exception).
+        Plain-text result string, or dict with {"text", "image_data"}
+        for multimodal tools. On error, returns an error description string.
     """
     if not _REGISTRY_READY:
         logger.warning("execute_tool called before inject_dependencies(): %s",
