@@ -373,6 +373,49 @@ class DesktopManager:
             self.logger.warning(f"set_clipboard failed: {e}")
             return False
 
+    # ── Screenshot ───────────────────────────────────────────────────
+
+    def take_screenshot(self, target: str = "monitor",
+                        output_path: str = None) -> Optional[str]:
+        """Capture a screenshot using gnome-screenshot.
+
+        Args:
+            target: "monitor" (focused monitor), "window" (active window),
+                    or "all" (all monitors via gnome-screenshot default)
+            output_path: Custom output path. Auto-generates temp path if None.
+
+        Returns:
+            File path on success, None on failure.
+        """
+        import time as _time
+        if output_path is None:
+            output_path = f"/tmp/jarvis_screenshot_{int(_time.time())}.png"
+
+        try:
+            if target == "window":
+                cmd = ["gnome-screenshot", "-w", "-f", output_path]
+            elif target == "all":
+                cmd = ["gnome-screenshot", "-f", output_path]
+            else:  # "monitor" — focused monitor
+                cmd = ["gnome-screenshot", "-f", output_path]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and os.path.isfile(output_path):
+                self.logger.info(f"Screenshot saved: {output_path}")
+                return output_path
+            else:
+                self.logger.warning(f"Screenshot failed: {result.stderr.strip()}")
+                return None
+        except subprocess.TimeoutExpired:
+            self.logger.warning("Screenshot timed out")
+            return None
+        except FileNotFoundError:
+            self.logger.warning("gnome-screenshot not found")
+            return None
+        except Exception as e:
+            self.logger.warning(f"Screenshot error: {e}")
+            return None
+
     # ── File operations ─────────────────────────────────────────────
 
     def open_file(self, file_path: str) -> bool:

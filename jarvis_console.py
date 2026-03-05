@@ -120,18 +120,20 @@ class SessionStats:
 class SlashCompleter(Completer):
     """Tab completion for slash commands and /file paths."""
 
-    _commands = ["/paste", "/file", "/clipboard", "/append", "/context", "/clear", "/help"]
+    _commands = ["/paste", "/file", "/clipboard", "/append", "/context", "/clear",
+                 "/image", "/screenshot", "/help"]
     _path_completer = PathCompleter(expanduser=True)
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
 
-        # After "/file " — complete file paths
-        if text.startswith("/file "):
-            path_text = text[6:]
-            path_doc = PTDocument(path_text, len(path_text))
-            yield from self._path_completer.get_completions(path_doc, complete_event)
-            return
+        # After "/file " or "/image " — complete file paths
+        for prefix in ("/file ", "/image "):
+            if text.startswith(prefix):
+                path_text = text[len(prefix):]
+                path_doc = PTDocument(path_text, len(path_text))
+                yield from self._path_completer.get_completions(path_doc, complete_event)
+                return
 
         # After "/" — complete slash command names
         if text.startswith("/") and " " not in text:
@@ -271,7 +273,8 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         use_tools_list=None, tool_temperature=None,
                         tool_presence_penalty=None,
                         memory_manager=None, raw_command=None,
-                        user_id=None, conv_state=None):
+                        user_id=None, conv_state=None,
+                        image_data=None):
     """Stream LLM response with typewriter output, web research, and quality gate.
 
     Returns the full accumulated response text, or empty string on failure.
@@ -297,6 +300,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 tools=use_tools_list,
                 tool_temperature=tool_temperature,
                 tool_presence_penalty=tool_presence_penalty,
+                image_data=image_data,
             ) if _enable_tools else
             llm.stream(
                 user_message=command,
@@ -304,6 +308,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 memory_context=memory_context,
                 conversation_messages=conversation_messages,
                 max_tokens=max_tokens,
+                image_data=image_data,
             )
         )
 
@@ -491,6 +496,12 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
         real_tts.speak(full_response)
 
     return full_response
+
+
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+# Mutable state for pending image — shared between slash handler and REPL
+_pending_image = {"data": None, "label": None}
 
 
 def _handle_slash_command(command, doc_buffer, console, pt_history):
@@ -713,6 +724,93 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
         console.print(f"[green]Cleared[/green] document buffer ({old_source}, ~{old_tokens} tokens)")
         return True
 
+    elif cmd == "/image":
+        import base64
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        if not arg:
+            console.print("[yellow]Usage: /image <path>[/yellow]")
+            return True
+
+        arg = arg.strip("'\"")
+        filepath = Path(arg).expanduser().resolve()
+
+        if not filepath.exists():
+            console.print(f"[red]File not found:[/red] {filepath}")
+            return True
+        if not filepath.is_file():
+            console.print(f"[red]Not a file:[/red] {filepath}")
+            return True
+        if filepath.suffix.lower() not in _IMAGE_EXTENSIONS:
+            console.print(f"[red]Unsupported format:[/red] {filepath.suffix} — "
+                          f"supported: {', '.join(sorted(_IMAGE_EXTENSIONS))}")
+            return True
+
+        size = filepath.stat().st_size
+        if size > 10_000_000:
+            console.print(f"[red]Image too large:[/red] {size:,} bytes (max 10 MB)")
+            return True
+
+        try:
+            raw = filepath.read_bytes()
+            b64 = base64.b64encode(raw).decode("ascii")
+        except Exception as e:
+            console.print(f"[red]Error reading image:[/red] {e}")
+            return True
+
+        _pending_image["data"] = b64
+        _pending_image["label"] = filepath.name
+        console.print(Panel(
+            f"[bold green]Image loaded[/bold green] {filepath.name} ({size // 1024} KB)\n"
+            f"[dim]Send a message to analyze this image. Image clears after use.[/dim]",
+            title="[cyan]Image Attached[/cyan]",
+            border_style="cyan",
+        ))
+        return True
+
+    elif cmd == "/screenshot":
+        import base64
+        from core.desktop_manager import get_desktop_manager
+        dm = get_desktop_manager()
+        if dm is None:
+            console.print("[red]Desktop manager not available.[/red]")
+            return True
+
+        # Parse optional target: /screenshot [window|all]
+        arg = parts[1].strip().lower() if len(parts) > 1 else "monitor"
+        if arg not in ("monitor", "window", "all"):
+            console.print("[yellow]Usage: /screenshot [monitor|window|all][/yellow]")
+            return True
+
+        console.print("[dim]Capturing screenshot...[/dim]")
+        path = dm.take_screenshot(target=arg)
+        if not path:
+            console.print("[red]Screenshot capture failed.[/red]")
+            return True
+
+        try:
+            raw = Path(path).read_bytes()
+            b64 = base64.b64encode(raw).decode("ascii")
+            size = len(raw)
+        except Exception as e:
+            console.print(f"[red]Error reading screenshot:[/red] {e}")
+            return True
+        finally:
+            # Clean up temp file
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+        _pending_image["data"] = b64
+        _pending_image["label"] = f"screenshot ({arg})"
+        console.print(Panel(
+            f"[bold green]Screenshot captured[/bold green] ({size // 1024} KB, {arg})\n"
+            f"[dim]Send a message to analyze this screenshot. Image clears after use.[/dim]",
+            title="[cyan]Image Attached[/cyan]",
+            border_style="cyan",
+        ))
+        return True
+
     elif cmd in ("/help", "/?"):
         help_table = Table(title="Slash Commands", box=box.SIMPLE, show_edge=False)
         help_table.add_column("Command", style="cyan bold", no_wrap=True)
@@ -723,6 +821,8 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
         help_table.add_row("/append", "Append text to existing buffer (multi-line mode)")
         help_table.add_row("/context", "Show current document buffer info")
         help_table.add_row("/clear", "Clear document buffer")
+        help_table.add_row("/image <path>", "Attach an image for the LLM to analyze")
+        help_table.add_row("/screenshot", "Capture screen and attach [monitor|window|all]")
         help_table.add_row("/help", "Show this help")
         help_table.add_row("", "")
         help_table.add_row("[dim]Tip[/dim]", "[dim]Drag a file from Nautilus to auto-load it[/dim]")
@@ -862,6 +962,11 @@ def run_console(config, mode, user_id="user"):
                        f"threshold={context_window.topic_shift_threshold}, "
                        f"prior={cw_stats['segments']} seg(s))")
 
+    # Desktop manager (for /screenshot)
+    if config.get("desktop.enabled", False):
+        from core.desktop_manager import get_desktop_manager
+        get_desktop_manager(config)
+
     # LLM metrics tracking
     metrics = get_metrics_tracker(config)
 
@@ -941,12 +1046,17 @@ def run_console(config, mode, user_id="user"):
     doc_buffer = DocumentBuffer()
 
     def _bottom_toolbar():
+        parts = []
+        if _pending_image["data"]:
+            parts.append(f'<style bg="ansiblue"> IMG: {_pending_image["label"]} </style>')
         if doc_buffer.active:
-            return HTML(
+            parts.append(
                 f'<b>DocCtx:</b> ~{doc_buffer.token_estimate} tok '
                 f'({doc_buffer.source}) — /context to view, /clear to remove'
             )
-        return HTML('<b>/paste</b> load text  <b>/file</b> load file  <b>/help</b> commands')
+        if parts:
+            return HTML('  '.join(parts))
+        return HTML('<b>/paste</b> load text  <b>/file</b> load file  <b>/image</b> attach image  <b>/help</b> commands')
 
     pt_session = PromptSession(
         history=pt_history,
@@ -959,7 +1069,7 @@ def run_console(config, mode, user_id="user"):
     console.print(Panel(
         f"[bold]J.A.R.V.I.S. Console[/bold] — {mode} mode\n"
         f"Type commands directly. Type [bold]quit[/bold] to exit.\n"
-        f"Slash commands: /paste /file /clipboard /context /clear /help",
+        f"Slash commands: /paste /file /clipboard /image /screenshot /context /clear /help",
         border_style="cyan"
     ))
 
@@ -998,12 +1108,14 @@ def run_console(config, mode, user_id="user"):
                     reminder_manager.stop()
                 os.execv(sys.executable, [sys.executable] + sys.argv)
 
-            # Drag-and-drop auto-detect: bare file path → implicit /file
+            # Drag-and-drop auto-detect: bare file path → implicit /file or /image
             # Nautilus drops absolute paths; also handle ~/... paths
             _stripped = command.strip().strip("'\"")
             if ((_stripped.startswith("/") or _stripped.startswith("~/")) and
                     os.path.isfile(os.path.expanduser(_stripped))):
-                _handle_slash_command(f"/file {_stripped}", doc_buffer, console, pt_history)
+                _ext = Path(_stripped).suffix.lower()
+                _slash = "/image" if _ext in _IMAGE_EXTENSIONS else "/file"
+                _handle_slash_command(f"{_slash} {_stripped}", doc_buffer, console, pt_history)
                 continue
 
             # Slash commands — handle before any skill routing
@@ -1047,6 +1159,14 @@ def run_console(config, mode, user_id="user"):
             skill_already_spoke = False
             match_info = None
 
+            # --- Consume pending image (from /image or /screenshot) ---
+            current_image = None
+            if _pending_image["data"]:
+                current_image = _pending_image["data"]
+                console.print(f"[dim]  image: {_pending_image['label']} attached[/dim]")
+                _pending_image["data"] = None
+                _pending_image["label"] = None
+
             # --- Route through shared priority chain ---
             # Console is always in-conversation: every typed command is
             # intentional, enabling P3.5 research follow-ups and context
@@ -1055,6 +1175,7 @@ def run_console(config, mode, user_id="user"):
                 command,
                 in_conversation=True,
                 doc_buffer=doc_buffer,
+                image_data=current_image,
             )
             t_match = time.perf_counter()
 
@@ -1118,6 +1239,7 @@ def run_console(config, mode, user_id="user"):
                     raw_command=command,
                     user_id=conversation.current_user,
                     conv_state=conv_state,
+                    image_data=result.image_data,
                 )
                 if not response:
                     response = "I'm sorry, I'm having trouble processing that right now."
