@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 5, 2026 (session 165 — Tier 1 status sync, #16/#30 moved to completed)
+**Updated:** March 5, 2026 (session 166 — new strategic direction: cross-platform utility, Vision → Email)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -40,15 +40,18 @@
 ## Priority Tier 1: Owner-Directed Priority Sequence
 
 *the user's ordered priority list. Work these in sequence.*
+*Strategic direction (session 166): prioritize features with highest cross-platform utility (desktop web UI + mobile). Vision and email are force multipliers — vision is multiplicative (new input modality on every device), email is additive (same utility everywhere).*
 
 | # | Item | Effort | Status | Notes |
 |---|------|--------|--------|-------|
-| 12 | ~~**Profile-aware skill routing**~~ — "my calendar" loads correct user's data based on who spoke | 3-4 hours | **DONE** (session 158) | Speaker ID + profiles + skill-level `current_user` routing |
-| 46 | ~~**Dual-model STT (secondary user voice)**~~ — speaker-ID routes to user-specific fine-tuned vs stock Whisper | 4-6 hours | **DONE** (session 159) | Two Whisper models, speaker-ID-first routing |
+| 20P3 | **Vision Phase 3** — activate mmproj, image input to console/web/mobile LLM router. Desktop: screenshot analysis, screen reading. Mobile: camera photos, snap-and-ask. | 1-2 days | **NEXT** — mmproj smoke-tested at server level | Cross-platform force multiplier. Foundation for #51, #52, #15. Mobile web UI image upload is trivial wiring. |
+| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | NOT STARTED — config stub + MCP bridge ready | Cross-platform: same utility from desk or pocket. the user=Gmail, secondary=AOL |
 | 60 | **Mobile app** — web UI phase 1 done (auth + responsive layout + mobile routing). Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** — web UI works on mobile | Plan: `memory/plan_mobile_ios_app.md`. Routing fixes: skill filtering, tool exclusion, pre-exec blocking, always-on tool fallback, 82-test suite |
 | — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | DB column exists (`caldav_event_id`), zero CalDAV code |
 | 61 | **Concurrent multi-user support** — handle two simultaneous mobile users | 4-8 hours | NOT STARTED | Depends on #60. Needs `--parallel 2`, per-user history, STT/TTS queuing |
 | 11 | **"Onscreen please" — retroactive visual display** — buffer last raw output, display on command | 2-3 hours | NOT STARTED | Bridge voice-to-visual gap |
+| 12 | ~~**Profile-aware skill routing**~~ | 3-4 hours | **DONE** (session 158) | Speaker ID + profiles + skill-level `current_user` routing |
+| 46 | ~~**Dual-model STT (secondary user voice)**~~ | 4-6 hours | **DONE** (session 159) | Two Whisper models, speaker-ID-first routing |
 
 ---
 
@@ -60,8 +63,8 @@
 | 44 | **Reminder snooze in P2 chain** — distinguish "got it" (ack) vs "snooze 10 min" (snooze) vs "what reminder" (query) | 2-3 hours | Currently blanket ack — loses snooze/query intent | Zero snooze references in conversation_router.py |
 | 54 | **Reduce `_open_aplay` 150ms sleep** — PipeWire device-ready wait may be reducible to 50ms | 1-2 hours | Saves 150ms per aplay open (300ms with ack + response) | Still `time.sleep(0.15)` at `tts.py:387`. Risk: too short causes broken audio |
 | 7 | **Inject user facts into web search** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Memory context passed to LLM for response gen, NOT injected into search queries |
-| — | **IMAP email via MCP** — email access via MCP bridge infrastructure | Variable | Major productivity — read, search, archive by voice | Config stub at `config.yaml:299-318` only. MCP bridge infrastructure done. the user=Gmail, secondary=AOL |
-| — | **Vision Phase 3 wiring** — activate mmproj, add image input to console/web/LLM router | 1-2 days | Screen reading, web nav with vision, image understanding | mmproj model downloaded, zero code for image input paths |
+| — | ~~**IMAP email via MCP**~~ — **PROMOTED to Tier 1** | — | — | See Tier 1 |
+| — | ~~**Vision Phase 3 wiring**~~ — **PROMOTED to Tier 1 as #20P3** | — | — | See Tier 1 |
 
 ---
 

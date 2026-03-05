@@ -173,6 +173,29 @@ class LLMRouter:
 
         return ""
 
+    @staticmethod
+    def _build_user_message(text: str, image_data: str | None = None) -> dict:
+        """Build a user message dict, optionally with multimodal image content.
+
+        Args:
+            text: The text content of the user message
+            image_data: Optional base64-encoded image data
+
+        Returns:
+            OpenAI-compatible message dict with string or array content
+        """
+        if image_data:
+            return {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{image_data}"
+                    }},
+                ],
+            }
+        return {"role": "user", "content": text}
+
     def generate(self, prompt: str, use_api: bool = False, max_tokens: int = 512) -> str:
         """
         Generate response from LLM.
@@ -636,7 +659,8 @@ class LLMRouter:
     def chat(self, user_message: str, conversation_history: str = "",
              use_api: bool = False, max_tokens: int = None,
              memory_context: str = None,
-             conversation_messages: list = None) -> str:
+             conversation_messages: list = None,
+             image_data: str = None) -> str:
         """
         Generate chat response with smart local-first fallback.
 
@@ -649,6 +673,7 @@ class LLMRouter:
             max_tokens: Maximum tokens to generate (auto-estimated from query if None)
             memory_context: Optional proactive memory context to inject into system prompt
             conversation_messages: Pre-built message list (bypasses string parsing)
+            image_data: Optional base64-encoded image for multimodal queries
 
         Returns:
             Assistant response
@@ -660,7 +685,25 @@ class LLMRouter:
             return self._generate_api_chat(user_message, conversation_history,
                                            max_tokens, conversation_messages)
 
-        # --- Attempt 1: Local Qwen (uses ChatML prompt, not message list) ---
+        # --- Attempt 1: Local Qwen ---
+        # When image_data is present, use streaming path (supports multimodal
+        # messages natively) and collect the full response for quality gating.
+        if image_data:
+            tokens = []
+            for token in self.stream(user_message, conversation_history,
+                                     max_tokens, memory_context,
+                                     conversation_messages,
+                                     image_data=image_data):
+                tokens.append(token)
+            response = "".join(tokens)
+            if response:
+                return self.strip_filler(response)
+            # Fall through to API fallback below if empty
+            if self.fallback_enabled:
+                return self._generate_api_chat(user_message, conversation_history,
+                                               max_tokens, conversation_messages)
+            return ""
+
         prompt = self._build_chat_prompt(user_message, conversation_history,
                                          memory_context=memory_context)
         start = time.time()
@@ -721,7 +764,8 @@ class LLMRouter:
 
     def stream(self, user_message: str, conversation_history: str = "",
                max_tokens: int = None, memory_context: str = None,
-               conversation_messages: list = None) -> Iterator[str]:
+               conversation_messages: list = None,
+               image_data: str = None) -> Iterator[str]:
         """Stream tokens from the local LLM as they're generated.
 
         Uses the llama.cpp /v1/chat/completions endpoint with SSE streaming.
@@ -733,6 +777,7 @@ class LLMRouter:
             max_tokens: Maximum tokens to generate (auto-estimated from query if None)
             memory_context: Optional proactive memory context to inject into system prompt
             conversation_messages: Pre-built message list (bypasses string parsing)
+            image_data: Optional base64-encoded image for multimodal queries
 
         Yields:
             Individual tokens as strings
@@ -750,9 +795,9 @@ class LLMRouter:
         elif conversation_history:
             messages.extend(self._parse_history_string(conversation_history))
 
-        # Ensure current message is included
+        # Ensure current message is included (with optional image)
         if not messages or messages[-1].get("content") != user_message:
-            messages.append({"role": "user", "content": user_message})
+            messages.append(self._build_user_message(user_message, image_data))
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()
@@ -853,6 +898,7 @@ class LLMRouter:
                           tools: list = None,
                           tool_temperature: float = None,
                           tool_presence_penalty: float = None,
+                          image_data: str = None,
                           ) -> Iterator[Union[str, ToolCallRequest]]:
         """Stream tokens from the local LLM with tool calling support.
 
@@ -964,7 +1010,7 @@ class LLMRouter:
         # prior exchange into user_message for follow-up queries.
 
         if not messages or messages[-1].get("content") != user_message:
-            messages.append({"role": "user", "content": user_message})
+            messages.append(self._build_user_message(user_message, image_data))
 
         # 2-message constraint: enforce structurally, not by convention.
         # History in messages causes "pattern addiction" (JetBrains Koog).

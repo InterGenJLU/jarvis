@@ -924,7 +924,7 @@ async def _open_in_browser(ws, conv_state, tts_proxy, config: dict) -> tuple:
 # ---------------------------------------------------------------------------
 
 async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy,
-                          config: dict, ws=None) -> dict:
+                          config: dict, ws=None, image_data: str = None) -> dict:
     """Process a user command through the shared ConversationRouter.
 
     Returns dict with 'response', 'stats', 'used_llm', 'streamed', etc.
@@ -942,7 +942,10 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     if not command:
         command = "jarvis_only"
 
-    conversation.add_message("user", command)
+    if image_data:
+        conversation.add_message("user", f"[Image attached] {command}")
+    else:
+        conversation.add_message("user", command)
 
     t_start = time.perf_counter()
     skill_handled = False
@@ -958,6 +961,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     router = components['router']
     result = await asyncio.to_thread(
         router.route, command, in_conversation=True, doc_buffer=doc_buffer,
+        image_data=image_data,
     )
     t_match = time.perf_counter()
 
@@ -1113,6 +1117,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 raw_command=command,
                 user_id=conversation.current_user,
                 conv_state=conv_state,
+                image_data=result.image_data,
             )
         else:
             response = await _llm_fallback(
@@ -1120,6 +1125,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 memory_context=result.memory_context,
                 conversation_messages=result.context_messages,
                 max_tokens=result.llm_max_tokens,
+                image_data=result.image_data,
             )
 
         if not response:
@@ -1182,7 +1188,8 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           tool_temperature=None,
                           tool_presence_penalty=None,
                           memory_manager=None, raw_command=None,
-                          user_id=None, conv_state=None) -> tuple:
+                          user_id=None, conv_state=None,
+                          image_data=None) -> tuple:
     """Stream LLM response over WebSocket with quality gate and tool calling.
 
     Returns (response_text, streamed_bool).
@@ -1209,6 +1216,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     tools=use_tools_list,
                     tool_temperature=tool_temperature,
                     tool_presence_penalty=tool_presence_penalty,
+                    image_data=image_data,
                 ) if _enable_tools else
                 llm.stream(
                     user_message=command,
@@ -1216,6 +1224,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     memory_context=memory_context,
                     conversation_messages=conversation_messages,
                     max_tokens=max_tokens,
+                    image_data=image_data,
                 )
             )
             for item in source:
@@ -1521,7 +1530,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
 
 async def _llm_fallback(llm, command, history, web_researcher,
                          memory_context=None, conversation_messages=None,
-                         max_tokens=None) -> str:
+                         max_tokens=None, image_data=None) -> str:
     """Non-streaming LLM with web research tool calling support."""
     use_tools = web_researcher is not None
 
@@ -1537,6 +1546,7 @@ async def _llm_fallback(llm, command, history, web_researcher,
                 conversation_history=history,
                 memory_context=memory_context,
                 conversation_messages=conversation_messages,
+                image_data=image_data,
             ):
                 if isinstance(item, ToolCallRequest):
                     tool_call_request = item
@@ -1792,11 +1802,14 @@ async def websocket_handler(request):
                         asyncio.get_event_loop().call_later(0.5, _restart_server)
                         continue
 
+                    # Extract inline image data (base64) if present
+                    msg_image_data = data.get('image_data') or None
+
                     async with cmd_lock:
                         try:
                             result = await process_command(
                                 content, components, tts_proxy, config,
-                                ws=ws,
+                                ws=ws, image_data=msg_image_data,
                             )
                             # Drain announcements queued during command processing
                             # (skills call tts_proxy.speak() which would duplicate
@@ -2359,6 +2372,66 @@ async def upload_handler(request):
         })
     except Exception as e:
         logger.exception("Upload error")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+async def upload_image_handler(request):
+    """Handle image upload via POST /api/upload-image.
+
+    Returns base64-encoded image data for the client to attach to
+    the next WebSocket message.
+    """
+    import base64
+
+    try:
+        reader = await request.multipart()
+        field = await reader.next()
+        if field is None or field.name != 'image':
+            return web.json_response({'error': 'No image field'}, status=400)
+
+        filename = field.filename or 'image.jpg'
+        ext = Path(filename).suffix.lower()
+        if ext not in _IMAGE_EXTENSIONS:
+            return web.json_response({
+                'error': f'Unsupported image type: {ext}',
+            }, status=400)
+
+        # Read with size limit
+        raw = b''
+        while True:
+            chunk = await field.read_chunk(65536)
+            if not chunk:
+                break
+            raw += chunk
+            if len(raw) > _MAX_IMAGE_BYTES:
+                return web.json_response({
+                    'error': 'Image too large (max 10 MB)',
+                }, status=400)
+
+        b64 = base64.b64encode(raw).decode('ascii')
+        mime = 'image/jpeg'
+        if ext == '.png':
+            mime = 'image/png'
+        elif ext == '.gif':
+            mime = 'image/gif'
+        elif ext == '.webp':
+            mime = 'image/webp'
+        elif ext == '.bmp':
+            mime = 'image/bmp'
+
+        return web.json_response({
+            'ok': True,
+            'image_data': b64,
+            'mime': mime,
+            'size_kb': round(len(raw) / 1024, 1),
+            'filename': filename,
+        })
+    except Exception as e:
+        logger.exception("Image upload error")
         return web.json_response({'error': str(e)}, status=500)
 
 
@@ -3160,6 +3233,7 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/session/{session_id}', session_messages_handler)
     app.router.add_put('/api/session/{session_id}/rename', session_rename_handler)
     app.router.add_post('/api/upload', upload_handler)
+    app.router.add_post('/api/upload-image', upload_image_handler)
     app.router.add_get('/api/browse', browse_handler)
     app.router.add_get('/api/stats', stats_overview_handler)
     app.router.add_get('/dashboard', dashboard_handler)

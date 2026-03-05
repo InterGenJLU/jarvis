@@ -937,6 +937,90 @@ header h1 {
     50% { opacity: 0; }
 }
 
+/* Image attachment button */
+.image-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text-dim);
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+
+.image-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(56, 189, 248, 0.08);
+}
+
+/* Image attachment indicator bar (above input area) */
+#image-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 20px;
+    background: var(--accent-dim);
+    border-top: 1px solid rgba(56, 189, 248, 0.3);
+    font-size: 0.78rem;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+#image-indicator.hidden {
+    display: none;
+}
+
+.image-indicator-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    object-fit: cover;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+#image-indicator-clear {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0 4px;
+    margin-left: auto;
+    opacity: 0.7;
+}
+
+#image-indicator-clear:hover {
+    opacity: 1;
+}
+
+/* Image thumbnail in chat messages */
+.message-image-wrap {
+    margin-bottom: 6px;
+}
+
+.message-image-thumb {
+    max-width: 280px;
+    max-height: 200px;
+    border-radius: 8px;
+    border: 1px solid rgba(56, 189, 248, 0.15);
+    object-fit: contain;
+    cursor: pointer;
+}
+
+.message.user .message-image-wrap {
+    text-align: right;
+}
+
+.message.user .message-image-thumb {
+    border-color: rgba(37, 99, 235, 0.3);
+}
+
 /* Drag/drop overlay */
 #chat-area.dragover {
     outline: 2px dashed var(--accent);
@@ -1366,9 +1450,18 @@ header h1 {
         max-width: 95%;
     }
 
+    .message-image-thumb {
+        max-width: 200px;
+        max-height: 150px;
+    }
+
     #input-area {
         padding: 8px 12px;
         padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    }
+
+    #image-indicator {
+        padding: 6px 12px;
     }
 
     header {

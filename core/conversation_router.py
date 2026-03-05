@@ -61,6 +61,9 @@ class RouteResult:
     tool_temperature: float | None = None   # Override temp for tool selection
     tool_presence_penalty: float | None = None  # Qwen3.5 recommends 1.5
 
+    # Vision (multimodal image input)
+    image_data: str | None = None           # Base64-encoded image for LLM
+
 
 # Conversation window duration defaults (match ContinuousListener config)
 EXTENDED_WINDOW = 8.0
@@ -143,7 +146,8 @@ class ConversationRouter:
 
     def route(self, command: str, *,
               in_conversation: bool = False,
-              doc_buffer=None) -> RouteResult:
+              doc_buffer=None,
+              image_data: str = None) -> RouteResult:
         """Route a command through the priority chain.
 
         Priority order:
@@ -169,6 +173,7 @@ class ConversationRouter:
             in_conversation: Whether a conversation window is active.
             doc_buffer: DocumentBuffer instance (or None). When active,
                         skill routing is skipped and LLM gets document context.
+            image_data: Base64-encoded image for multimodal queries.
 
         Returns:
             RouteResult with response text, metadata, and side-effect signals.
@@ -283,6 +288,7 @@ class ConversationRouter:
         if not (doc_buffer and doc_buffer.active):
             result = self._handle_tool_calling(command, in_conversation)
             if result:
+                result.image_data = image_data
                 return result
 
         if not guest:
@@ -321,6 +327,7 @@ class ConversationRouter:
                 result.tool_temperature = 0.0
                 result.tool_presence_penalty = 0.0
                 result.intent = "tool_calling"
+        result.image_data = image_data
         return result
 
     # -------------------------------------------------------------------

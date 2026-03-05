@@ -290,6 +290,12 @@ web_navigation:
     height: 1440
   follow_up_duration: 10.0
 
+# Vision (multimodal image input)
+vision:
+  enabled: true
+  max_image_size_mb: 10
+  screenshot_tool: gnome-screenshot # grim needs wlroots; gnome-screenshot works on Mutter
+
 # Web UI settings
 web:
   port: 8088

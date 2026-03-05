@@ -66,6 +66,17 @@
     const btnClipboard = document.getElementById('btn-clipboard');
     const btnContext = document.getElementById('btn-context');
 
+    // Image attachment
+    const btnImage = document.getElementById('btn-image');
+    const imageInput = document.getElementById('image-input');
+    const imageIndicator = document.getElementById('image-indicator');
+    const imageIndicatorThumb = document.getElementById('image-indicator-thumb');
+    const imageIndicatorInfo = document.getElementById('image-indicator-info');
+    const imageIndicatorClear = document.getElementById('image-indicator-clear');
+    var pendingImageData = null;   // raw base64 (no data: prefix)
+    var pendingImageMime = null;   // e.g. "image/jpeg"
+    var pendingImageName = null;
+
     // Announcement banner container
     const announcementContainer = document.getElementById('announcement-container');
 
@@ -342,6 +353,42 @@
             ts.textContent = formatTimestamp(Date.now() / 1000);
             messageDiv.appendChild(ts);
         }
+
+        messagesEl.appendChild(messageDiv);
+        scrollToBottom();
+    }
+
+    function addMessageWithImage(role, content, dataUrl) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message ' + role;
+
+        if (role !== 'error') {
+            const sender = document.createElement('div');
+            sender.className = 'message-sender';
+            sender.textContent = role === 'user' ? getUserDisplayName() : 'J.A.R.V.I.S.';
+            messageDiv.appendChild(sender);
+        }
+
+        // Image thumbnail
+        const imgWrap = document.createElement('div');
+        imgWrap.className = 'message-image-wrap';
+        const img = document.createElement('img');
+        img.className = 'message-image-thumb';
+        img.src = dataUrl;
+        img.alt = 'Attached image';
+        imgWrap.appendChild(img);
+        messageDiv.appendChild(imgWrap);
+
+        // Text content
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        bubble.textContent = content;
+        messageDiv.appendChild(bubble);
+
+        const ts = document.createElement('div');
+        ts.className = 'message-timestamp';
+        ts.textContent = formatTimestamp(Date.now() / 1000);
+        messageDiv.appendChild(ts);
 
         messagesEl.appendChild(messageDiv);
         scrollToBottom();
@@ -635,8 +682,23 @@
         historyIndex = -1;
         pendingInput = '';
 
-        addMessage('user', text);
-        ws.send(JSON.stringify({ type: 'message', content: text }));
+        // Show user message with optional image thumbnail
+        if (pendingImageData) {
+            addMessageWithImage('user', text, 'data:' + pendingImageMime + ';base64,' + pendingImageData);
+        } else {
+            addMessage('user', text);
+        }
+
+        // Build WS payload
+        var payload = { type: 'message', content: text };
+        if (pendingImageData) {
+            payload.image_data = pendingImageData;
+        }
+        ws.send(JSON.stringify(payload));
+
+        // Clear pending image
+        clearPendingImage();
+
         userInput.value = '';
         userInput.style.height = 'auto';
         setProcessing(true);
@@ -708,6 +770,62 @@
         }
         addInfoMessage('Server restarting — reconnecting...');
         setStatus('connecting');
+    });
+
+    // --- Image attachment ---
+    var IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+    var MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+    function attachImage(file) {
+        if (!file) return;
+        var ext = getFileExt(file.name);
+        if (!IMAGE_EXTS.has(ext)) {
+            addInfoMessage('Unsupported image type: ' + ext);
+            return;
+        }
+        if (file.size > MAX_IMAGE_SIZE) {
+            addInfoMessage('Image too large (max 10 MB)');
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+            var dataUrl = reader.result; // "data:image/jpeg;base64,..."
+            var commaIdx = dataUrl.indexOf(',');
+            pendingImageData = dataUrl.slice(commaIdx + 1);
+            // Extract mime from data URL
+            pendingImageMime = dataUrl.slice(5, dataUrl.indexOf(';'));
+            pendingImageName = file.name;
+            // Show indicator
+            imageIndicatorThumb.src = dataUrl;
+            imageIndicatorInfo.textContent = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
+            imageIndicator.classList.remove('hidden');
+            userInput.focus();
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function clearPendingImage() {
+        pendingImageData = null;
+        pendingImageMime = null;
+        pendingImageName = null;
+        imageIndicator.classList.add('hidden');
+        imageIndicatorThumb.src = '';
+        imageInput.value = '';
+    }
+
+    if (btnImage) btnImage.addEventListener('click', function () {
+        imageInput.click();
+    });
+
+    imageInput.addEventListener('change', function () {
+        if (imageInput.files && imageInput.files[0]) {
+            attachImage(imageInput.files[0]);
+        }
+    });
+
+    if (imageIndicatorClear) imageIndicatorClear.addEventListener('click', function () {
+        clearPendingImage();
+        userInput.focus();
     });
 
     // --- Paste modal ---
@@ -957,6 +1075,12 @@
 
         var file = files[0]; // Handle first file only
         var ext = getFileExt(file.name);
+
+        // Image files: attach as vision input instead of document buffer
+        if (IMAGE_EXTS.has(ext)) {
+            attachImage(file);
+            return;
+        }
 
         if (BINARY_EXTS.has(ext)) {
             addInfoMessage('Cannot load binary file (' + ext + '): ' + file.name);
