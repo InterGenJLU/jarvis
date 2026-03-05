@@ -192,6 +192,15 @@ def init_components(config, tts_proxy):
         cw.load_prior_segments(fallback_messages=conversation.session_history)
         components['context_window'] = cw
 
+    # Profile manager (for speaker labels in multi-speaker sessions)
+    try:
+        from core.user_profile import get_profile_manager
+        pm = get_profile_manager(config)
+        if pm:
+            conversation.set_profile_manager(pm)
+    except Exception:
+        pass
+
     # Document buffer
     components['doc_buffer'] = DocumentBuffer()
 

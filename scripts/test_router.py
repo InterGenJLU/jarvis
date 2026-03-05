@@ -121,6 +121,15 @@ def init_components():
         news_manager.set_listener_callbacks(pause=lambda: None, resume=lambda: None)
         news_manager.set_window_callback(lambda d: None)
 
+    # Profile manager (for speaker labels)
+    try:
+        from core.user_profile import get_profile_manager
+        pm = get_profile_manager(config)
+        if pm:
+            conversation.set_profile_manager(pm)
+    except Exception:
+        pass
+
     # Context window
     context_window = None
     if config.get("context_window.enabled", False):
@@ -500,6 +509,92 @@ def test_guest_mode(router):
 # Main
 # ---------------------------------------------------------------------------
 
+def test_multi_speaker(router):
+    """Test multi-speaker conversation tracking (#30)."""
+    section("Multi-Speaker Conversation (#30)")
+
+    conversation = router.conversation
+
+    # Save and reset session state
+    saved_user = conversation.current_user
+    saved_participants = conversation.session_participants.copy()
+    saved_history = conversation.session_history[:]
+    conversation.session_participants.clear()
+    conversation.session_history.clear()
+
+    try:
+        # 1. Single speaker — no multi-speaker labeling
+        conversation.current_user = "user"
+        conversation.add_message("user", "what's the weather")
+        conversation.add_message("assistant", "Sunny and 72 degrees")
+
+        check("single speaker → is_multi_speaker=False",
+              not conversation.is_multi_speaker)
+
+        history = conversation.format_history_for_llm(include_system_prompt=False)
+        check("single speaker → no [Name] prefix in history",
+              "[User]" not in history,
+              f"history={history[:120]}")
+
+        # 2. Second speaker joins — multi-speaker activated
+        conversation.current_user = "secondary_user"
+        conversation.add_message("user", "set a reminder for 5pm")
+
+        check("second speaker → is_multi_speaker=True",
+              conversation.is_multi_speaker)
+        check("session_participants has both",
+              conversation.session_participants == {"primary_user", "secondary_user"})
+
+        # 3. History formatting includes speaker names
+        conversation.add_message("assistant", "Reminder set for 5pm")
+        history = conversation.format_history_for_llm(include_system_prompt=False)
+        check("multi-speaker history has [User]",
+              "[User]" in history,
+              f"history={history[:250]}")
+        check("multi-speaker history has [Secondary User]",
+              "[Secondary User]" in history,
+              f"history={history[:250]}")
+        check("multi-speaker history preserves USER: tag",
+              "USER: [User]" in history or "USER: [Secondary User]" in history,
+              f"history={history[:250]}")
+
+        # 4. Router injects multi-speaker context (use LLM-fallback query)
+        r = router.route("tell me a joke")
+        check("multi-speaker → MULTI-SPEAKER SESSION in context",
+              r.memory_context and "MULTI-SPEAKER" in r.memory_context,
+              f"context={r.memory_context[:200] if r.memory_context else None!r}")
+
+        # 5. speaker_confidence persisted
+        conversation.add_message("user", "hello", speaker_confidence=0.92)
+        last = conversation.session_history[-1]
+        check("speaker_confidence stored in message",
+              last.get("speaker_confidence") == 0.92)
+
+        # 6. Clear resets participants
+        conversation.clear_session_history()
+        check("clear resets participants",
+              len(conversation.session_participants) == 0)
+
+        # 7. Guest + known speaker → both labeled
+        conversation.current_user = "user"
+        conversation.add_message("user", "hello jarvis")
+        conversation.current_user = "__guest__"
+        conversation.add_message("user", "what time is it")
+        history = conversation.format_history_for_llm(include_system_prompt=False)
+        check("guest + known → [Guest] label present",
+              "[Guest]" in history,
+              f"history={history[:200]}")
+        check("guest + known → [User] label present",
+              "[User]" in history,
+              f"history={history[:200]}")
+
+    finally:
+        # Restore session state
+        conversation.current_user = saved_user
+        conversation.session_participants = saved_participants
+        conversation.session_history = saved_history
+
+
 def main():
     print("=" * 60)
     print("  ConversationRouter Test Suite")
@@ -517,6 +612,7 @@ def main():
     test_llm_fallback(router)
     test_news_continuation(router, news_manager)
     test_guest_mode(router)
+    test_multi_speaker(router)
 
     # Summary
     total = _total_passed + _total_failed

@@ -201,11 +201,17 @@ class ContextWindow:
         except Exception as e:
             self.logger.warning(f"Context window on_message error (non-fatal): {e}")
 
-    def assemble_context(self, current_query: str) -> List[Dict]:
+    def assemble_context(self, current_query: str,
+                         speaker_labels: dict = None) -> List[Dict]:
         """Build an optimally-scored message list for the LLM.
 
         Returns a list of {"role": ..., "content": ...} dicts ready
         for the llama.cpp /v1/chat/completions messages array.
+
+        Args:
+            current_query: The user's current query for relevance scoring.
+            speaker_labels: Optional map of user_id → display name.
+                When provided, user messages are prefixed with speaker name.
 
         Strategy:
         1. Always include the last N verbatim messages (freshest context)
@@ -236,7 +242,7 @@ class ContextWindow:
             remaining_budget = self.token_budget - verbatim_tokens
 
             if remaining_budget <= 0:
-                return self._format_messages(verbatim)
+                return self._format_messages(verbatim, speaker_labels)
 
             # 3. Score closed segments for relevance
             query_embedding = None
@@ -285,7 +291,7 @@ class ContextWindow:
             combined = extra_messages + verbatim
             combined.sort(key=lambda m: m.get("timestamp", 0))
 
-            return self._format_messages(combined)
+            return self._format_messages(combined, speaker_labels)
 
         except Exception as e:
             self.logger.warning(f"Context assembly error (non-fatal): {e}")
@@ -752,13 +758,24 @@ class ContextWindow:
         return " ".join(top_words)
 
     @staticmethod
-    def _format_messages(messages: List[Dict]) -> List[Dict]:
-        """Convert internal message dicts to LLM-ready format."""
+    def _format_messages(messages: List[Dict],
+                         speaker_labels: dict = None) -> List[Dict]:
+        """Convert internal message dicts to LLM-ready format.
+
+        Args:
+            messages: Internal message dicts with optional user_id.
+            speaker_labels: Map of user_id → display name. When provided,
+                user messages are prefixed with the speaker name.
+        """
         formatted = []
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
             if content:
+                if speaker_labels and role == "user":
+                    uid = msg.get("user_id")
+                    label = speaker_labels.get(uid, "User") if uid else "User"
+                    content = f"[{label}] {content}"
                 formatted.append({"role": role, "content": content})
         return formatted
 

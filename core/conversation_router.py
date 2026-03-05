@@ -1994,7 +1994,15 @@ class ConversationRouter:
         # Context window assembly (skip for guests — no personal history)
         context_messages = None
         if not guest and self.context_window and self.context_window.enabled:
-            context_messages = self.context_window.assemble_context(command)
+            speaker_labels = None
+            if self.conversation.is_multi_speaker:
+                speaker_labels = {
+                    uid: self.conversation._get_speaker_label(uid)
+                    for uid in self.conversation.session_participants
+                }
+            context_messages = self.context_window.assemble_context(
+                command, speaker_labels=speaker_labels
+            )
 
         memory_context = None
 
@@ -2034,6 +2042,23 @@ class ConversationRouter:
                     if awareness_block:
                         memory_context = f"{awareness_block}\n\n{memory_context}" if memory_context else awareness_block
 
+            # Multi-speaker session context
+            if self.conversation.is_multi_speaker:
+                participants = [
+                    self.conversation._get_speaker_label(uid)
+                    for uid in sorted(self.conversation.session_participants)
+                ]
+                current = self.conversation._get_speaker_label(self._user_id)
+                speaker_note = (
+                    f"MULTI-SPEAKER SESSION: {', '.join(participants)} are present. "
+                    f"The current speaker is {current}. "
+                    f"Messages in conversation history are labeled with [Name] prefixes."
+                )
+                memory_context = (
+                    f"{speaker_note}\n\n{memory_context}" if memory_context
+                    else speaker_note
+                )
+
             # Document-aware LLM hint (request-specific, not awareness)
             if doc_buffer and doc_buffer.active:
                 doc_hint = ("The user has loaded a document into the context buffer. "
@@ -2065,12 +2090,20 @@ class ConversationRouter:
             # history is [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}, ...]
             exchange_num = 0
             i = 0
+            multi_speaker = self.conversation.is_multi_speaker
             while i < len(history) - 1:
                 if history[i].get("role") == "user" and history[i+1].get("role") == "assistant":
                     exchange_num += 1
                     q = history[i]["content"][:200]
                     a = history[i+1]["content"][:400]
-                    prior_lines.append(f"[{exchange_num}] User: \"{q}\" → You: \"{a}\"")
+                    if multi_speaker:
+                        speaker = self.conversation._get_speaker_label(
+                            history[i].get("user_id"))
+                        prior_lines.append(
+                            f"[{exchange_num}] {speaker}: \"{q}\" → You: \"{a}\"")
+                    else:
+                        prior_lines.append(
+                            f"[{exchange_num}] User: \"{q}\" → You: \"{a}\"")
                     i += 2
                 else:
                     i += 1

@@ -548,6 +548,12 @@ class Coordinator:
             "hello", "hey", "hi", "bye", "goodbye",
         }
 
+        # Speaker tracking (multi-speaker rapid-switch detection)
+        self._last_speaker_id: Optional[str] = None
+        self._last_speaker_confidence: Optional[float] = None
+        self._rapid_switch_count: int = 0
+        self._last_switch_time: float = 0.0
+
         # People manager (social introductions + pronunciation)
         self.people_manager = None
         if config.get("people.enabled", False):
@@ -587,6 +593,10 @@ class Coordinator:
             people_manager=self.people_manager,
             awareness=self.awareness,
         )
+
+        # Wire profile manager to conversation for speaker labels
+        if self.profile_manager:
+            self.conversation.set_profile_manager(self.profile_manager)
 
         # Wire timeout cleanup so silence-expired windows get same cleanup as dismissals
         self.listener.on_window_close = self._on_conversation_timeout
@@ -820,8 +830,20 @@ class Coordinator:
         # --- Process real command ---
         print(f"📝 Processing: {command}")
         self.logger.info(f"Processing command: {command}")
-        self.conversation.add_message("user", command)
+        self.conversation.add_message(
+            "user", command,
+            speaker_confidence=self._last_speaker_confidence,
+        )
         self.tts._spoke = False
+
+        # --- Rapid speaker-switch retort (humorous "one at a time" interjection) ---
+        if self._rapid_switch_count >= 3:
+            from core import persona
+            from core.honorific import get_honorific
+            retort = persona.speaker_switch_retort(get_honorific())
+            self.logger.info(f"Rapid switch retort (count={self._rapid_switch_count})")
+            self._speak_and_wait(retort)
+            self._rapid_switch_count = 0
 
         # --- Pre-route ack decision (must happen BEFORE routing, which blocks) ---
         ack_style, suppress_ack = self._classify_ack(
@@ -1782,6 +1804,25 @@ class Coordinator:
 
     def _apply_speaker_context(self, speaker_id: Optional[str], confidence: float):
         """Set honorific and conversation user based on speaker identification."""
+        self._last_speaker_confidence = confidence
+
+        # Rapid speaker-switch detection
+        now = time.time()
+        if (speaker_id and self._last_speaker_id
+                and speaker_id != self._last_speaker_id
+                and self._last_speaker_id != "__guest__"
+                and now - self._last_switch_time < 60):
+            self._rapid_switch_count += 1
+            self.logger.info(
+                f"Speaker switch #{self._rapid_switch_count}: "
+                f"{self._last_speaker_id} → {speaker_id}"
+            )
+        elif speaker_id != self._last_speaker_id:
+            # First switch or timeout — reset counter
+            self._rapid_switch_count = 1 if (speaker_id and self._last_speaker_id) else 0
+        self._last_switch_time = now
+        self._last_speaker_id = speaker_id or self._last_speaker_id
+
         if speaker_id and self.profile_manager:
             honorific = self.profile_manager.get_honorific_for(speaker_id)
             formal = self.profile_manager.get_formal_address_for(speaker_id)

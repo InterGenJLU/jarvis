@@ -258,6 +258,19 @@ _POOLS = {
         "I can help with general questions and the weather.",
     ],
 
+    # Multi-speaker: retort when speakers rapidly alternate addressing JARVIS
+    # {h1} = honorific of the current (most recent) speaker
+    "speaker_switch_retort": [
+        "Right, both of you addressing me at once is going to cause a stack overflow. "
+        "One at a time — {h1}, you first. Go ahead.",
+        "I appreciate the enthusiasm, but I can only parse one voice at a time. "
+        "{h1}, let's start with you.",
+        "If you both keep this up I'm going to develop a split personality. "
+        "One at a time, please — {h1}, go ahead.",
+        "My multitasking is impressive, but not that impressive. "
+        "{h1}, you have the floor.",
+    ],
+
     # Guest mode: refusal when guest tries restricted features
     "guest_refusal": [
         "I'm sorry, Dave. I'm afraid I can't do that. ...Seriously though, that feature requires voice authorization.",
@@ -378,6 +391,12 @@ def guest_refusal() -> str:
     """Pick a humorous refusal for guests trying restricted features."""
     template = random.choice(_POOLS["guest_refusal"])
     return template.format(h=get_honorific())
+
+
+def speaker_switch_retort(honorific: str) -> str:
+    """Pick a humorous retort when speakers rapidly alternate."""
+    template = random.choice(_POOLS["speaker_switch_retort"])
+    return template.format(h1=honorific)
 
 
 # ---------------------------------------------------------------------------

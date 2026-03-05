@@ -748,13 +748,21 @@ def run_console(config, mode, user_id="user"):
     # Core components
     conversation = ConversationManager(config)
     conversation.current_user = user_id
+    # Wire profile manager for speaker labels (multi-speaker tracking)
+    try:
+        from core.user_profile import ProfileManager
+        pm = ProfileManager(config)
+        conversation.set_profile_manager(pm)
+    except Exception:
+        pm = None
     # Set honorific + formal address based on user profile
     if user_id != "primary_user":
         from core.honorific import set_honorific
-        from core.user_profile import ProfileManager
         try:
-            pm = ProfileManager(config)
-            set_honorific(pm.get_honorific_for(user_id), pm.get_formal_address_for(user_id))
+            if pm:
+                set_honorific(pm.get_honorific_for(user_id), pm.get_formal_address_for(user_id))
+            else:
+                raise ValueError("no profile manager")
         except Exception:
             formal = "Ms. Guest" if user_id == "secondary_user" else None
             set_honorific("ma'am" if user_id == "secondary_user" else "sir", formal)

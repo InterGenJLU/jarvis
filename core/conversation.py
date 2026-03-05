@@ -68,11 +68,17 @@ class ConversationManager:
             "can you", "could you", "let's", "please", "yes", "yeah"
         ]
 
+        # Session participant tracking (multi-speaker awareness)
+        self.session_participants: set = set()
+
         # Memory system hook (set via set_memory_manager during startup)
         self._memory_manager = None
 
         # Context window hook (set via set_context_window during startup)
         self._context_window = None
+
+        # Profile manager hook (set via set_profile_manager during startup)
+        self._profile_manager = None
 
         self.logger.info("Conversation manager initialized")
     
@@ -131,14 +137,16 @@ class ConversationManager:
         except (ValueError, OSError):
             return ""
 
-    def add_message(self, role: str, content: str, user_id: Optional[str] = None):
+    def add_message(self, role: str, content: str, user_id: Optional[str] = None,
+                    speaker_confidence: Optional[float] = None):
         """
         Add message to conversation history
-        
+
         Args:
             role: 'user' or 'assistant'
             content: Message content
             user_id: Optional user identifier
+            speaker_confidence: Optional speaker identification confidence (0.0-1.0)
         """
         message = {
             "timestamp": time.time(),
@@ -146,6 +154,12 @@ class ConversationManager:
             "content": content,
             "user_id": user_id or self.current_user,
         }
+        if speaker_confidence is not None:
+            message["speaker_confidence"] = speaker_confidence
+
+        # Track session participants (user messages only)
+        if role == "user" and message["user_id"]:
+            self.session_participants.add(message["user_id"])
         
         # Add to session history
         self.session_history.append(message)
@@ -184,6 +198,27 @@ class ConversationManager:
     def set_context_window(self, context_window):
         """Wire up context window hooks. Called during startup."""
         self._context_window = context_window
+
+    def set_profile_manager(self, profile_manager):
+        """Wire up profile manager for speaker labels. Called during startup."""
+        self._profile_manager = profile_manager
+
+    @property
+    def is_multi_speaker(self) -> bool:
+        """True when multiple speakers have been active this session."""
+        return len(self.session_participants) > 1
+
+    def _get_speaker_label(self, user_id: Optional[str]) -> str:
+        """Map user_id to a display name for LLM history."""
+        if not user_id:
+            return "User"
+        if user_id == "__guest__":
+            return "Guest"
+        if self._profile_manager:
+            profile = self._profile_manager.get_profile(user_id)
+            if profile and profile.get("name"):
+                return profile["name"]
+        return user_id.capitalize()
 
     def get_recent_history(self, max_turns: Optional[int] = None) -> List[Dict]:
         """
@@ -333,21 +368,26 @@ class ConversationManager:
             lines.append(persona.system_prompt_minimal())
             lines.append("")
         
+        multi_speaker = self.is_multi_speaker
+
         for msg in history:
             role = msg["role"].upper()
             content = msg["content"]
             ts = msg.get("timestamp")
-            if ts:
-                time_str = self._format_timestamp_for_llm(ts)
-                lines.append(f"[{time_str}] {role}: {content}")
+            time_prefix = f"[{self._format_timestamp_for_llm(ts)}] " if ts else ""
+
+            if role == "USER" and multi_speaker:
+                label = self._get_speaker_label(msg.get("user_id"))
+                lines.append(f"{time_prefix}USER: [{label}] {content}")
             else:
-                lines.append(f"{role}: {content}")
+                lines.append(f"{time_prefix}{role}: {content}")
         
         return "\n".join(lines)
     
     def clear_session_history(self):
         """Clear in-memory session history (not persistent storage)"""
         self.session_history = []
+        self.session_participants.clear()
         self.logger.info("Session history cleared")
     
     def load_full_history(self, max_messages: Optional[int] = None) -> List[Dict]:
