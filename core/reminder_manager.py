@@ -641,9 +641,9 @@ class ReminderManager:
                 pass
 
         if time_phrase:
-            self.tts.speak(f"{prefix} {cap_title}, {time_phrase}.")
+            tts_ok = self.tts.speak(f"{prefix} {cap_title}, {time_phrase}.")
         else:
-            self.tts.speak(f"{prefix} {cap_title}.")
+            tts_ok = self.tts.speak(f"{prefix} {cap_title}.")
 
         # Desktop notification (visual companion to voice)
         try:
@@ -659,6 +659,13 @@ class ReminderManager:
         # Resume listening after announcement
         if self._resume_listener_callback:
             self._resume_listener_callback()
+
+        # If TTS failed, leave as pending so it retries next poll cycle
+        if not tts_ok:
+            self.logger.warning(
+                f"Reminder #{rid} TTS failed — keeping pending for retry"
+            )
+            return
 
         # Track last announced for ack
         self._last_announced_id = rid
