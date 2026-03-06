@@ -204,7 +204,12 @@ def parse_tool_result(result) -> tuple:
         (text: str, image_data: str | None)
     """
     if isinstance(result, dict):
-        return result.get("text", str(result)), result.get("image_data")
+        text = result.get("text", str(result))
+        img = result.get("image_data")
+        logger.debug("parse_tool_result: dict — text_len=%d has_image=%s%s",
+                      len(text) if text else 0, bool(img),
+                      f" img_len={len(img)}" if img else "")
+        return text, img
     return result, None
 
 
@@ -226,13 +231,15 @@ def save_tool_image(image_data: str, tool_name: str) -> str:
     Returns:
         Absolute path to the saved file.
     """
+    logger.debug("save_tool_image: base64_input=%d bytes, tool=%s", len(image_data), tool_name)
     os.makedirs(_IMAGES_DIR, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     filename = f"{timestamp}_{tool_name}.png"
     filepath = os.path.join(_IMAGES_DIR, filename)
+    raw = base64.b64decode(image_data)
     with open(filepath, "wb") as f:
-        f.write(base64.b64decode(image_data))
-    logger.info(f"Saved tool image: {filepath}")
+        f.write(raw)
+    logger.info("Saved tool image: %s (%d bytes on disk)", filepath, len(raw))
     return filepath
 
 
@@ -255,8 +262,17 @@ def execute_tool(tool_name: str, arguments: dict) -> str | dict:
     if not handler:
         logger.warning(f"Unknown tool: {tool_name}")
         return f"Error: unknown tool '{tool_name}'"
+    _trunc_args = {k: (str(v)[:80] + "..." if len(str(v)) > 80 else v) for k, v in arguments.items()}
+    logger.debug("execute_tool: %s(%s)", tool_name, _trunc_args)
     try:
-        return handler(arguments)
+        _t0 = time.time()
+        result = handler(arguments)
+        _elapsed = (time.time() - _t0) * 1000
+        _rtype = type(result).__name__
+        _rsize = len(str(result)) if result else 0
+        logger.debug("execute_tool: %s returned %s (%d chars) in %.0fms",
+                      tool_name, _rtype, _rsize, _elapsed)
+        return result
     except Exception as e:
         logger.error(f"Tool execution error ({tool_name}): {e}")
         return f"Error executing {tool_name}: {e}"

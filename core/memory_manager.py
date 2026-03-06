@@ -374,6 +374,8 @@ class MemoryManager:
 
         try:
             import numpy as np
+            self.logger.debug("FAISS search: query=%.60s top_k=%d index_size=%d",
+                              query, top_k, self.faiss_index.ntotal)
             query_embedding = self.embedding_model.encode(query, normalize_embeddings=True, show_progress_bar=False)
             scores, indices = self.faiss_index.search(
                 np.array([query_embedding], dtype=np.float32), top_k
@@ -388,6 +390,7 @@ class MemoryManager:
                     continue  # Per-user filtering
                 results.append({**meta, "score": float(score)})
 
+            self.logger.debug("FAISS search: %d results", len(results))
             return results
         except Exception as e:
             self.logger.error(f"search_history failed: {e}")
@@ -1226,6 +1229,9 @@ class MemoryManager:
 
         # Search fact store by embedding similarity
         facts = self._search_facts_semantic(utterance, user_id, top_k=3)
+        self.logger.debug("Proactive surfacing: %d facts, threshold=%.2f, surfaced=%d",
+                          len(facts), self.proactive_threshold,
+                          len(self._surfaced_this_window))
 
         # Filter by confidence threshold and dedup within window
         relevant = [f for f in facts
@@ -1342,6 +1348,9 @@ class MemoryManager:
 
         Types: 'research', 'tool_call', 'conversation', 'document', 'skill'
         """
+        self.logger.debug("persist_interaction: type=%s query_len=%d answer_len=%d user=%s",
+                          interaction_type, len(query) if query else 0,
+                          len(answer) if answer else 0, user_id)
         import json
         import uuid
         import numpy as np

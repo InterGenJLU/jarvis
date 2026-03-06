@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import queue
 
 from core.config import load_config
-from core.logger import get_logger
+from core.logger import get_logger, Logger
 from core.stt import SpeechToText
 from core.tts import TextToSpeech, resolve_output_device
 from core.conversation import ConversationManager
@@ -927,7 +927,8 @@ def main():
     # Load configuration
     config_path = Path(__file__).parent / "config.yaml"
     config = load_config(config_path)
-    
+    Logger.configure_module_levels(config)
+
     # Create and run Jarvis
     jarvis = JarvisContinuous(config)
     

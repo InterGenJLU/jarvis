@@ -38,6 +38,7 @@ os.environ['JARVIS_LOG_TARGET'] = 'web'
 from aiohttp import web
 
 from core.config import load_config
+from core.logger import Logger
 from core.conversation import ConversationManager
 from core.responses import get_response_library
 from core.llm_router import LLMRouter, ToolCallRequest
@@ -1315,6 +1316,9 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             _tool_image_path = None  # Set when image saved to disk
 
             logger.info(f"Tool call: {tool_call_request.name}({tool_call_request.arguments})")
+            logger.debug("Tool chain #%d: %s, arg_keys=%s",
+                         tool_chain_count, tool_call_request.name,
+                         list(tool_call_request.arguments.keys()))
             if tool_call_request.name == 'web_search':
                 query = tool_call_request.arguments.get('query', command)
                 await ws.send_json({
@@ -1403,15 +1407,21 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             _current_img = tool_image_data
 
             def _synthesis_producer(tcr=_current_tcr, tr=_current_tr, img=_current_img):
+                logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s",
+                             tcr.name, len(tr) if tr else 0,
+                             f"yes ({len(img)//1024}KB)" if img else "no")
                 try:
+                    _token_count = 0
                     for token in llm.continue_after_tool_call(
                         tcr, tr,
                         tools=use_tools_list,
                         image_data=img,
                     ):
+                        _token_count += 1
                         asyncio.run_coroutine_threadsafe(
                             synthesis_queue.put(('item', token)), loop
                         )
+                    logger.debug("_synthesis_producer: yielded %d items", _token_count)
                 except Exception as e:
                     logger.error("Synthesis streaming error: %s", e)
                 finally:
@@ -1448,6 +1458,8 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             tool_call_request = next_tool_call
 
         cleaned = llm.strip_filler(synthesis) if synthesis else ""
+        logger.debug("stream_end: synthesis_len=%d cleaned_len=%d has_image=%s",
+                      len(synthesis), len(cleaned), bool(_tool_image_path))
         stream_end_msg = {
             'type': 'stream_end',
             'full_response': cleaned,
@@ -3366,6 +3378,7 @@ def main():
     )
 
     config = load_config()
+    Logger.configure_module_levels(config)
 
     host = args.host or config.get("web.host", "127.0.0.1")
     port = args.port or config.get("web.port", 8088)

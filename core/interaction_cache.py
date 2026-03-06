@@ -278,6 +278,11 @@ class InteractionCache:
         if not artifact.created_at:
             artifact.created_at = time.time()
 
+        self.logger.debug("store: type=%s id=%s window=%s%s",
+                          artifact.artifact_type, artifact.artifact_id,
+                          artifact.window_id,
+                          f" image={artifact.metadata.get('image_path')}" if artifact.metadata and artifact.metadata.get('image_path') else "")
+
         # Hot tier
         with self._hot_lock:
             if artifact.window_id not in self._hot:
@@ -923,6 +928,8 @@ class InteractionCache:
             return []
 
         items = self._extract_sub_items(parent.content)
+        self.logger.debug("decompose: parent=%s type=%s regex_items=%d",
+                          parent_id, parent.artifact_type, len(items))
 
         if not items and llm:
             llm_items = self._llm_decompose(parent.content, llm)

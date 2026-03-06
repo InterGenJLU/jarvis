@@ -86,6 +86,28 @@ logging:
   level: INFO
   file: /mnt/storage/jarvis/data/logs/jarvis.log
   console: true
+  max_size_mb: 50
+  backup_count: 3
+
+  # Per-subsystem log level overrides (DEBUG/INFO/WARNING/ERROR, omit = global)
+  # Uncomment any line below to override that subsystem's level.
+  modules:
+    # stt: DEBUG               # Speech-to-text, transcription
+    # tts: DEBUG               # Text-to-speech, synthesis, playback, device resolution
+    # llm: DEBUG               # LLM routing, quality gating, streaming, tool call synthesis
+    # tools: DEBUG             # Tool registry, pruning, execution, result parsing
+    # router: DEBUG            # Conversation router priority chain, readback, task planner
+    # skills: DEBUG            # Skill loading, intent matching, semantic matching
+    # memory: DEBUG            # Memory manager, interaction cache, proactive surfacing
+    # audio: DEBUG             # Continuous listener, VAD, wake word, speaker ID
+    # reminders: DEBUG         # Reminder manager, Google Calendar, CalDAV sync
+    # research: DEBUG          # Web search, page fetching, caching
+    # mcp: DEBUG               # MCP client/server bridge
+    # desktop: DEBUG           # Desktop manager, window management, screenshots
+    # pipeline: DEBUG          # Coordinator event processing, ack, streaming
+    # conversation: DEBUG      # Conversation history, people, profiles
+    # web: DEBUG               # Web frontend, WebSocket handling
+    # news: DEBUG              # News feed monitoring
 # LLM metrics tracking (dashboard + analytics)
 metrics:
   db_path: /mnt/storage/jarvis/data/metrics.db

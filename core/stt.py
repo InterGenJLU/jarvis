@@ -216,7 +216,11 @@ class SpeechToText:
 
             # Trim leading silence to prevent Whisper's internal VAD
             # from rejecting clips dominated by the 3s pre-buffer
+            _pre_len = len(audio_data) if hasattr(audio_data, '__len__') else 0
             audio_data = self._trim_leading_silence(audio_data)
+            _post_len = len(audio_data) if hasattr(audio_data, '__len__') else 0
+            self.logger.debug("STT preprocess: trim %d→%d samples, gain next",
+                              _pre_len, _post_len)
 
             # Boost quiet audio to target peak level
             audio_data = self._apply_gain(audio_data)
@@ -245,8 +249,11 @@ class SpeechToText:
             )
             
             # Collect all segments
-            text = " ".join([segment.text for segment in segments])
-            
+            seg_list = list(segments)
+            text = " ".join([segment.text for segment in seg_list])
+            self.logger.debug("STT result: %d segments, text_len=%d, lang_prob=%.2f",
+                              len(seg_list), len(text), info.language_probability)
+
             return text.strip()
             
         except Exception as e:

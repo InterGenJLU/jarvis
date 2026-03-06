@@ -1210,6 +1210,10 @@ class Coordinator:
                     )
                     tool_result, tool_image_data = parse_tool_result(raw_result)
                     self.logger.info(f"Tool result: {tool_result[:100]}")
+                    self.logger.debug("Tool result metrics: full_len=%d image=%s%s",
+                                      len(tool_result) if tool_result else 0,
+                                      "yes" if tool_image_data else "no",
+                                      f" ({len(tool_image_data)//1024}KB b64)" if tool_image_data else "")
 
                     # Save tool-generated images to disk
                     image_path = None
@@ -1243,17 +1247,26 @@ class Coordinator:
                                 self.logger.warning(f"Display hook error: {e}")
 
                 # Stream synthesis — may yield text tokens or another ToolCallRequest
+                _synth_img = tool_image_data if tool_call_request.name != "web_search" else None
+                self.logger.debug("Synthesis loop: tool=%s result_len=%d image=%s tools=%s",
+                                  tool_call_request.name,
+                                  len(tool_result) if tool_result else 0,
+                                  f"yes ({len(_synth_img)//1024}KB)" if _synth_img else "no",
+                                  [t["function"]["name"] for t in use_tools] if use_tools else "none")
                 next_tool_call = None
+                _synth_token_count = 0
                 for item in self.llm.continue_after_tool_call(
                     tool_call_request, tool_result,
                     tools=use_tools,
-                    image_data=tool_image_data if tool_call_request.name != "web_search" else None,
+                    image_data=_synth_img,
                 ):
                     if isinstance(item, ToolCallRequest):
+                        self.logger.debug("Chained tool call from synthesis: %s", item.name)
                         next_tool_call = item
                         break
 
                     token = item
+                    _synth_token_count += 1
                     if not self._llm_responded:
                         self._llm_responded = True
 
@@ -1271,6 +1284,8 @@ class Coordinator:
                         if chunks_spoken == -1:
                             return pending_chunk
 
+                self.logger.debug("Synthesis complete: %d tokens, response_len=%d",
+                                  _synth_token_count, len(full_response))
                 tool_call_request = next_tool_call
 
             # Combine buffered last chunk + flush remnant, strip filler, then speak

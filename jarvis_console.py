@@ -44,6 +44,7 @@ from rich.table import Table
 from rich import box
 
 from core.config import load_config
+from core.logger import Logger
 from core.conversation import ConversationManager
 from core.responses import get_response_library
 from core.llm_router import LLMRouter, ToolCallRequest
@@ -1336,12 +1337,14 @@ def main():
         # Delegate to the existing voice mode
         from jarvis_continuous import JarvisContinuous
         config = load_config()
+        Logger.configure_module_levels(config)
         jarvis = JarvisContinuous(config)
         jarvis.run()
         return
 
     mode = "hybrid" if args.hybrid else "text"
     config = load_config()
+    Logger.configure_module_levels(config)
     run_console(config, mode, user_id=args.user)
 
 

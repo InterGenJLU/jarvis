@@ -278,6 +278,7 @@ class SkillManager:
                 self.logger.debug(f"  - '{pattern}'")
         
         # LAYER 1: Try exact matches first (higher priority)
+        self.logger.debug("Layer 1: testing %d exact patterns", len(self.intent_patterns))
         for compiled, pattern, skill_name, priority in self.intent_patterns:
             match = compiled.match(normalized)
             if match:
@@ -349,6 +350,10 @@ class SkillManager:
 
         if best_match:
             self.logger.info(f"🎯 Semantic score={best_score:.2f}")
+            self.logger.debug("Semantic match: skill=%s intent=%s score=%.3f",
+                              best_match[0], best_match[1], best_score)
+        else:
+            self.logger.debug("Semantic match: no match (best=%.3f)", best_score)
 
         return best_match
     
@@ -781,6 +786,8 @@ class SkillManager:
             # 3. Direct semantic intent match
             if hasattr(skill, 'semantic_intents') and pattern in skill.semantic_intents:
                 handler = skill.semantic_intents[pattern]['handler']
+                self.logger.debug("Handler dispatch: skill=%s intent=%s handler=%s entities=%d",
+                                  skill_name, pattern, handler.__name__, len(entities))
                 if self._last_match_info:
                     self._last_match_info["handler_name"] = handler.__name__
                 response = self._invoke_handler(handler, entities)

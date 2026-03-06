@@ -169,6 +169,7 @@ class LLMRouter:
         bad_markers = ["<|im_start|>", "<|im_end|>", "[INST]", "[/INST]", "<<SYS>>", "<think>", "</think>"]
         for marker in bad_markers:
             if marker in text:
+                self.logger.debug("Quality gate: artifacts (%s) in response: %.80s", marker, text)
                 return "artifacts"
 
         return ""
@@ -184,6 +185,11 @@ class LLMRouter:
         Returns:
             OpenAI-compatible message dict with string or array content
         """
+        _log = logging.getLogger(__name__)
+        _log.debug("_build_user_message: text_len=%d image=%s%s",
+                    len(text) if text else 0,
+                    "yes" if image_data else "no",
+                    f" base64_len={len(image_data)}" if image_data else "")
         if image_data:
             return {
                 "role": "user",
@@ -711,6 +717,8 @@ class LLMRouter:
         elapsed_ms = (time.time() - start) * 1000
 
         quality_issue = self._check_response_quality(response, user_message)
+        self.logger.debug("Quality gate: issue=%s response=%.80s",
+                          quality_issue or "ok", response or "(empty)")
         if not quality_issue:
             # Overlay chat-level metadata onto _generate_local's last_call_info
             if self.last_call_info:
@@ -1032,6 +1040,9 @@ class LLMRouter:
             f"stream_with_tools: {len(messages)} msgs, {len(tools)} tools "
             f"({', '.join(tool_names)}), temp={temp}, pp={pp}"
         )
+        self.logger.debug("stream_with_tools: image_data=%s%s",
+                          "yes" if image_data else "no",
+                          f" ({len(image_data)//1024}KB b64)" if image_data else "")
 
         # Build the request payload
         payload = {
@@ -1046,6 +1057,11 @@ class LLMRouter:
         }
         if pp is not None:
             payload["presence_penalty"] = pp
+
+        import json as _json
+        _payload_size = len(_json.dumps(payload, default=str))
+        self.logger.debug("stream_with_tools: payload %d bytes, %d messages",
+                          _payload_size, len(messages))
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()
@@ -1087,6 +1103,7 @@ class LLMRouter:
                     return
 
             response.raise_for_status()
+            self.logger.debug("stream_with_tools: HTTP %d", response.status_code)
 
             # Accumulate tool call fragments
             tool_call_id = ""
@@ -1201,6 +1218,11 @@ class LLMRouter:
         Yields:
             Text tokens of the synthesized answer, or a ToolCallRequest
         """
+        self.logger.debug(
+            "continue_after_tool_call: tool=%s result_len=%d image=%s%s",
+            tool_call.name, len(tool_result) if tool_result else 0,
+            "yes" if image_data else "no",
+            f" ({len(image_data)//1024}KB b64)" if image_data else "")
         messages = list(getattr(self, '_tool_call_messages', []))
 
         # Add the assistant's tool call message
@@ -1283,6 +1305,8 @@ class LLMRouter:
                 "You ARE their source of information."
             )
         messages.append(self._build_user_message(synthesis_text, image_data))
+        self.logger.debug("continue_after_tool_call: %d messages, synthesis_text_len=%d",
+                          len(messages), len(synthesis_text))
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()
@@ -1302,6 +1326,10 @@ class LLMRouter:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
+        import json as _json
+        _payload_size = len(_json.dumps(payload, default=str))
+        self.logger.debug("continue_after_tool_call: payload %d bytes", _payload_size)
+
         # Track tool call fragments (same logic as stream_with_tools)
         is_tool_call = False
         tc_name = ""
@@ -1316,6 +1344,7 @@ class LLMRouter:
                 stream=True,
             )
             response.raise_for_status()
+            self.logger.debug("continue_after_tool_call: HTTP %d", response.status_code)
 
             for line in response.iter_lines():
                 if not line:
@@ -1382,6 +1411,12 @@ class LLMRouter:
             stream_error = str(e)
             self.logger.error(f"LLM continue_after_tool_call error: {e}")
         finally:
+            elapsed = (time.time() - start) * 1000
+            ttft = ((first_token_time - start) * 1000) if first_token_time else None
+            self.logger.debug(
+                "continue_after_tool_call: done — %d chars, %.0fms%s",
+                total_chars, elapsed,
+                f", TTFT={ttft:.0f}ms" if ttft else ", TTFT=none (zero tokens)")
             self.last_call_info = {
                 "provider": "qwen", "method": "continue_after_tool_call",
                 "input_tokens": None, "output_tokens": None,

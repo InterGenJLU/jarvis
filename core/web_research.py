@@ -78,6 +78,7 @@ class WebResearcher:
         try:
             from ddgs import DDGS
 
+            self.logger.debug("Search exec: query=%r max_results=%d", query, max_results)
             results = []
             with DDGS() as ddgs:
                 for r in ddgs.text(query, max_results=max_results):
@@ -183,6 +184,7 @@ class WebResearcher:
                     (title, url)
                 for title, url in urls
             }
+            self.logger.debug("Parallel fetch: %d URLs, timeout=%ds", len(future_to_info), timeout)
             try:
                 for future in as_completed(future_to_info, timeout=timeout):
                     title, url = future_to_info[future]

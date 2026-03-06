@@ -179,6 +179,8 @@ class ConversationRouter:
             RouteResult with response text, metadata, and side-effect signals.
         """
         guest = self._is_guest
+        logger.debug("route: command=%.80s user=%s guest=%s in_conv=%s",
+                      command, self._user_id, guest, in_conversation)
 
         # --- Guest greeting (before pending-state priorities) ---
         if guest and (command.strip() == "jarvis_only" or len(command.strip()) <= 2):
@@ -1304,6 +1306,7 @@ class ConversationRouter:
         for pattern, art_type, keyword in self._TYPE_REFERENCE_PATTERNS:
             if not pattern.search(cmd):
                 continue
+            logger.debug("Artifact ref: pattern matched type=%s keyword=%s", art_type, keyword)
 
             if art_type:
                 matched_art = cache.get_latest(wid, artifact_type=art_type)
@@ -1311,6 +1314,8 @@ class ConversationRouter:
                 matched_art = cache.find_by_keyword(wid, keyword)
 
             if matched_art:
+                logger.debug("Artifact ref: resolved to %s [%s]",
+                             matched_art.artifact_id, matched_art.artifact_type)
                 break
 
         if not matched_art:
@@ -1810,6 +1815,8 @@ class ConversationRouter:
         Returns None if no tool-enabled skills are relevant (falls through
         to P4 legacy skill routing).
         """
+        logger.debug("_handle_tool_calling: command=%.80s guest=%s mobile=%s",
+                     command, self._is_guest, self._is_mobile)
         tools = self._select_tools_for_command(command)
         if not tools:
             logger.debug(f"P4-LLM: no tools selected for: {command[:80]}")
@@ -2045,6 +2052,7 @@ class ConversationRouter:
         history = self.conversation.format_history_for_llm(
             include_system_prompt=False
         )
+        logger.debug("_prepare_llm_context: history_len=%d", len(history) if history else 0)
 
         # Context window assembly (skip for guests — no personal history)
         context_messages = None
@@ -2077,6 +2085,8 @@ class ConversationRouter:
             if self.awareness:
                 # New unified path: single assembler replaces 5 scattered blocks
                 memory_context = self.awareness.assemble(command, user_id=user_id)
+                logger.debug("_prepare_llm_context: awareness ctx_len=%d",
+                             len(memory_context) if memory_context else 0)
             else:
                 # Legacy fallback (when awareness assembler not wired)
                 if self.memory_manager:

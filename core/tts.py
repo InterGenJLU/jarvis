@@ -35,6 +35,7 @@ def resolve_output_device(configured: str) -> str:
         return configured
 
     # Resolve by name: read /proc/asound/cards
+    logger.debug("resolve_output_device: searching for '%s'", configured)
     try:
         with open("/proc/asound/cards") as f:
             cards_text = f.read()
@@ -423,6 +424,8 @@ class TextToSpeech:
             subprocess.Popen or None on failure.
         """
         for attempt in range(max_retries):
+            self.logger.debug("aplay open: attempt %d/%d device=%s",
+                              attempt + 1, max_retries, self.audio_device)
             proc = subprocess.Popen(
                 ["aplay", "-D", self.audio_device, "-t", "raw",
                  "-r", str(self.sample_rate), "-c", "1", "-f", "S16_LE"],
@@ -543,6 +546,8 @@ class TextToSpeech:
             ):
                 audio_np = self._np.asarray(audio)
                 pcm = (audio_np * 32767).astype(self._np.int16).tobytes()
+                self.logger.debug("Kokoro chunk: %d samples, pcm=%d bytes",
+                                  len(audio_np), len(pcm))
 
                 # Lazy open: defer aplay until first audio is ready.
                 # Gives PipeWire time to release the device.

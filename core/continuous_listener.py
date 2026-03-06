@@ -136,7 +136,8 @@ class ContinuousListener:
             self.logger.debug(f"🔇 Noise burst detected ({len(self._vad_timestamps)} VAD triggers in 3s) — skipping")
             return
 
-        self.logger.debug("🗣️  Speech detected, starting collection")
+        self.logger.debug("🗣️  Speech detected (VAD triggers=%d), starting collection",
+                          len(self._vad_timestamps) if hasattr(self, '_vad_timestamps') else -1)
         print("🗣️  Speech detected...")
         self.collecting_speech = True
         self.speech_buffer = []
@@ -562,6 +563,7 @@ class ContinuousListener:
 
             # Case 2: No stream — try to reconnect
             else:
+                self.logger.debug("Device monitor: no stream — attempting reconnect")
                 if self.start():
                     self.logger.info("🎤 Microphone reconnected!")
                     print("🎤 Microphone reconnected!")
@@ -772,6 +774,8 @@ class ContinuousListener:
 
         if not was_active:
             self.logger.info(f"🔓 Conversation window opened ({duration:.0f}s)")
+            self.logger.debug("Window open: duration=%.1fs turn_count=%d",
+                              duration, getattr(self, '_turn_count', 0))
             print(f"🔓 Conversation window open ({duration:.0f}s)")
         else:
             self.logger.debug(f"🔓 Conversation window extended ({duration:.0f}s)")

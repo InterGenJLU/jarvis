@@ -1498,6 +1498,8 @@ class ReminderManager:
         so multiple notifications for the same event each get their own reminder row.
         """
         # Skip past events — prevents notification storms from historical sync
+        self.logger.debug("Event→reminder: title='%.40s' start=%s offset=%smin priority=%s",
+                          title, start_time, reminder_minutes, priority)
         if start_time < datetime.now() - timedelta(hours=1):
             self.logger.debug(f"Skipping past Google event: '{title}' @ {start_time}")
             return -1
@@ -1667,6 +1669,8 @@ class ReminderManager:
             try:
                 # 1. Check due reminders
                 due = self._check_due_reminders()
+                self.logger.debug("Poll cycle: %d due, %d awaiting ack",
+                                  len(due), len(self.get_pending_acks()))
                 for reminder in due:
                     self._fire_reminder(reminder)
 
