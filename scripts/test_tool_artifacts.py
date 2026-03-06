@@ -226,6 +226,20 @@ def test_part1():
                 "news_headlines",
                 "News: read (cyber)",
             ),
+            (
+                "capture_webcam",
+                {},
+                "Webcam frame captured (1280x720, 221 KB). The image is attached — describe what you see.",
+                "webcam_capture",
+                "Webcam capture",
+            ),
+            (
+                "take_screenshot",
+                {"action": "capture", "target": "monitor"},
+                "Screenshot captured (monitor DP-2, 2560x1440, 890 KB). The image is attached — describe what you see.",
+                "screenshot",
+                "Screenshot (monitor)",
+            ),
         ]
 
         for tool_name, tool_args, tool_result, expected_type, expected_summary in test_cases:
@@ -557,6 +571,7 @@ def test_part4():
     expected_tools = {
         "get_weather", "get_system_info", "find_files",
         "developer_tools", "manage_reminders", "get_news",
+        "capture_webcam", "take_screenshot",
     }
 
     # All expected tools have mappings

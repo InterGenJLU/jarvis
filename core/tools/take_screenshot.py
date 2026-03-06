@@ -1,10 +1,13 @@
 """Tool definition: take_screenshot — capture screen or survey monitor layout."""
 
 import base64
+import logging
 import os
 import re
 import subprocess
 import time
+
+logger = logging.getLogger("jarvis.tools.take_screenshot")
 
 TOOL_NAME = "take_screenshot"
 ALWAYS_INCLUDED = True
@@ -194,6 +197,7 @@ def _capture_screenshot(args: dict) -> dict | str:
     output_name = args.get("output")
 
     if not _desktop_manager:
+        logger.error("Desktop manager not available for screenshot capture")
         return "Error: Desktop manager not available — cannot capture screenshot."
 
     # Specific monitor by output name: capture full desktop, crop with PIL
@@ -226,6 +230,7 @@ def _capture_focused_monitor() -> dict | str:
     """
     monitors = _parse_monitors()
     if not monitors:
+        logger.error("Could not detect monitors via xrandr")
         return "Error: Could not detect monitors."
 
     # Try to get focused window's monitor index from GNOME D-Bus
@@ -259,6 +264,7 @@ def _capture_specific_monitor(output_name: str) -> dict | str:
             break
     if not target_mon:
         available = ", ".join(m["name"] for m in monitors)
+        logger.error("Monitor '%s' not found. Available: %s", output_name, available)
         return f"Error: Monitor '{output_name}' not found. Available: {available}"
 
     # Capture full desktop
@@ -299,9 +305,11 @@ def _capture_specific_monitor(output_name: str) -> dict | str:
                                    max_width=None)
     except ImportError:
         _try_unlink(screenshot_path)
+        logger.error("PIL not available for monitor crop")
         return "Error: PIL not available — cannot crop to specific monitor."
     except Exception as e:
         _try_unlink(screenshot_path)
+        logger.error("Screenshot crop failed: %s", e)
         return f"Error cropping screenshot: {e}"
 
 
@@ -343,12 +351,14 @@ def _encode_and_cleanup(screenshot_path: str, target: str,
             desc += f" → resized to {new_w}x{new_h}"
         desc += f", {size_kb:.0f} KB)."
 
+        logger.info("Screenshot captured: %s, %dx%d, %.0f KB", target, orig_w, orig_h, size_kb)
         return {
             "text": desc + " The image is attached — describe what you see.",
             "image_data": image_data,
         }
     except Exception as e:
         _try_unlink(screenshot_path)
+        logger.error("Screenshot encode failed: %s", e)
         return f"Error reading screenshot: {e}"
 
 

@@ -99,6 +99,8 @@ MANAGE_REMINDERS_TOOL = _get_schema("manage_reminders")
 DEVELOPER_TOOLS_TOOL = _get_schema("developer_tools")
 GET_NEWS_TOOL = _get_schema("get_news")
 RECALL_MEMORY_TOOL = _get_schema("recall_memory")
+TAKE_SCREENSHOT_TOOL = _get_schema("take_screenshot")
+CAPTURE_WEBCAM_TOOL = _get_schema("capture_webcam")
 
 
 # ---------------------------------------------------------------------------

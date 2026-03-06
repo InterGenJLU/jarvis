@@ -418,8 +418,13 @@ def test_part3():
                 f"got: {TOOL_HANDLERS.get('web_search')!r}")
 
     # --- Test: ALWAYS_INCLUDED_TOOLS count ---
-    assert_eq("registry: exactly 2 always-included tools",
-              len(ALWAYS_INCLUDED_TOOLS), 2)
+    assert_eq("registry: exactly 4 always-included tools",
+              len(ALWAYS_INCLUDED_TOOLS), 4)
+    ai_names = set(ALWAYS_INCLUDED_TOOLS.keys()) if isinstance(ALWAYS_INCLUDED_TOOLS, dict) else {t["function"]["name"] for t in ALWAYS_INCLUDED_TOOLS}
+    for expected in ("web_search", "recall_memory", "take_screenshot", "capture_webcam"):
+        assert_true(f"registry: {expected} is always-included",
+                    expected in ai_names,
+                    f"{expected} not found in ALWAYS_INCLUDED_TOOLS")
 
     # --- Test: build_tool_prompt_rules includes recall_memory rule ---
     from core.tool_registry import build_tool_prompt_rules

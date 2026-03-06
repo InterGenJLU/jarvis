@@ -43,7 +43,7 @@ from core.llm_router import (
     LLMRouter, ToolCallRequest,
     WEB_SEARCH_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL,
     GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL,
-    GET_NEWS_TOOL,
+    GET_NEWS_TOOL, TAKE_SCREENSHOT_TOOL, CAPTURE_WEBCAM_TOOL,
 )
 
 
@@ -60,8 +60,8 @@ class TestQuery:
     description: str = ""
 
 
-# 183 total: system(15) + filesystem(15) + weather(16) + reminder(15, 1 no-tool) + devtools(15) + news(15)
-#   + time(15, no-tool) + no_tool(10) + conversation(55) + web(4) + anti-pattern(8)
+# 199 total: system(15) + filesystem(15) + weather(16) + reminder(15, 1 no-tool) + devtools(15) + news(15)
+#   + time(15, no-tool) + no_tool(10) + conversation(55) + web(4) + vision(16) + anti-pattern(8)
 # Time/date handled by skill (not tool) — expect no tool call (LLM answers from prompt).
 TEST_QUERIES = [
     # --- TIME (15 queries, expect no tool — answered from prompt injection) ---
@@ -278,6 +278,26 @@ TEST_QUERIES = [
     TestQuery("what is the current price of bitcoin", "web_search", "web"),
     TestQuery("what's the weather in Tokyo right now", "get_weather", "weather"),
 
+    # --- VISION: SCREENSHOT (8 queries, expect take_screenshot) ---
+    TestQuery("take a screenshot", "take_screenshot", "vision"),
+    TestQuery("capture my screen", "take_screenshot", "vision"),
+    TestQuery("what's on my screen", "take_screenshot", "vision"),
+    TestQuery("describe my screen", "take_screenshot", "vision"),
+    TestQuery("screenshot please", "take_screenshot", "vision"),
+    TestQuery("show me what's on my display", "take_screenshot", "vision"),
+    TestQuery("what does my monitor show", "take_screenshot", "vision"),
+    TestQuery("capture the left monitor", "take_screenshot", "vision"),
+
+    # --- VISION: WEBCAM (8 queries, expect capture_webcam) ---
+    TestQuery("what do you see", "capture_webcam", "vision"),
+    TestQuery("take a photo", "capture_webcam", "vision"),
+    TestQuery("look at me", "capture_webcam", "vision"),
+    TestQuery("who's there", "capture_webcam", "vision"),
+    TestQuery("what's in the room", "capture_webcam", "vision"),
+    TestQuery("what am I holding", "capture_webcam", "vision"),
+    TestQuery("can you see me", "capture_webcam", "vision"),
+    TestQuery("what's on my desk", "capture_webcam", "vision"),
+
     # --- ANTI-PATTERN BOUNDARY (8 queries — should NOT trigger wrong tool) ---
     # These test the "NOT for:" anti-patterns in enriched tool schemas
     TestQuery("tell me about climate change", [None, "web_search"], "no_tool",
@@ -318,7 +338,7 @@ ALL_OUTCOMES = [
 ]
 
 # Tool names we provide to the LLM
-VALID_TOOL_NAMES = {"web_search", "get_system_info", "find_files", "get_weather", "manage_reminders", "developer_tools", "get_news"}
+VALID_TOOL_NAMES = {"web_search", "get_system_info", "find_files", "get_weather", "manage_reminders", "developer_tools", "get_news", "take_screenshot", "capture_webcam"}
 
 
 @dataclass
@@ -423,7 +443,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
                    temperature: float = 0.3, presence_penalty: float = 1.5,
                    verbose: bool = False, skill_filter: str = None) -> dict:
     """Run the full test suite and return results summary."""
-    tools = [WEB_SEARCH_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL, GET_NEWS_TOOL]
+    tools = [WEB_SEARCH_TOOL, GET_SYSTEM_INFO_TOOL, FIND_FILES_TOOL, GET_WEATHER_TOOL, MANAGE_REMINDERS_TOOL, DEVELOPER_TOOLS_TOOL, GET_NEWS_TOOL, TAKE_SCREENSHOT_TOOL, CAPTURE_WEBCAM_TOOL]
 
     if skill_filter:
         queries = [q for q in queries if q.category == skill_filter]
@@ -491,7 +511,7 @@ def run_test_suite(llm: LLMRouter, queries: list[TestQuery], runs: int = 10,
 
     # Per-category breakdown
     print("\nPer-category accuracy:")
-    for cat in ["time", "system", "filesystem", "weather", "reminder", "devtools", "news", "no_tool", "conversation", "web"]:
+    for cat in ["time", "system", "filesystem", "weather", "reminder", "devtools", "news", "no_tool", "conversation", "web", "vision"]:
         cat_outcomes = per_category.get(cat, {})
         cat_total = sum(cat_outcomes.values())
         cat_correct = (cat_outcomes.get(OUTCOME_CORRECT_TOOL, 0)
@@ -566,7 +586,7 @@ def run_sweep(llm: LLMRouter, queries: list[TestQuery], runs: int = 3,
 def main():
     parser = argparse.ArgumentParser(description="LLM Tool-Calling Test Harness")
     parser.add_argument("--runs", type=int, default=10, help="Runs per query (default: 10)")
-    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "reminder", "devtools", "news", "no_tool", "conversation", "web"],
+    parser.add_argument("--skill", choices=["time", "system", "filesystem", "weather", "reminder", "devtools", "news", "no_tool", "conversation", "web", "vision"],
                        help="Test only one category")
     parser.add_argument("--sweep", action="store_true", help="Run temperature/penalty sweep")
     parser.add_argument("--temp", type=float, default=0.3, help="Temperature (default: 0.3)")

@@ -41,6 +41,7 @@ _SUBSYSTEM_MAP = {
     'core.web_research': 'research',
     'jarvis.mcp_client': 'mcp',
     'jarvis.mcp_server': 'mcp',
+    'jarvis.webcam': 'vision',
     'desktop_manager': 'desktop',
     'pipeline.coordinator': 'pipeline',
     'core.conversation': 'conversation',
