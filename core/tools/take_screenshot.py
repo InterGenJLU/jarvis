@@ -9,6 +9,20 @@ import time
 TOOL_NAME = "take_screenshot"
 ALWAYS_INCLUDED = True
 
+# Intent examples for semantic pruner scoring — without these, the pruner
+# can't tell that "take a screenshot" should route through tool calling
+# and instead defers to non-migrated skills (e.g. file_editor).
+INTENT_EXAMPLES = [
+    "take a screenshot",
+    "capture my screen",
+    "what's on my screen",
+    "describe my screen",
+    "screenshot",
+    "show me what's on my display",
+    "what am I looking at",
+    "what do you see on screen",
+]
+
 SCHEMA = {
     "type": "function",
     "function": {
@@ -244,22 +258,42 @@ def _capture_specific_monitor(output_name: str) -> dict | str:
         return f"Error cropping screenshot: {e}"
 
 
+_MAX_IMAGE_WIDTH = 1280  # Max width before downscaling for LLM vision
+
+
 def _encode_and_cleanup(screenshot_path: str, target: str) -> dict | str:
-    """Read screenshot file, base64 encode, clean up, return result dict."""
+    """Read screenshot file, downscale if needed, base64 encode, return result dict."""
     try:
-        with open(screenshot_path, "rb") as f:
-            image_bytes = f.read()
+        from PIL import Image
+        import io
+
+        img = Image.open(screenshot_path)
+        orig_w, orig_h = img.size
+
+        # Downscale large screenshots for faster mmproj processing
+        if orig_w > _MAX_IMAGE_WIDTH:
+            ratio = _MAX_IMAGE_WIDTH / orig_w
+            new_w = _MAX_IMAGE_WIDTH
+            new_h = int(orig_h * ratio)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        image_bytes = buf.getvalue()
+        img.close()
 
         image_data = base64.b64encode(image_bytes).decode("utf-8")
         size_kb = len(image_bytes) / 1024
 
         _try_unlink(screenshot_path)
 
+        desc = f"Screenshot captured ({target}, {orig_w}x{orig_h}"
+        if orig_w > _MAX_IMAGE_WIDTH:
+            desc += f" → resized to {new_w}x{new_h}"
+        desc += f", {size_kb:.0f} KB)."
+
         return {
-            "text": (
-                f"Screenshot captured ({target}, {size_kb:.0f} KB). "
-                "The image is attached — describe what you see."
-            ),
+            "text": desc + " The image is attached — describe what you see.",
             "image_data": image_data,
         }
     except Exception as e:

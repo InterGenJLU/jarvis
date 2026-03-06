@@ -185,7 +185,7 @@ class LLMRouter:
         Returns:
             OpenAI-compatible message dict with string or array content
         """
-        _log = logging.getLogger(__name__)
+        _log = get_logger(__name__)
         _log.debug("_build_user_message: text_len=%d image=%s%s",
                     len(text) if text else 0,
                     "yes" if image_data else "no",
@@ -1336,11 +1336,15 @@ class LLMRouter:
         tc_args = ""
         tc_id = None
 
+        # Multimodal requests (image_data) need longer timeout —
+        # mmproj processes the image on CPU before generating tokens.
+        _timeout = 90 if image_data else 30
+
         try:
             response = requests.post(
                 "http://127.0.0.1:8080/v1/chat/completions",
                 json=payload,
-                timeout=30,
+                timeout=_timeout,
                 stream=True,
             )
             response.raise_for_status()

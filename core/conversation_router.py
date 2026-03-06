@@ -1876,7 +1876,8 @@ class ConversationRouter:
             return None
 
         # Lazy import to avoid circular dependency at module load
-        from core.tool_registry import ALWAYS_INCLUDED_TOOLS, SKILL_TOOLS
+        from core.tool_registry import (ALWAYS_INCLUDED_TOOLS, SKILL_TOOLS,
+                                         _tool_modules)
 
         try:
             from sentence_transformers import util as st_util
@@ -1886,6 +1887,34 @@ class ConversationRouter:
         user_embedding = sm._embedding_model.encode(
             command, convert_to_tensor=True, show_progress_bar=False
         )
+
+        # Score always-included tools that declare INTENT_EXAMPLES.
+        # These tools have no corresponding skill, so the skill loop below
+        # can't see them.  Treating a high-scoring always-included tool as
+        # a "migrated" match prevents the pruner from incorrectly deferring
+        # to P4 skill routing (e.g. file_editor for "take a screenshot").
+        best_always_included_score = 0.0
+        for mod in _tool_modules:
+            examples = getattr(mod, 'INTENT_EXAMPLES', None)
+            if not examples or not getattr(mod, 'ALWAYS_INCLUDED', False):
+                continue
+            if not hasattr(self, '_always_included_embeddings'):
+                self._always_included_embeddings = {}
+            cache_key = mod.TOOL_NAME
+            if cache_key not in self._always_included_embeddings:
+                self._always_included_embeddings[cache_key] = (
+                    sm._embedding_model.encode(
+                        examples, convert_to_tensor=True,
+                        show_progress_bar=False,
+                    )
+                )
+            embs = self._always_included_embeddings[cache_key]
+            sims = st_util.cos_sim(user_embedding, embs)
+            score = float(sims.max())
+            logger.debug("  Tool pruning: always_included %s = %.2f",
+                         mod.TOOL_NAME, score)
+            if score > best_always_included_score:
+                best_always_included_score = score
 
         # Score ALL skills (migrated and non-migrated) to find the best match
         best_migrated_score = 0.0
@@ -1930,14 +1959,33 @@ class ConversationRouter:
                     best_non_migrated_score = skill_best
                     best_non_migrated_name = skill_name
 
+        # Fold always-included tool scores into migrated score so they
+        # participate in the non-migrated guard.  An always-included tool
+        # that scores higher than any non-migrated skill should prevent
+        # deferral to P4 (e.g. take_screenshot > file_editor).
+        effective_migrated = max(best_migrated_score, best_always_included_score)
+
         logger.debug(
-            "Tool pruning summary: migrated=%.2f, non_migrated=%.2f (%s), "
-            "web_nav=%.2f, domain_tools=%d",
-            best_migrated_score, best_non_migrated_score,
+            "Tool pruning summary: migrated=%.2f, always_incl=%.2f, "
+            "non_migrated=%.2f (%s), web_nav=%.2f, domain_tools=%d",
+            best_migrated_score, best_always_included_score,
+            best_non_migrated_score,
             best_non_migrated_name or "none", web_nav_score, len(matched_tools),
         )
 
         if not matched_tools:
+            # If an always-included tool scored well, route through tool
+            # calling with always-on tools — don't defer to P4.
+            if (best_always_included_score >= self._TOOL_PRUNE_THRESHOLD
+                    and best_always_included_score >= best_non_migrated_score
+                    and best_always_included_score >= web_nav_score):
+                logger.info(
+                    "Tool pruning: always-included tool scored %.2f — "
+                    "routing with always-on tools",
+                    best_always_included_score,
+                )
+                return list(ALWAYS_INCLUDED_TOOLS.values())
+
             # No domain tools matched.  If web_navigation scored well,
             # defer to P4 so the native handlers (YouTube, Amazon, etc.)
             # can run instead of the generic web_search tool.
@@ -1971,16 +2019,16 @@ class ConversationRouter:
             return list(ALWAYS_INCLUDED_TOOLS.values())
 
         # Guard: if a non-migrated skill (including web_navigation) scores
-        # higher than the best migrated skill, defer to P4 so native skill
-        # handlers run instead of LLM tool-calling.
+        # higher than the best migrated/always-included tool, defer to P4
+        # so native skill handlers run instead of LLM tool-calling.
         effective_non_migrated = max(best_non_migrated_score, web_nav_score)
-        if effective_non_migrated > best_migrated_score:
+        if effective_non_migrated > effective_migrated:
             winner = (best_non_migrated_name if best_non_migrated_score >= web_nav_score
                       else "web_navigation")
             logger.info(
                 "Tool pruning: non-migrated skill '%s' scored higher "
                 "(%.2f > migrated %.2f) — deferring to P4",
-                winner, effective_non_migrated, best_migrated_score,
+                winner, effective_non_migrated, effective_migrated,
             )
             return None
 

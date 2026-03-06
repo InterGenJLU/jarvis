@@ -1435,10 +1435,13 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             syn_thread.start()
 
             next_tool_call = None
+            # Multimodal tools (screenshot) need longer timeout —
+            # mmproj processes images on CPU before first token
+            _synth_timeout = 120 if _current_img else 60
             while True:
                 try:
                     tag, value = await asyncio.wait_for(
-                        synthesis_queue.get(), timeout=60
+                        synthesis_queue.get(), timeout=_synth_timeout
                     )
                 except asyncio.TimeoutError:
                     break
