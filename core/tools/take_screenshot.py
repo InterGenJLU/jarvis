@@ -45,10 +45,11 @@ SCHEMA = {
                 },
                 "target": {
                     "type": "string",
-                    "enum": ["monitor", "window"],
+                    "enum": ["monitor", "window", "all"],
                     "description": (
                         "monitor=focused monitor (default), "
-                        "window=active window only"
+                        "window=active window only, "
+                        "all=all monitors combined"
                     ),
                 },
                 "output": {
@@ -65,12 +66,16 @@ SCHEMA = {
 }
 
 SYSTEM_PROMPT_RULE = (
-    "For 'what's on my screen?', 'describe my screen', 'take a screenshot', "
-    "or any request about what the user is looking at, call take_screenshot "
-    "with action=capture. The result includes the screenshot image — "
-    "describe what you see in detail. "
+    "RULE: Screenshot requests. "
+    "If the user specifies a target ('this window', 'the left monitor', a monitor name), "
+    "call take_screenshot with action=capture and the appropriate target/output. "
+    "If the request is ambiguous ('what's on my screen?', 'take a screenshot', "
+    "'describe my screen'), call take_screenshot with action=survey FIRST to see "
+    "the monitor layout and open windows, then make a SECOND call with action=capture "
+    "targeting the most relevant monitor. "
     "If the user asks about monitor layout or which monitor shows what, "
-    "use action=survey first."
+    "use action=survey and report the results without capturing. "
+    "After capturing, describe what you see in the image in detail."
 )
 
 # Runtime dependency — injected by tool_registry.inject_dependencies()
@@ -195,12 +200,53 @@ def _capture_screenshot(args: dict) -> dict | str:
     if output_name:
         return _capture_specific_monitor(output_name)
 
-    # Focused monitor or active window: use desktop_manager
+    # Focused monitor: detect which monitor has focus, crop to it
+    if target == "monitor":
+        return _capture_focused_monitor()
+
+    # All monitors: full desktop, downscale for LLM
+    if target == "all":
+        screenshot_path = _desktop_manager.take_screenshot(target="all")
+        if not screenshot_path:
+            return "Error: Screenshot capture failed."
+        return _encode_and_cleanup(screenshot_path, "all monitors", max_width=1920)
+
+    # Active window
     screenshot_path = _desktop_manager.take_screenshot(target=target)
     if not screenshot_path:
         return "Error: Screenshot capture failed."
-
     return _encode_and_cleanup(screenshot_path, target)
+
+
+def _capture_focused_monitor() -> dict | str:
+    """Capture the monitor that has the focused window.
+
+    Uses GNOME D-Bus get_active_window() to find the monitor index,
+    maps to xrandr output name, then delegates to _capture_specific_monitor().
+    """
+    monitors = _parse_monitors()
+    if not monitors:
+        return "Error: Could not detect monitors."
+
+    # Try to get focused window's monitor index from GNOME D-Bus
+    target_name = None
+    active_win = _desktop_manager.get_active_window()
+    if active_win and "monitor" in active_win:
+        mon_idx = active_win["monitor"]
+        if 0 <= mon_idx < len(monitors):
+            target_name = monitors[mon_idx]["name"]
+
+    # Fallback: use the primary monitor
+    if not target_name:
+        for mon in monitors:
+            if mon["primary"]:
+                target_name = mon["name"]
+                break
+        # Last resort: first monitor
+        if not target_name:
+            target_name = monitors[0]["name"]
+
+    return _capture_specific_monitor(target_name)
 
 
 def _capture_specific_monitor(output_name: str) -> dict | str:
@@ -249,7 +295,8 @@ def _capture_specific_monitor(output_name: str) -> dict | str:
         except OSError:
             pass
 
-        return _encode_and_cleanup(crop_path, f"monitor {output_name}")
+        return _encode_and_cleanup(crop_path, f"monitor {output_name}",
+                                   max_width=None)
     except ImportError:
         _try_unlink(screenshot_path)
         return "Error: PIL not available — cannot crop to specific monitor."
@@ -258,11 +305,15 @@ def _capture_specific_monitor(output_name: str) -> dict | str:
         return f"Error cropping screenshot: {e}"
 
 
-_MAX_IMAGE_WIDTH = 1280  # Max width before downscaling for LLM vision
+def _encode_and_cleanup(screenshot_path: str, target: str,
+                        max_width: int | None = None) -> dict | str:
+    """Read screenshot file, optionally downscale, base64 encode, return result dict.
 
-
-def _encode_and_cleanup(screenshot_path: str, target: str) -> dict | str:
-    """Read screenshot file, downscale if needed, base64 encode, return result dict."""
+    Args:
+        max_width: Maximum pixel width before downscaling. None = keep native resolution.
+                   Targeted captures (single monitor/window) should pass None;
+                   full-desktop captures should pass 1920.
+    """
     try:
         from PIL import Image
         import io
@@ -270,10 +321,10 @@ def _encode_and_cleanup(screenshot_path: str, target: str) -> dict | str:
         img = Image.open(screenshot_path)
         orig_w, orig_h = img.size
 
-        # Downscale large screenshots for faster mmproj processing
-        if orig_w > _MAX_IMAGE_WIDTH:
-            ratio = _MAX_IMAGE_WIDTH / orig_w
-            new_w = _MAX_IMAGE_WIDTH
+        # Downscale if max_width is set and image exceeds it
+        if max_width and orig_w > max_width:
+            ratio = max_width / orig_w
+            new_w = max_width
             new_h = int(orig_h * ratio)
             img = img.resize((new_w, new_h), Image.LANCZOS)
 
@@ -288,7 +339,7 @@ def _encode_and_cleanup(screenshot_path: str, target: str) -> dict | str:
         _try_unlink(screenshot_path)
 
         desc = f"Screenshot captured ({target}, {orig_w}x{orig_h}"
-        if orig_w > _MAX_IMAGE_WIDTH:
+        if max_width and orig_w > max_width:
             desc += f" → resized to {new_w}x{new_h}"
         desc += f", {size_kb:.0f} KB)."
 

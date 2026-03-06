@@ -974,6 +974,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     t_match = time.perf_counter()
 
     streamed = False
+    _resp_image_url = None  # Set by _stream_llm_ws when tool produces an image
     if result.skip:
         # Bare ack noise — return empty response
         t_end = time.perf_counter()
@@ -1112,8 +1113,9 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     else:
         # LLM fallback (streaming over WebSocket when ws is available)
         used_llm = True
+        _resp_image_url = None
         if ws:
-            response, streamed = await _stream_llm_ws(
+            response, streamed, _resp_image_url = await _stream_llm_ws(
                 ws, llm, result.llm_command, result.llm_history, web_researcher,
                 memory_context=result.memory_context,
                 conversation_messages=result.context_messages,
@@ -1146,7 +1148,10 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
 
     t_end = time.perf_counter()
 
-    conversation.add_message("assistant", response)
+    _add_kwargs = {}
+    if _resp_image_url:
+        _add_kwargs['image_url'] = _resp_image_url
+    conversation.add_message("assistant", response, **_add_kwargs)
 
     # Update centralized conversation state
     conv_state.update(
@@ -1200,9 +1205,10 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           image_data=None) -> tuple:
     """Stream LLM response over WebSocket with quality gate and tool calling.
 
-    Returns (response_text, streamed_bool).
+    Returns (response_text, streamed_bool, image_url_or_none).
     When streamed_bool is True, stream_start/stream_end were sent over ws.
     When False, caller should send a normal 'response' message.
+    image_url is set when a tool produced an image (e.g. take_screenshot).
     """
     if raw_command is None:
         raw_command = command
@@ -1290,7 +1296,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                         )
                         # Drain remaining producer output
                         thread.join(timeout=5)
-                        return (retry or "", False)
+                        return (retry or "", False, None)
                     # Quality OK — start streaming, flush buffer
                     await ws.send_json({'type': 'stream_start'})
                     await ws.send_json({
@@ -1313,7 +1319,6 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
             tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
-            _tool_image_path = None  # Set when image saved to disk
 
             logger.info(f"Tool call: {tool_call_request.name}({tool_call_request.arguments})")
             logger.debug("Tool chain #%d: %s, arg_keys=%s",
@@ -1383,11 +1388,14 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 tool_result, tool_image_data = parse_tool_result(raw_result)
 
                 # Save tool-generated images to disk
-                _tool_image_path = None
                 if tool_image_data:
-                    _tool_image_path = await asyncio.to_thread(
-                        save_tool_image, tool_image_data, tool_call_request.name
-                    )
+                    try:
+                        _tool_image_path = await asyncio.to_thread(
+                            save_tool_image, tool_image_data,
+                            tool_call_request.name,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to save tool image: %s", e)
 
                 # Artifact cache — store non-web-search tool results
                 _cache = get_interaction_cache()
@@ -1512,7 +1520,9 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 created_at=time.time(),
             ))
 
-        return (cleaned, True)
+        _image_url = ('/images/' + os.path.basename(_tool_image_path)
+                      if _tool_image_path else None)
+        return (cleaned, True, _image_url)
 
     # --- Handle short response (no sentence boundary hit) ---
     if not stream_started:
@@ -1529,7 +1539,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     user_message=command,
                     conversation_history=history,
                 )
-                return (retry or "", False)
+                return (retry or "", False, None)
         # Persist pure LLM conversation for cross-session awareness
         if memory_manager and full_response:
             memory_manager.persist_interaction(
@@ -1537,7 +1547,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 user_id=user_id or 'christopher',
             )
         # Short enough to send as non-streaming response
-        return (full_response, False)
+        return (full_response, False, None)
 
     # --- Deflection safety net ---
     if full_response and web_researcher and _is_deflection(full_response):
@@ -1550,7 +1560,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             'type': 'stream_end',
             'full_response': fallback or "",
         })
-        return (fallback or "", True)
+        return (fallback or "", True, None)
 
     # --- Normal end ---
     cleaned = llm.strip_filler(full_response) if full_response else ""
@@ -1565,7 +1575,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             "conversation", raw_command, cleaned,
             user_id=user_id or 'christopher',
         )
-    return (cleaned, True)
+    return (cleaned, True, None)
 
 
 async def _llm_fallback(llm, command, history, web_researcher,

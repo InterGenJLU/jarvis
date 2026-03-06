@@ -314,17 +314,7 @@
             if (parent) {
                 // Insert image thumbnail above the text bubble
                 if (imageUrl) {
-                    var imgWrap = document.createElement('div');
-                    imgWrap.className = 'message-image-wrap';
-                    var img = document.createElement('img');
-                    img.className = 'message-image-thumb';
-                    img.src = imageUrl;
-                    img.alt = 'Tool image';
-                    img.addEventListener('click', function () {
-                        window.open(imageUrl, '_blank');
-                    });
-                    imgWrap.appendChild(img);
-                    parent.insertBefore(imgWrap, streamingBubble);
+                    parent.insertBefore(createImageThumb(imageUrl), streamingBubble);
                 }
                 // Add timestamp
                 var ts = document.createElement('div');
@@ -335,6 +325,20 @@
         }
         streamingBubble = null;
         scrollToBottom();
+    }
+
+    function createImageThumb(imageUrl) {
+        var imgWrap = document.createElement('div');
+        imgWrap.className = 'message-image-wrap';
+        var img = document.createElement('img');
+        img.className = 'message-image-thumb';
+        img.src = imageUrl;
+        img.alt = 'Tool image';
+        img.addEventListener('click', function () {
+            window.open(imageUrl, '_blank');
+        });
+        imgWrap.appendChild(img);
+        return imgWrap;
     }
 
     // --- Message rendering ---
@@ -1213,6 +1217,11 @@
             sender.textContent = role === 'user' ? getUserDisplayName() : 'J.A.R.V.I.S.';
             messageDiv.appendChild(sender);
 
+            // Image thumbnail from persisted history
+            if (msg.image_url) {
+                messageDiv.appendChild(createImageThumb(msg.image_url));
+            }
+
             var bubble = document.createElement('div');
             bubble.className = 'message-bubble';
             if (role === 'jarvis') {
@@ -1455,6 +1464,11 @@
                         sender.className = 'message-sender';
                         sender.textContent = role === 'user' ? getUserDisplayName() : 'J.A.R.V.I.S.';
                         messageDiv.appendChild(sender);
+
+                        // Image thumbnail from persisted history
+                        if (msg.image_url) {
+                            messageDiv.appendChild(createImageThumb(msg.image_url));
+                        }
 
                         var bubble = document.createElement('div');
                         bubble.className = 'message-bubble';

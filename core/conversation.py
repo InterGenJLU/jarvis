@@ -139,7 +139,8 @@ class ConversationManager:
             return ""
 
     def add_message(self, role: str, content: str, user_id: Optional[str] = None,
-                    speaker_confidence: Optional[float] = None):
+                    speaker_confidence: Optional[float] = None,
+                    image_url: Optional[str] = None):
         """
         Add message to conversation history
 
@@ -148,6 +149,7 @@ class ConversationManager:
             content: Message content
             user_id: Optional user identifier
             speaker_confidence: Optional speaker identification confidence (0.0-1.0)
+            image_url: Optional image URL for tool-generated images (e.g. screenshots)
         """
         message = {
             "timestamp": time.time(),
@@ -157,6 +159,8 @@ class ConversationManager:
         }
         if speaker_confidence is not None:
             message["speaker_confidence"] = speaker_confidence
+        if image_url is not None:
+            message["image_url"] = image_url
 
         # Track session participants (user messages only)
         if role == "user" and message["user_id"]:
