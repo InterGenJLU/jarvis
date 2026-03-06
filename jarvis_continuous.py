@@ -43,7 +43,7 @@ import queue
 from core.config import load_config
 from core.logger import get_logger
 from core.stt import SpeechToText
-from core.tts import TextToSpeech
+from core.tts import TextToSpeech, resolve_output_device
 from core.conversation import ConversationManager
 from core.responses import get_response_library
 from core.llm_router import LLMRouter
@@ -313,7 +313,9 @@ class JarvisContinuous:
             if not self.beep_path.exists():
                 return
             
-            audio_device = self.config.get("audio.output_device", "plughw:0,0")
+            audio_device = resolve_output_device(
+                self.config.get("audio.output_device", "default")
+            )
             
             subprocess.run(
                 ["aplay", "-D", audio_device, str(self.beep_path)],

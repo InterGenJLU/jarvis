@@ -32,7 +32,7 @@
 **Phase sequence (from DEVELOPMENT_VISION.md):**
 1. ~~Phase 1: Low-stakes skills as tools (system_info, filesystem, time)~~ — **COMPLETE Feb 26.** 100% accuracy (600/600 trials), 822ms avg latency, 266/266 existing tests pass. Commit `06dd741`.
 2. ~~Phase 2: API-backed + complex skills as tools~~ — **COMPLETE Feb 27.** 7 tools total (6 domain + web_search). 1,200+ trials, 100% on domain categories, 99.6% overall (523/525). Tool-connector plugin system built (`ba80e5a`). Sub-phases: 2.1a weather (`1be0cb1`), 2.1b reminders (`49eca5c`), 2.2 conversation disabled (`aa2f524`), 2.3 developer_tools (`a6ae616`), 2.4 news (`578e3c9`). get_time removed post-Phase 2 (time/date handled by TimeInfoSkill via semantic matching). recall_memory added Mar 3 (8th tool).
-3. Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision) — **NEXT.** mmproj smoke-tested at server level, needs console/web input wiring.
+3. ~~Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision)~~ — **COMPLETE Mar 4.** Phases 1-5 done (multimodal LLM, web/mobile upload, console /image + /screenshot, voice take_screenshot tool). Phase 6 (thumbnails) + Phase 7 (webcam) remaining.
 4. ~~Phase 4: Routing layer evaluation~~ — **RESOLVED Mar 1.** Hybrid architecture retained — skills and tools coexist by design.
 
 ---
@@ -44,7 +44,11 @@
 
 | # | Item | Effort | Status | Notes |
 |---|------|--------|--------|-------|
-| 20P3 | **Vision Phase 3** — activate mmproj, image input to console/web/mobile LLM router. Desktop: screenshot analysis, screen reading. Mobile: camera photos, snap-and-ask. | 1-2 days | **NEXT** — mmproj smoke-tested at server level | Cross-platform force multiplier. Foundation for #51, #52, #15. Mobile web UI image upload is trivial wiring. |
+| 20P3 | ~~**Vision Phases 1-3**~~ — multimodal LLM + web/mobile image upload | — | **DONE** | — |
+| 20P4 | ~~**Vision Phase 4**~~ — console `/image` + `/screenshot` commands | — | **DONE** | — |
+| 20P5 | ~~**Vision Phase 5**~~ — `take_screenshot` LLM tool for voice mode | — | **DONE** | — |
+| 20P6 | **Vision Phase 6** — Image thumbnails in web chat responses | 1-2 hours | **NEXT** | Low effort polish |
+| 20P7 | **Vision Phase 7** — Webcam capture. LLM tool + console `/webcam` + voice "what do you see?" | 2-4 hours | NOT STARTED | `ffmpeg -f v4l2` one-shot. Completes JARVIS vision |
 | — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | NOT STARTED — config stub + MCP bridge ready | Cross-platform: same utility from desk or pocket. the user=Gmail, secondary=AOL |
 | 60 | **Mobile app** — web UI phase 1 done (auth + responsive layout + mobile routing). Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** — web UI works on mobile | Plan: `memory/plan_mobile_ios_app.md`. Routing fixes: skill filtering, tool exclusion, pre-exec blocking, always-on tool fallback, 82-test suite |
 | — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | DB column exists (`caldav_event_id`), zero CalDAV code |

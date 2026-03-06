@@ -1534,7 +1534,10 @@ class Coordinator:
             if not self.beep_path.exists():
                 return
             import subprocess
-            audio_device = self.config.get("audio.output_device", "plughw:0,0")
+            from core.tts import resolve_output_device
+            audio_device = resolve_output_device(
+                self.config.get("audio.output_device", "default")
+            )
             subprocess.run(
                 ["aplay", "-D", audio_device, str(self.beep_path)],
                 stdout=subprocess.DEVNULL,

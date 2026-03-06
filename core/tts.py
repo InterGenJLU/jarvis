@@ -17,6 +17,60 @@ from typing import Optional, Dict
 from core.logger import get_logger
 from core.tts_normalizer import get_normalizer
 
+logger = get_logger(__name__)
+
+
+def resolve_output_device(configured: str) -> str:
+    """Resolve audio output device name to ALSA device string.
+
+    If configured value is already an ALSA string (plughw:, hw:, default),
+    use it directly. Otherwise, search /proc/asound/cards by name and
+    return plughw:N,0 for the matching card that has playback capability.
+    """
+    if not configured or configured == "default":
+        return "default"
+
+    # Already an ALSA device string — use directly
+    if configured.startswith(("plughw:", "hw:")):
+        return configured
+
+    # Resolve by name: read /proc/asound/cards
+    try:
+        with open("/proc/asound/cards") as f:
+            cards_text = f.read()
+    except OSError:
+        logger.warning("Cannot read /proc/asound/cards, using 'default'")
+        return "default"
+
+    # Parse lines like: " 3 [Generic        ]: HDA-Intel - HD-Audio Generic"
+    import re
+    for match in re.finditer(
+        r"^\s*(\d+)\s+\[(\w+)\s*\].*?-\s*(.+)$", cards_text, re.MULTILINE
+    ):
+        card_num, card_id, card_desc = match.group(1), match.group(2), match.group(3)
+
+        if (configured.lower() in card_id.lower()
+                or configured.lower() in card_desc.lower()):
+            # Verify this card has playback capability
+            pcm_path = Path(f"/proc/asound/card{card_num}/pcm0p")
+            if pcm_path.exists():
+                device = f"plughw:{card_num},0"
+                logger.info(
+                    f"Resolved output device '{configured}' -> {device} "
+                    f"({card_desc})"
+                )
+                return device
+            else:
+                logger.debug(
+                    f"Card {card_num} ({card_id}) matches '{configured}' "
+                    f"but has no playback"
+                )
+
+    logger.warning(
+        f"Output device '{configured}' not found in ALSA cards, using 'default'"
+    )
+    return "default"
+
 
 class TextToSpeech:
     """Text-to-speech engine supporting Kokoro and Piper backends"""
@@ -35,8 +89,10 @@ class TextToSpeech:
         # Track whether speak() was called (for caller detection)
         self._spoke = False
 
-        # Audio output device
-        self.audio_device = config.get("audio.output_device", "default")
+        # Audio output device (resolved by name at startup)
+        self.audio_device = resolve_output_device(
+            config.get("audio.output_device", "default")
+        )
 
         # Normalization
         self.normalization_enabled = config.get("tts.normalization_enabled", True)

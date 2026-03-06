@@ -94,7 +94,10 @@ class ReminderManager:
 
         # Audio assets
         self._assets_dir = Path(__file__).parent.parent / "assets"
-        self._audio_device = config.get("audio.output_device", "plughw:0,0")
+        from core.tts import resolve_output_device
+        self._audio_device = resolve_output_device(
+            config.get("audio.output_device", "default")
+        )
 
         # Background thread state
         self._running = False
