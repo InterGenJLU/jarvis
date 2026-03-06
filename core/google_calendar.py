@@ -341,26 +341,36 @@ class GoogleCalendarManager:
                 now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S") + self._tz_offset()
                 kwargs["timeMin"] = now
 
-            events_result = self.service.events().list(**kwargs).execute()
+            page_token = None
+            while True:
+                if page_token:
+                    kwargs["pageToken"] = page_token
 
-            for event in events_result.get("items", []):
-                status = event.get("status", "confirmed")
-                event_id = event["id"]
+                events_result = self.service.events().list(**kwargs).execute()
 
-                if status == "cancelled":
-                    result["deleted"].append({"google_event_id": event_id})
-                else:
-                    parsed = self._parse_google_event(event)
-                    if parsed:
-                        # Determine if new or updated based on whether we've seen it
-                        parsed["google_event_id"] = event_id
-                        result["new"].append(parsed)  # Caller resolves new vs update
+                for event in events_result.get("items", []):
+                    status = event.get("status", "confirmed")
+                    event_id = event["id"]
 
-            # Save sync token for next incremental call
-            new_token = events_result.get("nextSyncToken")
-            if new_token:
-                self._sync_token = new_token
-                self._save_sync_token()
+                    if status == "cancelled":
+                        result["deleted"].append({"google_event_id": event_id})
+                    else:
+                        parsed = self._parse_google_event(event)
+                        if parsed:
+                            parsed["google_event_id"] = event_id
+                            result["new"].append(parsed)
+
+                # nextSyncToken only appears on the final page
+                new_token = events_result.get("nextSyncToken")
+                if new_token:
+                    self._sync_token = new_token
+                    self._save_sync_token()
+                    break
+
+                # Follow pagination to get all pages
+                page_token = events_result.get("nextPageToken")
+                if not page_token:
+                    break
 
             if result["new"] or result["deleted"]:
                 self.logger.info(
