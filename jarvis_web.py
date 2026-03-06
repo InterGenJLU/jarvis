@@ -3279,7 +3279,8 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/memory/db-health', memory_db_health_handler)
     app.router.add_get('/', index_handler)
     # Serve tool-generated images (screenshots, webcam, etc.)
-    _images_dir = Path('/mnt/storage/jarvis/data/images')
+    from core.tool_registry import get_images_dir
+    _images_dir = Path(get_images_dir())
     _images_dir.mkdir(parents=True, exist_ok=True)
     app.router.add_static('/images', _images_dir)
     app.router.add_static('/', web_dir)

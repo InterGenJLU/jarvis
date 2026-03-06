@@ -208,7 +208,12 @@ def parse_tool_result(result) -> tuple:
     return result, None
 
 
-_IMAGES_DIR = "/mnt/storage/jarvis/data/images"
+_IMAGES_DIR = "/mnt/storage/jarvis/data/images"  # configurable via storage.images_path
+
+
+def get_images_dir() -> str:
+    """Return the configured images directory path."""
+    return _IMAGES_DIR
 
 
 def save_tool_image(image_data: str, tool_name: str) -> str:
@@ -274,7 +279,11 @@ def inject_dependencies(deps: dict):
         deps: Mapping of dependency name -> runtime object.
               e.g. {"reminder_manager": <ReminderManager>, "config": <Config>}
     """
-    global _REGISTRY_READY
+    global _REGISTRY_READY, _IMAGES_DIR
+    # Configure images directory from config if available
+    config = deps.get("config")
+    if config and hasattr(config, "get"):
+        _IMAGES_DIR = config.get("storage.images_path", _IMAGES_DIR)
     for mod in _tool_modules:
         declared = getattr(mod, 'DEPENDENCIES', {})
         for dep_name, var_name in declared.items():
