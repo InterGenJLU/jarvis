@@ -183,17 +183,19 @@ class ConversationRouter:
         logger.debug("route: command=%.80s user=%s guest=%s in_conv=%s",
                       command, self._user_id, guest, in_conversation)
 
-        # --- Guest greeting (before pending-state priorities) ---
-        if guest and (command.strip() == "jarvis_only" or len(command.strip()) <= 2):
-            return self._route_greeting()
-
         # --- Priority 1: Rundown acceptance (outside guest guard) ---
         # Rundown is JARVIS-initiated for the owner.  If a rundown is
         # pending the response must go through the rundown handler even
         # when speaker-ID has (incorrectly) activated guest mode.
+        # Checked BEFORE guest greeting so short responses like "no" (2 chars)
+        # are not swallowed by the guest greeting guard.
         result = self._handle_rundown(command)
         if result:
             return result
+
+        # --- Guest greeting (before pending-state priorities) ---
+        if guest and (command.strip() == "jarvis_only" or len(command.strip()) <= 2):
+            return self._route_greeting()
 
         # --- Personal priority chain (skipped for guests) ---
         if not guest:
@@ -380,8 +382,9 @@ class ConversationRouter:
         text_lower = command.strip().lower()
         words = set(re.findall(r'\b\w+\b', text_lower))
         negative = bool(
-            words & {"no", "later", "hold", "skip"}
+            words & {"no", "nah", "nope", "later", "hold", "skip"}
             or "not now" in text_lower
+            or "not right now" in text_lower
             or "not yet" in text_lower
         )
         if negative:

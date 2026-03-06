@@ -422,6 +422,96 @@ def test_news_continuation(router, news_manager):
               f"handled={r.handled}, intent={r.intent}")
 
 
+def test_rundown_immune_to_guest_mode(router, reminder_manager):
+    """Test that owner-directed rundown is immune to guest mode honorific."""
+    section("Rundown vs Guest Mode")
+
+    if not reminder_manager:
+        print("  [SKIP] Reminder manager not available")
+        return
+
+    conversation = router.conversation
+    from core.honorific import set_honorific, get_honorific
+
+    # --- Simulate guest mode (speaker ID failed) ---
+    saved_user = conversation.current_user
+    conversation.current_user = "__guest__"
+    set_honorific("friend")
+
+    try:
+        # 1. Rundown pending + guest mode + "not right now" → rundown_defer (not dismissal)
+        reminder_manager._rundown_state = "offered"
+        reminder_manager._rundown_offered_at = __import__("datetime").datetime.now()
+        reminder_manager._rundown_cycle = 1
+
+        for phrase in ["not right now", "no", "no thanks", "later", "skip"]:
+            set_honorific("friend")
+            conversation.current_user = "__guest__"
+            reminder_manager._rundown_state = "offered"
+            reminder_manager._rundown_offered_at = __import__("datetime").datetime.now()
+            reminder_manager._rundown_cycle = 1
+
+            r = router.route(phrase, in_conversation=True)
+            check(f"guest + rundown pending: '{phrase}' → rundown_defer",
+                  r.handled and r.intent == "rundown_defer",
+                  f"intent={r.intent}")
+        check("  honorific restored to 'sir'",
+              get_honorific() == "sir",
+              f"honorific={get_honorific()!r}")
+        check("  defer response uses 'sir' not 'friend'",
+              "sir" in r.text.lower() and "friend" not in r.text.lower(),
+              f"text={r.text!r}")
+
+        # 2. Rundown pending + guest mode + "yes" / affirmative → rundown_accept
+        set_honorific("friend")
+        conversation.current_user = "__guest__"
+        reminder_manager._rundown_state = "offered"
+        reminder_manager._rundown_offered_at = __import__("datetime").datetime.now()
+        reminder_manager._rundown_cycle = 1
+
+        r = router.route("yes please", in_conversation=True)
+        check("guest + rundown pending: 'yes please' → rundown_accept",
+              r.handled and r.intent == "rundown_accept",
+              f"intent={r.intent}")
+        check("  honorific restored to 'sir'",
+              get_honorific() == "sir",
+              f"honorific={get_honorific()!r}")
+
+        # 3. No rundown pending + guest mode → dismissal (not rundown)
+        reminder_manager._rundown_state = None
+        set_honorific("friend")
+        conversation.current_user = "__guest__"
+
+        r = router.route("not right now", in_conversation=True)
+        check("guest + NO rundown: 'not right now' → dismissal",
+              r.intent == "dismissal",
+              f"intent={r.intent}")
+
+        # 4. Rundown mention on wake word + guest mode → rundown_mention (not guest greeting)
+        reminder_manager._rundown_pending_mention = True
+        set_honorific("friend")
+        conversation.current_user = "__guest__"
+
+        r = router.route("jarvis_only")
+        check("guest + rundown mention: wake word → greeting with rundown mention",
+              r.handled and r.intent == "greeting",
+              f"intent={r.intent}")
+        check("  mentions 'rundown'",
+              "rundown" in r.text.lower(),
+              f"text={r.text!r}")
+        check("  uses 'sir' not 'friend'",
+              "sir" in r.text.lower() and "friend" not in r.text.lower(),
+              f"text={r.text!r}")
+
+    finally:
+        # Clean up
+        conversation.current_user = saved_user
+        set_honorific("sir")
+        reminder_manager._rundown_state = None
+        reminder_manager._rundown_cycle = 0
+        reminder_manager._rundown_pending_mention = False
+
+
 def test_guest_mode(router):
     """Test guest (unrecognized speaker) security boundary."""
     section("Guest Mode (#16)")
@@ -611,6 +701,7 @@ def main():
     test_priority_ordering(router, memory_manager, conv_state)
     test_llm_fallback(router)
     test_news_continuation(router, news_manager)
+    test_rundown_immune_to_guest_mode(router, reminder_manager)
     test_guest_mode(router)
     test_multi_speaker(router)
 
