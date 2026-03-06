@@ -57,6 +57,7 @@ from core.self_awareness import SelfAwareness
 from core.task_planner import TaskPlanner
 from core.interaction_cache import get_interaction_cache, Artifact
 from core.readback_session import ReadbackSession
+from core.webcam_manager import get_webcam_manager, WebcamManager
 import hmac
 
 
@@ -3269,6 +3270,77 @@ async def index_handler(request):
     return web.FileResponse(Path(__file__).parent / 'web' / 'index.html')
 
 
+# ---------------------------------------------------------------------------
+# Webcam streaming endpoints
+# ---------------------------------------------------------------------------
+
+async def webcam_stream_handler(request):
+    """MJPEG multipart stream from live webcam feed."""
+    wm: WebcamManager | None = request.app.get('webcam_manager')
+    if not wm:
+        return web.Response(status=503, text="Webcam not available")
+
+    if not wm.device_available:
+        return web.Response(status=503, text="Webcam device not connected")
+
+    response = web.StreamResponse(
+        status=200,
+        headers={
+            'Content-Type': 'multipart/x-mixed-replace; boundary=jarvisframe',
+            'Cache-Control': 'no-cache, no-store',
+            'Connection': 'close',
+        },
+    )
+    await response.prepare(request)
+
+    await wm.register_client()
+    try:
+        async for frame in wm.stream_frames():
+            try:
+                header = (
+                    b"--jarvisframe\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
+                    b"\r\n"
+                )
+                await response.write(header + frame + b"\r\n")
+            except (ConnectionResetError, ConnectionAbortedError):
+                break
+    finally:
+        await wm.unregister_client()
+
+    return response
+
+
+async def webcam_snapshot_handler(request):
+    """Single JPEG frame from the webcam."""
+    wm: WebcamManager | None = request.app.get('webcam_manager')
+    if not wm:
+        return web.Response(status=503, text="Webcam not available")
+
+    if not wm.device_available:
+        return web.Response(status=503, text="Webcam device not connected")
+
+    try:
+        frame = await wm.get_frame(timeout=10)
+        return web.Response(
+            body=frame,
+            content_type='image/jpeg',
+            headers={'Cache-Control': 'no-cache'},
+        )
+    except (TimeoutError, RuntimeError) as e:
+        return web.Response(status=503, text=str(e))
+
+
+async def webcam_status_handler(request):
+    """Webcam feed status (JSON)."""
+    wm: WebcamManager | None = request.app.get('webcam_manager')
+    return web.json_response({
+        'available': wm is not None and wm.device_available,
+        'running': wm.is_running if wm else False,
+    })
+
+
 def create_app(config) -> web.Application:
     """Create and configure the aiohttp application."""
     app = web.Application(middlewares=[auth_middleware])
@@ -3302,6 +3374,9 @@ def create_app(config) -> web.Application:
     app.router.add_delete('/api/memory/interactions/{interaction_id}', memory_interaction_delete_handler)
     app.router.add_get('/api/memory/timeseries', memory_timeseries_handler)
     app.router.add_get('/api/memory/db-health', memory_db_health_handler)
+    app.router.add_get('/api/webcam/stream', webcam_stream_handler)
+    app.router.add_get('/api/webcam/snapshot', webcam_snapshot_handler)
+    app.router.add_get('/api/webcam/status', webcam_status_handler)
     app.router.add_get('/', index_handler)
     # Serve tool-generated images (screenshots, webcam, etc.)
     from core.tool_registry import get_images_dir
@@ -3325,6 +3400,15 @@ async def on_startup(app):
     app['components'] = components
     app['cmd_lock'] = asyncio.Lock()
     app['dashboard_clients'] = set()
+
+    # Initialize webcam manager (lazy — feed starts on first client)
+    try:
+        wm = get_webcam_manager(config)
+        app['webcam_manager'] = wm
+        logger.info("Webcam manager initialized (device=%s)", wm._device)
+    except Exception as e:
+        logger.warning("Webcam manager not available: %s", e)
+        app['webcam_manager'] = None
 
     # Wire live dashboard push — MetricsTracker calls this after each record()
     metrics = components.get('metrics')
@@ -3366,6 +3450,10 @@ async def on_shutdown(app):
     rm = components.get('reminder_manager')
     if rm:
         rm.stop()
+
+    wm = app.get('webcam_manager')
+    if wm:
+        await wm.stop()
 
     logger.info("JARVIS Web UI shut down")
 

@@ -317,6 +317,8 @@ vision:
   enabled: true
   max_image_size_mb: 10
   screenshot_tool: gnome-screenshot # grim needs wlroots; gnome-screenshot works on Mutter
+  webcam_device: /dev/video0
+  webcam_fps: 15
 
 # Web UI settings
 web:

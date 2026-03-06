@@ -122,7 +122,7 @@ class SlashCompleter(Completer):
     """Tab completion for slash commands and /file paths."""
 
     _commands = ["/paste", "/file", "/clipboard", "/append", "/context", "/clear",
-                 "/image", "/screenshot", "/help"]
+                 "/image", "/screenshot", "/webcam", "/help"]
     _path_completer = PathCompleter(expanduser=True)
 
     def get_completions(self, document, complete_event):
@@ -823,6 +823,51 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
         ))
         return True
 
+    elif cmd == "/webcam":
+        import asyncio as _asyncio
+        import base64 as _b64
+        import io as _io
+        console.print("[dim]Capturing webcam frame...[/dim]")
+        try:
+            from core.webcam_manager import get_webcam_manager
+            import yaml as _yaml
+            with open(Path(__file__).parent / "config.yaml") as _f:
+                _cfg = _yaml.safe_load(_f)
+            wm = get_webcam_manager(_cfg)
+
+            # Bridge async get_frame() into sync context
+            loop = _asyncio.new_event_loop()
+            try:
+                frame_bytes = loop.run_until_complete(wm.get_frame(timeout=10))
+            finally:
+                loop.close()
+
+            # Encode as base64 PNG (consistent with take_screenshot)
+            from PIL import Image
+            img = Image.open(_io.BytesIO(frame_bytes))
+            buf = _io.BytesIO()
+            img.save(buf, format="PNG", optimize=True)
+            png_bytes = buf.getvalue()
+            img.close()
+
+            b64 = _b64.b64encode(png_bytes).decode("ascii")
+            size = len(png_bytes)
+            _pending_image["data"] = b64
+            _pending_image["label"] = "webcam capture"
+            console.print(Panel(
+                f"[bold green]Webcam captured[/bold green] ({size // 1024} KB)\n"
+                f"[dim]Send a message to analyze this frame. Image clears after use.[/dim]",
+                title="[cyan]Image Attached[/cyan]",
+                border_style="cyan",
+            ))
+        except FileNotFoundError as e:
+            console.print(f"[red]Webcam not found:[/red] {e}")
+        except TimeoutError:
+            console.print("[red]Webcam timeout — camera may not be responding.[/red]")
+        except Exception as e:
+            console.print(f"[red]Webcam error:[/red] {e}")
+        return True
+
     elif cmd in ("/help", "/?"):
         help_table = Table(title="Slash Commands", box=box.SIMPLE, show_edge=False)
         help_table.add_column("Command", style="cyan bold", no_wrap=True)
@@ -835,6 +880,7 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
         help_table.add_row("/clear", "Clear document buffer")
         help_table.add_row("/image <path>", "Attach an image for the LLM to analyze")
         help_table.add_row("/screenshot", "Capture screen and attach [monitor|window|all]")
+        help_table.add_row("/webcam", "Capture webcam frame and attach for analysis")
         help_table.add_row("/help", "Show this help")
         help_table.add_row("", "")
         help_table.add_row("[dim]Tip[/dim]", "[dim]Drag a file from Nautilus to auto-load it[/dim]")
@@ -1083,7 +1129,7 @@ def run_console(config, mode, user_id="user"):
     console.print(Panel(
         f"[bold]J.A.R.V.I.S. Console[/bold] — {mode} mode\n"
         f"Type commands directly. Type [bold]quit[/bold] to exit.\n"
-        f"Slash commands: /paste /file /clipboard /image /screenshot /context /clear /help",
+        f"Slash commands: /paste /file /clipboard /image /screenshot /webcam /context /clear /help",
         border_style="cyan"
     ))
 

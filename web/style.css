@@ -217,6 +217,12 @@ header h1 {
 }
 
 .restart-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(56, 189, 248, 0.08);
+}
+
+#btn-restart:hover {
     color: var(--warning);
     border-color: var(--warning);
     background: rgba(251, 191, 36, 0.1);
@@ -508,6 +514,14 @@ header h1 {
     background: var(--bg-secondary);
     border-top: 1px solid var(--border);
     flex-shrink: 0;
+}
+
+/* 3-column grid: toolbar | prompt | actions (desktop only) */
+.input-columns {
+    display: grid;
+    grid-template-columns: 1fr 3fr 1fr;
+    gap: 32px;
+    align-items: center;
 }
 
 /* Left column — toolbar icons in two rows */
@@ -1438,6 +1452,18 @@ header h1 {
     .header-stats {
         display: none;
     }
+
+    /* Collapse to single-column input — hide desktop toolbars */
+    .input-columns {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .input-col-left,
+    .input-col-right {
+        display: none;
+    }
 }
 
 /* Responsive — phones */
@@ -1816,5 +1842,140 @@ header h1 {
         padding: 6px 10px;
         margin-bottom: 4px;
         font-size: 0.9rem;
+    }
+}
+
+/* ==========================================================================
+   Webcam Panel
+   ========================================================================== */
+
+.webcam-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 320px;
+    height: 100vh;
+    background: var(--bg-dark, #0a0a0f);
+    border-left: 1px solid var(--border, #1a1a2e);
+    display: flex;
+    flex-direction: column;
+    z-index: 50;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+}
+
+.webcam-panel.open {
+    transform: translateX(0);
+}
+
+.webcam-panel.hidden {
+    display: none;
+}
+
+body.webcam-open #chat-area,
+body.webcam-open #input-area,
+body.webcam-open #doc-indicator,
+body.webcam-open #image-indicator {
+    margin-right: 320px;
+    transition: margin-right 0.3s ease;
+}
+
+.webcam-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border, #1a1a2e);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim, #888);
+}
+
+.webcam-header button {
+    background: none;
+    border: none;
+    color: var(--text-dim, #888);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.webcam-header button:hover {
+    color: var(--text, #e0e0e0);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.webcam-stream-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    position: relative;
+    min-height: 0;
+}
+
+#webcam-feed {
+    width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #000;
+}
+
+.webcam-status {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    color: var(--accent, #00d4ff);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.webcam-status.hidden {
+    opacity: 0;
+}
+
+/* Webcam toggle button active state */
+#btn-webcam.active {
+    color: var(--accent, #00d4ff);
+}
+
+/* Mobile: floating overlay instead of sidebar */
+@media (max-width: 768px) {
+    .webcam-panel {
+        width: 240px;
+        height: 180px;
+        top: auto;
+        bottom: 80px;
+        right: 8px;
+        border-radius: 12px;
+        border: 1px solid var(--border, #1a1a2e);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    body.webcam-open #chat-area,
+    body.webcam-open #input-area,
+    body.webcam-open #doc-indicator,
+    body.webcam-open #image-indicator {
+        margin-right: 0;
+    }
+
+    .webcam-header {
+        padding: 6px 10px;
+        font-size: 0.75rem;
+    }
+
+    .webcam-stream-container {
+        padding: 4px;
     }
 }

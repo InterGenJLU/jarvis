@@ -1907,6 +1907,11 @@ _TOOL_ARTIFACT_META = {
             f" ({args['category']})" if args.get("category") else "",
         ),
     ),
+    "capture_webcam": ("webcam_capture", lambda args, _: "Webcam capture"),
+    "take_screenshot": (
+        "screenshot",
+        lambda args, _: f"Screenshot ({args.get('target', 'monitor')})",
+    ),
 }
 
 # Results starting with these prefixes are transient — don't cache

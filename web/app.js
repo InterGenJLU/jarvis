@@ -104,6 +104,13 @@
     const btnViewMore = document.getElementById('btn-view-more');
     const btnHamburger = document.getElementById('btn-hamburger');
 
+    // Webcam panel
+    const webcamPanel = document.getElementById('webcam-panel');
+    const webcamFeed = document.getElementById('webcam-feed');
+    const webcamStatus = document.getElementById('webcam-status');
+    const webcamClose = document.getElementById('webcam-close');
+    const btnWebcam = document.getElementById('btn-webcam');
+
     // --- State ---
     let ws = null;
     let processing = false;
@@ -124,6 +131,10 @@
     let historyIndex = -1;
     let pendingInput = '';
     const MAX_HISTORY = 100;
+
+    // Webcam state
+    let webcamOpen = false;
+    let webcamAbort = null;  // AbortController for fetch stream
 
     function loadCommandHistory() {
         const uid = userSelect.value || 'default';
@@ -788,6 +799,16 @@
         }
         addInfoMessage('Server restarting — reconnecting...');
         setStatus('connecting');
+    });
+
+    // Metrics + Memory navigation (carry auth token)
+    var btnMetrics = document.getElementById('btn-metrics');
+    var btnMemory = document.getElementById('btn-memory');
+    if (btnMetrics) btnMetrics.addEventListener('click', function () {
+        window.open(authUrl('/dashboard'), '_blank');
+    });
+    if (btnMemory) btnMemory.addEventListener('click', function () {
+        window.open(authUrl('/memory'), '_blank');
     });
 
     // --- Image attachment ---
@@ -1563,6 +1584,136 @@
     btnViewMore.addEventListener('click', function () {
         fetchSessions(sessionOffset);
     });
+
+    // --- Webcam panel ---
+
+    function toggleWebcamPanel() {
+        webcamOpen = !webcamOpen;
+        if (webcamOpen) {
+            webcamPanel.classList.remove('hidden');
+            // Force reflow before adding open class for transition
+            void webcamPanel.offsetWidth;
+            webcamPanel.classList.add('open');
+            document.body.classList.add('webcam-open');
+            btnWebcam.classList.add('active');
+            startWebcamStream();
+        } else {
+            stopWebcamStream();
+            webcamPanel.classList.remove('open');
+            document.body.classList.remove('webcam-open');
+            btnWebcam.classList.remove('active');
+            // Remove from DOM after transition
+            setTimeout(() => {
+                if (!webcamOpen) webcamPanel.classList.add('hidden');
+            }, 300);
+        }
+    }
+
+    function startWebcamStream() {
+        webcamStatus.textContent = 'Connecting...';
+        webcamStatus.classList.remove('hidden');
+
+        // Use Fetch + ReadableStream for Safari compatibility
+        webcamAbort = new AbortController();
+        const url = authUrl('/api/webcam/stream');
+
+        fetch(url, { signal: webcamAbort.signal })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(response.statusText || 'Stream unavailable');
+                }
+                const reader = response.body.getReader();
+                let buffer = new Uint8Array(0);
+
+                function pump() {
+                    return reader.read().then(({ done, value }) => {
+                        if (done) return;
+                        // Append chunk to buffer
+                        const tmp = new Uint8Array(buffer.length + value.length);
+                        tmp.set(buffer);
+                        tmp.set(value, buffer.length);
+                        buffer = tmp;
+
+                        // Extract JPEG frames from multipart stream
+                        extractFrames();
+                        return pump();
+                    });
+                }
+
+                function extractFrames() {
+                    // Find JPEG SOI (0xFFD8) and EOI (0xFFD9)
+                    while (buffer.length > 4) {
+                        let soi = -1;
+                        for (let i = 0; i < buffer.length - 1; i++) {
+                            if (buffer[i] === 0xFF && buffer[i + 1] === 0xD8) {
+                                soi = i;
+                                break;
+                            }
+                        }
+                        if (soi === -1) { buffer = new Uint8Array(0); return; }
+                        if (soi > 0) buffer = buffer.slice(soi);
+
+                        let eoi = -1;
+                        for (let i = 2; i < buffer.length - 1; i++) {
+                            if (buffer[i] === 0xFF && buffer[i + 1] === 0xD9) {
+                                eoi = i;
+                                break;
+                            }
+                        }
+                        if (eoi === -1) return; // Incomplete frame
+
+                        const frame = buffer.slice(0, eoi + 2);
+                        buffer = buffer.slice(eoi + 2);
+
+                        // Display frame
+                        const blob = new Blob([frame], { type: 'image/jpeg' });
+                        const url = URL.createObjectURL(blob);
+                        const prev = webcamFeed.src;
+                        webcamFeed.src = url;
+                        if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+
+                        webcamStatus.classList.add('hidden');
+                    }
+                }
+
+                return pump();
+            })
+            .catch(err => {
+                if (err.name === 'AbortError') return;
+                webcamStatus.textContent = 'Disconnected';
+                webcamStatus.classList.remove('hidden');
+                // Auto-reconnect after 2s
+                if (webcamOpen) {
+                    setTimeout(() => {
+                        if (webcamOpen) startWebcamStream();
+                    }, 2000);
+                }
+            });
+    }
+
+    function stopWebcamStream() {
+        if (webcamAbort) {
+            webcamAbort.abort();
+            webcamAbort = null;
+        }
+        if (webcamFeed.src && webcamFeed.src.startsWith('blob:')) {
+            URL.revokeObjectURL(webcamFeed.src);
+        }
+        webcamFeed.removeAttribute('src');
+    }
+
+    if (btnWebcam) btnWebcam.addEventListener('click', toggleWebcamPanel);
+    if (webcamClose) webcamClose.addEventListener('click', toggleWebcamPanel);
+
+    // Check webcam availability on load and show/hide button
+    fetch(authUrl('/api/webcam/status'))
+        .then(r => r.json())
+        .then(data => {
+            if (!data.available && btnWebcam) {
+                btnWebcam.style.display = 'none';
+            }
+        })
+        .catch(() => {});
 
     // --- Init ---
     connect();
