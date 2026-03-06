@@ -128,8 +128,18 @@ class SpeakerIdentifier:
         processed = preprocess_wav(audio, source_sr=16000)
 
         if len(processed) < 1600:  # <100ms, too short
-            self.logger.warning("Audio too short for speaker embedding")
+            self.logger.warning(
+                f"Audio too short for speaker embedding: "
+                f"{len(processed)} samples ({len(processed)/16000:.2f}s) "
+                f"after preprocessing (input was {len(audio)} samples)"
+            )
             return np.zeros(256, dtype=np.float32)
+
+        self.logger.debug(
+            f"extract_embedding: input={len(audio)} samples "
+            f"({len(audio)/16000:.2f}s), after preprocess={len(processed)} "
+            f"samples ({len(processed)/16000:.2f}s)"
+        )
 
         embedding = encoder.embed_utterance(processed)
         return embedding
@@ -231,32 +241,45 @@ class SpeakerIdentifier:
         if not self._cache:
             return None, 0.0
 
+        # Diagnostic: audio stats before embedding extraction
+        audio_duration = len(audio) / sample_rate
+        audio_rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) > 0 else 0.0
+
         embedding = self.extract_embedding(audio, sample_rate)
         if np.all(embedding == 0):
+            self.logger.info(
+                f"Speaker ID: zero embedding (audio={audio_duration:.2f}s, "
+                f"rms={audio_rms:.4f})"
+            )
             return None, 0.0
+
+        emb_norm = float(np.linalg.norm(embedding))
 
         best_id = None
         best_score = -1.0
+        all_scores = {}
 
         for user_id, (enrolled_emb, _honorific) in self._cache.items():
             # Cosine similarity
             score = float(np.dot(embedding, enrolled_emb) / (
                 np.linalg.norm(embedding) * np.linalg.norm(enrolled_emb) + 1e-8
             ))
+            all_scores[user_id] = score
             if score > best_score:
                 best_score = score
                 best_id = user_id
 
+        # Always log all scores for diagnostics
+        scores_str = ", ".join(f"{uid}={s:.3f}" for uid, s in all_scores.items())
+        self.logger.info(
+            f"Speaker ID: audio={audio_duration:.2f}s rms={audio_rms:.4f} "
+            f"emb_norm={emb_norm:.3f} scores=[{scores_str}] "
+            f"threshold={self.similarity_threshold}"
+        )
+
         if best_score >= self.similarity_threshold:
-            self.logger.debug(
-                f"Speaker identified: {best_id} (score={best_score:.3f})"
-            )
             return best_id, best_score
 
-        self.logger.debug(
-            f"Speaker unknown (best={best_id}, score={best_score:.3f}, "
-            f"threshold={self.similarity_threshold})"
-        )
         return None, best_score
 
     def verify(self, user_id: str, audio: np.ndarray,

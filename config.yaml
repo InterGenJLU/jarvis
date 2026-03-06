@@ -75,7 +75,7 @@ conversation:
 user_profiles:
   enabled: true
   voice_recognition: true
-  similarity_threshold: 0.85
+  similarity_threshold: 0.75
   auto_enroll: true
   greet_by_name: true
 skills:

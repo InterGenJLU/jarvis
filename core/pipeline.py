@@ -1232,15 +1232,31 @@ class Coordinator:
 
                     # "Show me" display hook for developer_tools
                     if tool_call_request.name == "developer_tools":
+                        action = tool_call_request.arguments.get("action", "")
                         show_me = _detect_show_me(command)
+
+                        # system_health ALWAYS displays (the visual report is
+                        # the whole point of the feature — no "show me" needed)
+                        if action == "system_health":
+                            show_me = show_me or "auto"
+
                         if (show_me and tool_result
                                 and not tool_result.startswith(("BLOCKED", "CONFIRMATION REQUIRED", "Error"))):
-                            action = tool_call_request.arguments.get("action", "")
                             ct, title = _DEVTOOLS_DISPLAY_MAP.get(action, ("general", "Output"))
+                            # For system_health, generate the full visual report
+                            # instead of the compact tool output
+                            display_content = tool_result
+                            if action == "system_health":
+                                try:
+                                    from core.health_check import get_full_health, format_visual_report
+                                    health = get_full_health(self.config)
+                                    display_content = format_visual_report(health)
+                                except Exception:
+                                    pass  # fall back to plain tool_result
                             backend = show_me if show_me in ("terminal", "vscode") else None
                             try:
                                 _get_display_router(self.config).show(
-                                    tool_result, content_type=ct, title=title,
+                                    display_content, content_type=ct, title=title,
                                     force_backend=backend,
                                 )
                             except Exception as e:
