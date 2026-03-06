@@ -1304,6 +1304,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
     _MAX_TOOL_CHAIN = 3
     tool_chain_count = 0
 
+    _tool_image_path = None  # Persists across tool chain for stream_end
     if tool_call_request:
         await ws.send_json({'type': 'stream_start'})
         synthesis = ""
@@ -1311,6 +1312,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
             tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
+            _tool_image_path = None  # Set when image saved to disk
 
             logger.info(f"Tool call: {tool_call_request.name}({tool_call_request.arguments})")
             if tool_call_request.name == 'web_search':
@@ -1365,7 +1367,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             else:
                 # Skill tool — dispatch via tool_executor
                 from core.tool_executor import execute_tool
-                from core.tool_registry import parse_tool_result
+                from core.tool_registry import parse_tool_result, save_tool_image
                 await ws.send_json({
                     'type': 'info',
                     'content': f'Running: {tool_call_request.name}',
@@ -1376,6 +1378,13 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 )
                 tool_result, tool_image_data = parse_tool_result(raw_result)
 
+                # Save tool-generated images to disk
+                _tool_image_path = None
+                if tool_image_data:
+                    _tool_image_path = await asyncio.to_thread(
+                        save_tool_image, tool_image_data, tool_call_request.name
+                    )
+
                 # Artifact cache — store non-web-search tool results
                 _cache = get_interaction_cache()
                 if _cache and conv_state:
@@ -1384,6 +1393,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                         tool_call_request.name, tool_call_request.arguments,
                         tool_result, _cache, conv_state,
                         user_id=user_id or 'christopher',
+                        image_path=_tool_image_path,
                     )
 
             # Stream synthesis — may yield text tokens or another ToolCallRequest
@@ -1438,10 +1448,13 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             tool_call_request = next_tool_call
 
         cleaned = llm.strip_filler(synthesis) if synthesis else ""
-        await ws.send_json({
+        stream_end_msg = {
             'type': 'stream_end',
             'full_response': cleaned,
-        })
+        }
+        if _tool_image_path:
+            stream_end_msg['image_url'] = '/images/' + os.path.basename(_tool_image_path)
+        await ws.send_json(stream_end_msg)
 
         # Persist interaction for cross-session awareness
         if memory_manager and cleaned and tool_chain_count > 0:
@@ -3265,6 +3278,10 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/memory/timeseries', memory_timeseries_handler)
     app.router.add_get('/api/memory/db-health', memory_db_health_handler)
     app.router.add_get('/', index_handler)
+    # Serve tool-generated images (screenshots, webcam, etc.)
+    _images_dir = Path('/mnt/storage/jarvis/data/images')
+    _images_dir.mkdir(parents=True, exist_ok=True)
+    app.router.add_static('/images', _images_dir)
     app.router.add_static('/', web_dir)
 
     return app

@@ -1203,13 +1203,18 @@ class Coordinator:
                         ))
                 else:
                     from core.tool_executor import execute_tool
-                    from core.tool_registry import parse_tool_result
+                    from core.tool_registry import parse_tool_result, save_tool_image
                     print(f"🔧 Running: {tool_call_request.name}")
                     raw_result = execute_tool(
                         tool_call_request.name, tool_call_request.arguments
                     )
                     tool_result, tool_image_data = parse_tool_result(raw_result)
                     self.logger.info(f"Tool result: {tool_result[:100]}")
+
+                    # Save tool-generated images to disk
+                    image_path = None
+                    if tool_image_data:
+                        image_path = save_tool_image(tool_image_data, tool_call_request.name)
 
                     # Artifact cache — store non-web-search tool results
                     if self.interaction_cache:
@@ -1218,6 +1223,7 @@ class Coordinator:
                             tool_call_request.name, tool_call_request.arguments,
                             tool_result, self.interaction_cache, self.conv_state,
                             user_id=getattr(self.conversation, 'current_user', None) or 'christopher',
+                            image_path=image_path,
                         )
 
                     # "Show me" display hook for developer_tools

@@ -1908,7 +1908,8 @@ _SKIP_PREFIXES = ("Error", "BLOCKED", "CONFIRMATION REQUIRED")
 
 def store_tool_artifact(tool_name: str, tool_args: dict, tool_result: str,
                         cache: 'InteractionCache', conv_state,
-                        user_id: str = 'christopher') -> Optional[str]:
+                        user_id: str = 'christopher',
+                        image_path: str = None) -> Optional[str]:
     """Create and store an artifact from a tool execution result.
 
     Returns the artifact_id if stored, None if skipped.
@@ -1929,6 +1930,10 @@ def store_tool_artifact(tool_name: str, tool_args: dict, tool_result: str,
     artifact_type, summary_fn = meta
     summary = summary_fn(tool_args, tool_result)
 
+    metadata = {"tool_name": tool_name}
+    if image_path:
+        metadata["image_path"] = image_path
+
     wid = cache.ensure_window_id(conv_state)
     art = Artifact(
         artifact_id=uuid.uuid4().hex[:16],
@@ -1939,7 +1944,7 @@ def store_tool_artifact(tool_name: str, tool_args: dict, tool_result: str,
         summary=summary,
         source=tool_name,
         provenance={"tool_args": tool_args},
-        metadata={"tool_name": tool_name},
+        metadata=metadata,
         parent_id=None,
         user_id=user_id,
         window_id=wid,

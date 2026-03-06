@@ -12,8 +12,11 @@ This module scans that package at import time and assembles:
     - inject_dependencies(): wires runtime objects into tool modules
 """
 
+import base64
 import importlib
 import logging
+import os
+import time
 from pathlib import Path
 
 logger = logging.getLogger("jarvis.tool_registry")
@@ -203,6 +206,29 @@ def parse_tool_result(result) -> tuple:
     if isinstance(result, dict):
         return result.get("text", str(result)), result.get("image_data")
     return result, None
+
+
+_IMAGES_DIR = "/mnt/storage/jarvis/data/images"
+
+
+def save_tool_image(image_data: str, tool_name: str) -> str:
+    """Save base64-encoded image to disk.
+
+    Args:
+        image_data: Base64-encoded PNG data (no data: prefix).
+        tool_name: Tool that produced the image (used in filename).
+
+    Returns:
+        Absolute path to the saved file.
+    """
+    os.makedirs(_IMAGES_DIR, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_{tool_name}.png"
+    filepath = os.path.join(_IMAGES_DIR, filename)
+    with open(filepath, "wb") as f:
+        f.write(base64.b64decode(image_data))
+    logger.info(f"Saved tool image: {filepath}")
+    return filepath
 
 
 def execute_tool(tool_name: str, arguments: dict) -> str | dict:

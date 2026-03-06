@@ -270,7 +270,7 @@
                 break;
 
             case 'stream_end':
-                endStreaming(msg.full_response);
+                endStreaming(msg.full_response, msg.image_url);
                 setProcessing(false);
                 break;
         }
@@ -304,15 +304,29 @@
         }
     }
 
-    function endStreaming(fullResponse) {
+    function endStreaming(fullResponse, imageUrl) {
         if (streamingBubble) {
             streamingBubble.classList.remove('streaming');
             if (fullResponse) {
                 streamingBubble.innerHTML = renderMarkdown(fullResponse);
             }
-            // Add timestamp to the streamed message
             var parent = streamingBubble.parentElement;
             if (parent) {
+                // Insert image thumbnail above the text bubble
+                if (imageUrl) {
+                    var imgWrap = document.createElement('div');
+                    imgWrap.className = 'message-image-wrap';
+                    var img = document.createElement('img');
+                    img.className = 'message-image-thumb';
+                    img.src = imageUrl;
+                    img.alt = 'Tool image';
+                    img.addEventListener('click', function () {
+                        window.open(imageUrl, '_blank');
+                    });
+                    imgWrap.appendChild(img);
+                    parent.insertBefore(imgWrap, streamingBubble);
+                }
+                // Add timestamp
                 var ts = document.createElement('div');
                 ts.className = 'message-timestamp';
                 ts.textContent = formatTimestamp(Date.now() / 1000);

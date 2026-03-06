@@ -394,12 +394,18 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                     ))
             else:
                 from core.tool_executor import execute_tool
-                from core.tool_registry import parse_tool_result
+                from core.tool_registry import parse_tool_result, save_tool_image
                 console.print(f"\n[dim]Running: {tool_call_request.name}[/dim]")
                 raw_result = execute_tool(
                     tool_call_request.name, tool_call_request.arguments
                 )
                 tool_result, tool_image_data = parse_tool_result(raw_result)
+
+                # Save tool-generated images to disk
+                image_path = None
+                if tool_image_data:
+                    image_path = save_tool_image(tool_image_data, tool_call_request.name)
+                    console.print(f"[dim]Image saved: {image_path}[/dim]")
 
                 # Artifact cache — non-web-search tool results
                 from core.interaction_cache import get_interaction_cache, store_tool_artifact
@@ -409,6 +415,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         tool_call_request.name, tool_call_request.arguments,
                         tool_result, _cache, conv_state,
                         user_id=user_id or 'christopher',
+                        image_path=image_path,
                     )
 
             # Stream synthesis — may yield text or another ToolCallRequest
