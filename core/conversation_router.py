@@ -23,6 +23,7 @@ from typing import Optional
 
 from core import persona
 from core.conversation_state import ConversationState
+from core.honorific import set_honorific
 
 logger = logging.getLogger("jarvis.router")
 
@@ -186,13 +187,16 @@ class ConversationRouter:
         if guest and (command.strip() == "jarvis_only" or len(command.strip()) <= 2):
             return self._route_greeting()
 
+        # --- Priority 1: Rundown acceptance (outside guest guard) ---
+        # Rundown is JARVIS-initiated for the owner.  If a rundown is
+        # pending the response must go through the rundown handler even
+        # when speaker-ID has (incorrectly) activated guest mode.
+        result = self._handle_rundown(command)
+        if result:
+            return result
+
         # --- Personal priority chain (skipped for guests) ---
         if not guest:
-            # --- Priority 1: Rundown acceptance ---
-            result = self._handle_rundown(command)
-            if result:
-                return result
-
             # --- Priority 2: Reminder acknowledgment ---
             result = self._handle_reminder_ack()
             if result:
@@ -338,27 +342,40 @@ class ConversationRouter:
 
     def _route_greeting(self) -> RouteResult:
         """Handle wake-word-only or empty commands."""
+        # Rundown mention is owner-directed — check before guest guard
+        if self.reminder_manager and self.reminder_manager.has_rundown_mention():
+            self.reminder_manager.clear_rundown_mention()
+            set_honorific("sir")
+            text = persona.rundown_mention()
+            return RouteResult(
+                text=text, intent="greeting", source="canned",
+                handled=True, open_window=EXTENDED_WINDOW,
+            )
         if self._is_guest:
             text = persona.guest_greeting()
             return RouteResult(
                 text=text, intent="guest_greeting", source="canned",
                 handled=True, open_window=EXTENDED_WINDOW,
             )
-        if self.reminder_manager and self.reminder_manager.has_rundown_mention():
-            self.reminder_manager.clear_rundown_mention()
-            text = persona.rundown_mention()
-        else:
-            text = persona.pick("greeting")
+        text = persona.pick("greeting")
         return RouteResult(
             text=text, intent="greeting", source="canned",
             handled=True, open_window=EXTENDED_WINDOW,
         )
 
     def _handle_rundown(self, command: str) -> RouteResult | None:
-        """P1: Rundown acceptance or deferral."""
+        """P1: Rundown acceptance or deferral.
+
+        Runs OUTSIDE the guest guard because the rundown is JARVIS-initiated
+        for the owner.  Restores the owner honorific so the response uses
+        "sir" instead of "friend" when guest mode was spuriously active.
+        """
         rm = self.reminder_manager
         if not rm or not rm.is_rundown_pending():
             return None
+
+        # Rundown is owner-directed — ensure correct honorific
+        set_honorific("sir")
 
         text_lower = command.strip().lower()
         words = set(re.findall(r'\b\w+\b', text_lower))

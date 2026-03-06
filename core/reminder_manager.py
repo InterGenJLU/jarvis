@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Callable
 
 from core.logger import get_logger
-from core.honorific import get_honorific
+from core.honorific import get_honorific, set_honorific
 
 
 # Singleton instance
@@ -602,6 +602,9 @@ class ReminderManager:
 
         self.logger.info(f"Firing reminder #{rid}: '{title}' (priority={priority})")
 
+        # Reminders are owner-directed — restore owner honorific
+        set_honorific("sir")
+
         # Pause listening to prevent speaker-to-mic bleed
         if self._pause_listener_callback:
             self._pause_listener_callback()
@@ -1182,6 +1185,7 @@ class ReminderManager:
 
     def _do_daily_rundown(self):
         """Proactively announce the daily rundown (non-interactive fallback)."""
+        set_honorific("sir")
         rundown = self.get_daily_rundown()
         self.logger.info(f"Daily rundown: {rundown}")
         if self._pause_listener_callback:
@@ -1205,6 +1209,10 @@ class ReminderManager:
 
         kind = "weekly" if self._rundown_is_weekly else "daily"
         self.logger.info(f"Offering {kind} rundown (cycle {self._rundown_cycle})")
+
+        # Rundown is owner-directed — restore owner honorific in case guest
+        # mode polluted it from background speech.
+        set_honorific("sir")
 
         if self._pause_listener_callback:
             self._pause_listener_callback()
@@ -1243,6 +1251,7 @@ class ReminderManager:
 
         Public — called from jarvis_continuous.py.
         """
+        set_honorific("sir")
         is_weekly = self._rundown_is_weekly
 
         # Clear state first
