@@ -7,12 +7,18 @@ Runs a single ffmpeg subprocess that reads native MJPEG frames from the webcam
   - get_frame()          (LLM tool capture)
 
 Auto-starts on first client, auto-stops 30s after last client disconnects.
+
+MobileCameraRelay — WebSocket-based frame relay for mobile cameras.
+When the desktop webcam is unavailable, the capture_webcam tool can request
+a frame from a connected mobile browser via getUserMedia + canvas capture.
 """
 
 import asyncio
+import base64
 import logging
 import os
 import time
+import uuid
 
 logger = logging.getLogger("jarvis.webcam")
 
@@ -260,3 +266,111 @@ class WebcamManager:
                 await self._frame_condition.wait()
             if self._current_frame:
                 yield self._current_frame
+
+
+# ==========================================================================
+# MobileCameraRelay — WebSocket frame relay for mobile getUserMedia
+# ==========================================================================
+
+_relay_instance: "MobileCameraRelay | None" = None
+
+
+def get_mobile_relay() -> "MobileCameraRelay":
+    """Get or create the singleton MobileCameraRelay."""
+    global _relay_instance
+    if _relay_instance is None:
+        _relay_instance = MobileCameraRelay()
+    return _relay_instance
+
+
+class MobileCameraRelay:
+    """Relays frame capture requests to a mobile browser via WebSocket.
+
+    Protocol:
+        Server → Client: {"type": "frame_request", "request_id": "<uuid>"}
+        Client → Server: {"type": "frame_response", "request_id": "<uuid>",
+                          "image_data": "<base64 jpeg>"}
+                     OR: {"type": "frame_response", "request_id": "<uuid>",
+                          "error": "<message>"}
+    """
+
+    def __init__(self):
+        self._ws = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._pending: dict[str, asyncio.Future] = {}
+
+    def set_ws(self, ws, loop: asyncio.AbstractEventLoop) -> None:
+        """Register the mobile client's WebSocket for frame relay."""
+        # Clear any previous connection
+        self.clear_ws()
+        self._ws = ws
+        self._loop = loop
+        logger.info("Mobile camera relay connected")
+
+    def clear_ws(self) -> None:
+        """Disconnect mobile client and cancel pending requests."""
+        was_connected = self._ws is not None
+        self._ws = None
+        cancelled = 0
+        for rid, fut in self._pending.items():
+            if not fut.done():
+                fut.cancel()
+                cancelled += 1
+        self._pending.clear()
+        if was_connected:
+            logger.info("Mobile camera relay disconnected (cancelled %d pending)", cancelled)
+
+    @property
+    def is_connected(self) -> bool:
+        return self._ws is not None and not self._ws.closed
+
+    async def request_frame(self, timeout: float = 30.0) -> bytes:
+        """Request a frame from the mobile browser. Returns raw JPEG bytes.
+
+        Raises TimeoutError if no response within timeout.
+        Raises RuntimeError if no mobile client connected.
+        """
+        if not self.is_connected:
+            raise RuntimeError("No mobile camera connected")
+
+        request_id = uuid.uuid4().hex[:12]
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending[request_id] = fut
+
+        try:
+            logger.debug("Requesting frame from mobile (id=%s)", request_id)
+            await self._ws.send_json({
+                "type": "frame_request",
+                "request_id": request_id,
+            })
+            result = await asyncio.wait_for(fut, timeout=timeout)
+            logger.debug("Mobile frame received (id=%s, %d bytes)", request_id, len(result))
+            return result
+        except asyncio.TimeoutError:
+            logger.warning("Mobile frame request timed out (id=%s)", request_id)
+            raise TimeoutError(f"Mobile camera frame timeout ({timeout}s)")
+        finally:
+            self._pending.pop(request_id, None)
+
+    def deliver_frame(self, request_id: str, image_data: str) -> None:
+        """Resolve a pending frame request with base64 JPEG data."""
+        fut = self._pending.get(request_id)
+        if fut and not fut.done():
+            try:
+                raw = base64.b64decode(image_data)
+                fut.set_result(raw)
+                logger.debug("Delivered frame (id=%s, %d bytes)", request_id, len(raw))
+            except Exception as e:
+                logger.error("Invalid frame data (id=%s): %s", request_id, e)
+                fut.set_exception(RuntimeError(f"Invalid frame data: {e}"))
+        else:
+            logger.warning("deliver_frame: no pending future for id=%s", request_id)
+
+    def deliver_error(self, request_id: str, error: str) -> None:
+        """Resolve a pending frame request with an error."""
+        fut = self._pending.get(request_id)
+        if fut and not fut.done():
+            fut.set_exception(RuntimeError(error))
+            logger.warning("Mobile frame error (id=%s): %s", request_id, error)
+        else:
+            logger.warning("deliver_error: no pending future for id=%s", request_id)

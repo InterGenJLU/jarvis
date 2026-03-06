@@ -669,13 +669,295 @@ def test_part4():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PART 5: MobileCameraRelay + mobile fallback tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_part5():
+    log("\n═══ Part 5: MobileCameraRelay + mobile fallback ═══")
+
+    from core.webcam_manager import MobileCameraRelay
+    import core.webcam_manager as wm_mod
+    import core.tools.capture_webcam as tool
+    from core.tool_registry import inject_dependencies
+
+    # --- Test 5.1: Initial state ---
+    log("\n── 5.1: MobileCameraRelay initial state ──")
+    relay = MobileCameraRelay()
+    assert_true("init: not connected", not relay.is_connected)
+    assert_eq("init: no pending", len(relay._pending), 0)
+    assert_true("init: ws is None", relay._ws is None)
+    assert_true("init: loop is None", relay._loop is None)
+
+    # --- Test 5.2: set_ws / is_connected ---
+    log("\n── 5.2: set_ws and is_connected ──")
+    mock_ws = MagicMock()
+    mock_ws.closed = False
+    mock_loop = MagicMock()
+    relay.set_ws(mock_ws, mock_loop)
+    assert_true("set_ws: connected", relay.is_connected)
+    assert_true("set_ws: ws stored", relay._ws is mock_ws)
+    assert_true("set_ws: loop stored", relay._loop is mock_loop)
+
+    # --- Test 5.3: clear_ws disconnects ---
+    log("\n── 5.3: clear_ws disconnects ──")
+    relay.clear_ws()
+    assert_true("clear: not connected", not relay.is_connected)
+    assert_true("clear: ws is None", relay._ws is None)
+    assert_eq("clear: pending cleared", len(relay._pending), 0)
+
+    # --- Test 5.4: clear_ws cancels pending futures ---
+    log("\n── 5.4: clear_ws cancels pending futures ──")
+    async def test_clear_cancels():
+        relay = MobileCameraRelay()
+        mock_ws = MagicMock()
+        mock_ws.closed = False
+        relay.set_ws(mock_ws, asyncio.get_event_loop())
+
+        # Create pending futures
+        fut1 = asyncio.get_event_loop().create_future()
+        fut2 = asyncio.get_event_loop().create_future()
+        relay._pending["req1"] = fut1
+        relay._pending["req2"] = fut2
+
+        relay.clear_ws()
+        assert_true("cancel_pending: fut1 cancelled", fut1.cancelled())
+        assert_true("cancel_pending: fut2 cancelled", fut2.cancelled())
+        assert_eq("cancel_pending: dict cleared", len(relay._pending), 0)
+
+    asyncio.run(test_clear_cancels())
+
+    # --- Test 5.5: deliver_frame resolves future ---
+    log("\n── 5.5: deliver_frame resolves pending future ──")
+    async def test_deliver_frame():
+        relay = MobileCameraRelay()
+        fut = asyncio.get_event_loop().create_future()
+        relay._pending["abc123"] = fut
+
+        # Deliver a base64-encoded "JPEG"
+        fake_jpeg = make_jpeg(50)
+        b64_data = base64.b64encode(fake_jpeg).decode("utf-8")
+        relay.deliver_frame("abc123", b64_data)
+
+        assert_true("deliver: future done", fut.done())
+        assert_eq("deliver: result matches", fut.result(), fake_jpeg)
+
+    asyncio.run(test_deliver_frame())
+
+    # --- Test 5.6: deliver_error rejects future ---
+    log("\n── 5.6: deliver_error rejects pending future ──")
+    async def test_deliver_error():
+        relay = MobileCameraRelay()
+        fut = asyncio.get_event_loop().create_future()
+        relay._pending["err123"] = fut
+
+        relay.deliver_error("err123", "Camera panel not open")
+        assert_true("deliver_err: future done", fut.done())
+        try:
+            fut.result()
+            assert_true("deliver_err: should have raised", False)
+        except RuntimeError as e:
+            assert_in("deliver_err: error message", "Camera panel not open", str(e))
+
+    asyncio.run(test_deliver_error())
+
+    # --- Test 5.7: deliver_frame with invalid base64 ---
+    log("\n── 5.7: deliver_frame with invalid base64 ──")
+    async def test_deliver_bad_b64():
+        relay = MobileCameraRelay()
+        fut = asyncio.get_event_loop().create_future()
+        relay._pending["bad123"] = fut
+
+        relay.deliver_frame("bad123", "not!!valid!!base64!!")
+        assert_true("bad_b64: future done", fut.done())
+        try:
+            fut.result()
+            assert_true("bad_b64: should have raised", False)
+        except RuntimeError as e:
+            assert_in("bad_b64: error message", "Invalid frame data", str(e))
+
+    asyncio.run(test_deliver_bad_b64())
+
+    # --- Test 5.8: deliver to unknown request_id is no-op ---
+    log("\n── 5.8: deliver to unknown request_id ──")
+    relay = MobileCameraRelay()
+    relay.deliver_frame("unknown_id", base64.b64encode(b"test").decode())
+    assert_eq("unknown_id: no pending created", len(relay._pending), 0)
+
+    # --- Test 5.9: is_connected returns False when ws.closed ---
+    log("\n── 5.9: is_connected with closed WebSocket ──")
+    relay = MobileCameraRelay()
+    mock_ws = MagicMock()
+    mock_ws.closed = True
+    relay._ws = mock_ws
+    assert_true("closed_ws: not connected", not relay.is_connected)
+
+    # --- Test 5.10: request_frame raises when not connected ---
+    log("\n── 5.10: request_frame when not connected ──")
+    async def test_request_not_connected():
+        relay = MobileCameraRelay()
+        try:
+            await relay.request_frame(timeout=0.1)
+            assert_true("not_connected: should have raised", False)
+        except RuntimeError as e:
+            assert_in("not_connected: error msg", "No mobile camera", str(e))
+
+    asyncio.run(test_request_not_connected())
+
+    # --- Test 5.11: request_frame end-to-end (mock WS) ---
+    log("\n── 5.11: request_frame end-to-end with mock WS ──")
+    async def test_request_e2e():
+        relay = MobileCameraRelay()
+        mock_ws = AsyncMock()
+        mock_ws.closed = False
+        relay.set_ws(mock_ws, asyncio.get_event_loop())
+
+        fake_jpeg = make_jpeg(80)
+        b64_data = base64.b64encode(fake_jpeg).decode("utf-8")
+
+        # Simulate: after send_json, "browser" delivers the frame
+        async def fake_send_json(msg):
+            # Deliver frame in response to request
+            rid = msg["request_id"]
+            relay.deliver_frame(rid, b64_data)
+
+        mock_ws.send_json = fake_send_json
+
+        frame = await relay.request_frame(timeout=2.0)
+        assert_eq("e2e: frame matches", frame, fake_jpeg)
+
+    asyncio.run(test_request_e2e())
+
+    # --- Test 5.12: request_frame timeout ---
+    log("\n── 5.12: request_frame timeout ──")
+    async def test_request_timeout():
+        relay = MobileCameraRelay()
+        mock_ws = AsyncMock()
+        mock_ws.closed = False
+        relay.set_ws(mock_ws, asyncio.get_event_loop())
+
+        try:
+            await relay.request_frame(timeout=0.1)
+            assert_true("req_timeout: should have raised", False)
+        except TimeoutError as e:
+            assert_in("req_timeout: error msg", "timeout", str(e).lower())
+
+    asyncio.run(test_request_timeout())
+
+    # --- Test 5.13: capture_webcam handler — mobile fallback success ---
+    log("\n── 5.13: Handler — mobile fallback with successful frame ──")
+    from PIL import Image
+    # Create a real JPEG for processing
+    img = Image.new("RGB", (640, 480), color=(200, 100, 50))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    fake_jpeg = buf.getvalue()
+
+    # No desktop webcam (singleton not initialized)
+    original_instance = wm_mod._instance
+    wm_mod._instance = None
+
+    # Wire a mock relay that returns a frame
+    mock_relay = MagicMock()
+    mock_relay.is_connected = True
+    mock_relay._loop = MagicMock()
+    mock_relay._loop.is_running.return_value = True
+
+    import concurrent.futures
+    frame_future = concurrent.futures.Future()
+    frame_future.set_result(fake_jpeg)
+
+    mock_relay.request_frame = AsyncMock(return_value=fake_jpeg)
+
+    # Patch run_coroutine_threadsafe to return our pre-resolved future
+    original_relay = tool._mobile_relay
+    tool._mobile_relay = mock_relay
+
+    with patch("asyncio.run_coroutine_threadsafe", return_value=frame_future):
+        result = tool.handler({})
+        assert_isinstance("mobile_success: returns dict", result, dict)
+        if isinstance(result, dict):
+            assert_in("mobile_success: has text", "text", result)
+            assert_in("mobile_success: has image_data", "image_data", result)
+            assert_in("mobile_success: dims in text", "640x480", result["text"])
+
+    tool._mobile_relay = original_relay
+    wm_mod._instance = original_instance
+
+    # --- Test 5.14: capture_webcam handler — no desktop, no mobile connected ---
+    log("\n── 5.14: Handler — no desktop, no mobile ──")
+    wm_mod._instance = None
+    tool._mobile_relay = None
+
+    result = tool.handler({})
+    assert_isinstance("no_both: returns str", result, str)
+    assert_in("no_both: mentions camera", "camera", result.lower())
+    assert_in("no_both: mentions phone", "phone", result.lower())
+
+    tool._mobile_relay = original_relay
+    wm_mod._instance = original_instance
+
+    # --- Test 5.15: capture_webcam handler — no desktop, mobile relay not connected ---
+    log("\n── 5.15: Handler — no desktop, mobile relay disconnected ──")
+    wm_mod._instance = None
+    mock_relay_disconnected = MagicMock()
+    mock_relay_disconnected.is_connected = False
+    tool._mobile_relay = mock_relay_disconnected
+
+    result = tool.handler({})
+    assert_isinstance("relay_off: returns str", result, str)
+    assert_in("relay_off: mentions camera", "camera", result.lower())
+
+    tool._mobile_relay = original_relay
+    wm_mod._instance = original_instance
+
+    # --- Test 5.16: set_ws replaces previous connection ---
+    log("\n── 5.16: set_ws replaces previous connection ──")
+    async def test_set_ws_replaces():
+        relay = MobileCameraRelay()
+        ws1 = MagicMock()
+        ws1.closed = False
+        ws2 = MagicMock()
+        ws2.closed = False
+        loop = asyncio.get_event_loop()
+
+        relay.set_ws(ws1, loop)
+        assert_true("replace: ws1 connected", relay._ws is ws1)
+
+        # Add a pending future on ws1
+        fut = loop.create_future()
+        relay._pending["old_req"] = fut
+
+        # Replace with ws2 — should clear pending
+        relay.set_ws(ws2, loop)
+        assert_true("replace: ws2 connected", relay._ws is ws2)
+        assert_true("replace: old fut cancelled", fut.cancelled())
+        assert_eq("replace: pending cleared", len(relay._pending), 0)
+
+    asyncio.run(test_set_ws_replaces())
+
+    # --- Test 5.17: Singleton accessor ---
+    log("\n── 5.17: get_mobile_relay singleton ──")
+    from core.webcam_manager import get_mobile_relay
+    # Reset singleton for test
+    original_relay_instance = wm_mod._relay_instance
+    wm_mod._relay_instance = None
+
+    r1 = get_mobile_relay()
+    r2 = get_mobile_relay()
+    assert_true("singleton: same instance", r1 is r2)
+    assert_isinstance("singleton: correct type", r1, MobileCameraRelay)
+
+    wm_mod._relay_instance = original_relay_instance
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
     global verbose
 
     parser = argparse.ArgumentParser(description="Vision System Unit Tests")
     parser.add_argument("--verbose", action="store_true", help="Show each test result")
-    parser.add_argument("--part", type=int, choices=[1, 2, 3, 4],
+    parser.add_argument("--part", type=int, choices=[1, 2, 3, 4, 5],
                        help="Run only one part")
     args = parser.parse_args()
     verbose = args.verbose
@@ -687,6 +969,7 @@ def main():
         2: ("WebcamManager Lifecycle", test_part2),
         3: ("capture_webcam Handler", test_part3),
         4: ("take_screenshot Handler", test_part4),
+        5: ("MobileCameraRelay + Mobile Fallback", test_part5),
     }
 
     if args.part:

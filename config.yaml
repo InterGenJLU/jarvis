@@ -108,6 +108,7 @@ logging:
     # conversation: DEBUG      # Conversation history, people, profiles
     # web: DEBUG               # Web frontend, WebSocket handling
     # news: DEBUG              # News feed monitoring
+    vision: DEBUG              # Webcam manager, mobile camera relay, frame capture
 # LLM metrics tracking (dashboard + analytics)
 metrics:
   db_path: /mnt/storage/jarvis/data/metrics.db
@@ -325,6 +326,11 @@ web:
   port: 8088
   host: "0.0.0.0"
   auth_token: "QIj5fqyQ91HZ_SzAcOFJTaPB7Lu3Z570pxcrXIE944w"
+  tls:
+    enabled: true
+    cert: ".certs/ts.crt"
+    key: ".certs/ts.key"
+    port: 8443
 
 # Fine-tuned Whisper model (custom accent training)
 stt_finetuned:

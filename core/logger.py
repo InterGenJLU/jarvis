@@ -42,6 +42,7 @@ _SUBSYSTEM_MAP = {
     'jarvis.mcp_client': 'mcp',
     'jarvis.mcp_server': 'mcp',
     'jarvis.webcam': 'vision',
+    'jarvis.tools.capture_webcam': 'vision',
     'desktop_manager': 'desktop',
     'pipeline.coordinator': 'pipeline',
     'core.conversation': 'conversation',

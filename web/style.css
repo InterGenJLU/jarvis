@@ -1035,6 +1035,49 @@ header h1 {
     border-color: rgba(37, 99, 235, 0.3);
 }
 
+/* Image lightbox overlay */
+.image-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.image-lightbox img {
+    max-width: 90vw;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: 8px;
+    cursor: default;
+}
+
+.lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    background: var(--bg-secondary, #111827);
+    border: 1px solid var(--border, #2a3548);
+    border-radius: 8px;
+    color: var(--text-primary, #e2e8f0);
+    font-size: 1.4rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1001;
+    transition: background 0.2s;
+}
+
+.lightbox-close:hover {
+    background: var(--bg-tertiary, #1a2236);
+}
+
 /* Drag/drop overlay */
 #chat-area.dragover {
     outline: 2px dashed var(--accent);
@@ -1893,6 +1936,12 @@ body.webcam-open #image-indicator {
     color: var(--text-dim, #888);
 }
 
+.webcam-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .webcam-header button {
     background: none;
     border: none;
@@ -1908,6 +1957,18 @@ body.webcam-open #image-indicator {
     background: rgba(255, 255, 255, 0.05);
 }
 
+.webcam-switch-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px !important;
+    font-size: 1rem !important;
+}
+
+.webcam-switch-btn.hidden {
+    display: none;
+}
+
 .webcam-stream-container {
     flex: 1;
     display: flex;
@@ -1919,12 +1980,38 @@ body.webcam-open #image-indicator {
     min-height: 0;
 }
 
-#webcam-feed {
+#webcam-feed,
+#webcam-video {
     width: 100%;
     max-height: 100%;
     object-fit: contain;
     border-radius: 8px;
     background: #000;
+}
+
+#webcam-feed.hidden,
+#webcam-video.hidden {
+    display: none;
+}
+
+/* Camera capture flash effect */
+@keyframes camera-flash {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+.webcam-flash {
+    position: absolute;
+    inset: 0;
+    background: white;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 10;
+    border-radius: 8px;
+}
+
+.webcam-flash.active {
+    animation: camera-flash 0.4s ease-out forwards;
 }
 
 .webcam-status {
@@ -1950,13 +2037,60 @@ body.webcam-open #image-indicator {
     color: var(--accent, #00d4ff);
 }
 
-/* Mobile: floating overlay instead of sidebar */
-@media (max-width: 768px) {
+/* Mobile portrait: centered panel at top, below header */
+@media (max-width: 768px) and (orientation: portrait) {
     .webcam-panel {
-        width: 240px;
-        height: 180px;
+        position: fixed;
+        width: 80%;
+        height: fit-content;
+        max-height: 40vh;
+        top: 8px;
+        bottom: auto;
+        left: 10%;
+        right: 10%;
+        transform: translateX(100%);
+        border-radius: 12px;
+        border: 1px solid var(--border, #1a1a2e);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
+    }
+
+    .webcam-panel.open {
+        transform: translateX(0);
+    }
+
+    body.webcam-open #chat-area,
+    body.webcam-open #input-area,
+    body.webcam-open #doc-indicator,
+    body.webcam-open #image-indicator {
+        margin-right: 0;
+    }
+
+    .webcam-header {
+        padding: 6px 10px;
+        font-size: 0.75rem;
+        flex-shrink: 0;
+    }
+
+    .webcam-stream-container {
+        flex: 0 1 auto;
+        padding: 4px;
+        min-height: 0;
+    }
+
+    #webcam-feed,
+    #webcam-video {
+        max-height: calc(40vh - 40px);
+    }
+}
+
+/* Mobile landscape: webcam as compact floating overlay */
+@media (max-height: 500px) and (orientation: landscape) {
+    .webcam-panel {
+        width: 200px;
+        height: 160px;
         top: auto;
-        bottom: 80px;
+        bottom: 60px;
         right: 8px;
         border-radius: 12px;
         border: 1px solid var(--border, #1a1a2e);
@@ -1971,8 +2105,8 @@ body.webcam-open #image-indicator {
     }
 
     .webcam-header {
-        padding: 6px 10px;
-        font-size: 0.75rem;
+        padding: 4px 8px;
+        font-size: 0.7rem;
     }
 
     .webcam-stream-container {

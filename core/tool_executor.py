@@ -51,3 +51,11 @@ def set_desktop_manager(mgr):
     Called during init in pipeline.py, jarvis_console.py, jarvis_web.py.
     """
     inject_dependencies({"desktop_manager": mgr})
+
+
+def set_mobile_camera_relay(relay):
+    """Wire the mobile camera relay for capture_webcam mobile fallback.
+
+    Called during init in jarvis_web.py.
+    """
+    inject_dependencies({"mobile_camera_relay": relay})

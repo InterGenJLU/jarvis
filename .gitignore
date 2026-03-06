@@ -1,3 +1,6 @@
+# TLS certs
+.certs/
+
 # Python
 __pycache__/
 *.pyc

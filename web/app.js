@@ -107,8 +107,11 @@
     // Webcam panel
     const webcamPanel = document.getElementById('webcam-panel');
     const webcamFeed = document.getElementById('webcam-feed');
+    const webcamVideo = document.getElementById('webcam-video');
     const webcamStatus = document.getElementById('webcam-status');
     const webcamClose = document.getElementById('webcam-close');
+    const webcamSwitch = document.getElementById('webcam-switch');
+    const webcamFlash = document.getElementById('webcam-flash');
     const btnWebcam = document.getElementById('btn-webcam');
 
     // --- State ---
@@ -135,6 +138,11 @@
     // Webcam state
     let webcamOpen = false;
     let webcamAbort = null;  // AbortController for fetch stream
+
+    // Mobile camera state
+    const isMobileClient = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) || screen.width < 768;
+    let mobileStream = null;
+    let mobileFacing = localStorage.getItem('jarvis-camera-facing') || 'environment';
 
     function loadCommandHistory() {
         const uid = userSelect.value || 'default';
@@ -284,6 +292,13 @@
                 endStreaming(msg.full_response, msg.image_url);
                 setProcessing(false);
                 break;
+
+            case 'frame_request':
+                console.log('[JARVIS] frame_request received, id=', msg.request_id,
+                    'mobileStream=', !!mobileStream,
+                    'videoReady=', webcamVideo ? webcamVideo.readyState : 'N/A');
+                captureAndSendFrame(msg.request_id);
+                break;
         }
     }
 
@@ -338,6 +353,25 @@
         scrollToBottom();
     }
 
+    // --- Image lightbox ---
+    function openLightbox(imageUrl) {
+        var overlay = document.createElement('div');
+        overlay.className = 'image-lightbox';
+        var closeBtn = document.createElement('button');
+        closeBtn.className = 'lightbox-close';
+        closeBtn.innerHTML = '&times;';
+        closeBtn.addEventListener('click', function () { overlay.remove(); });
+        var img = document.createElement('img');
+        img.src = imageUrl;
+        img.alt = 'Full image';
+        overlay.appendChild(closeBtn);
+        overlay.appendChild(img);
+        overlay.addEventListener('click', function (e) {
+            if (e.target === overlay) overlay.remove();
+        });
+        document.body.appendChild(overlay);
+    }
+
     function createImageThumb(imageUrl) {
         var imgWrap = document.createElement('div');
         imgWrap.className = 'message-image-wrap';
@@ -345,9 +379,7 @@
         img.className = 'message-image-thumb';
         img.src = imageUrl;
         img.alt = 'Tool image';
-        img.addEventListener('click', function () {
-            window.open(imageUrl, '_blank');
-        });
+        img.addEventListener('click', function () { openLightbox(imageUrl); });
         imgWrap.appendChild(img);
         return imgWrap;
     }
@@ -405,6 +437,7 @@
         img.className = 'message-image-thumb';
         img.src = dataUrl;
         img.alt = 'Attached image';
+        img.addEventListener('click', function () { openLightbox(dataUrl); });
         imgWrap.appendChild(img);
         messageDiv.appendChild(imgWrap);
 
@@ -1591,29 +1624,38 @@
         webcamOpen = !webcamOpen;
         if (webcamOpen) {
             webcamPanel.classList.remove('hidden');
-            // Force reflow before adding open class for transition
             void webcamPanel.offsetWidth;
             webcamPanel.classList.add('open');
             document.body.classList.add('webcam-open');
             btnWebcam.classList.add('active');
-            startWebcamStream();
+            if (isMobileClient) {
+                startMobileCamera();
+            } else {
+                startWebcamStream();
+            }
         } else {
-            stopWebcamStream();
+            if (isMobileClient) {
+                stopMobileCamera();
+            } else {
+                stopWebcamStream();
+            }
             webcamPanel.classList.remove('open');
             document.body.classList.remove('webcam-open');
             btnWebcam.classList.remove('active');
-            // Remove from DOM after transition
             setTimeout(() => {
                 if (!webcamOpen) webcamPanel.classList.add('hidden');
             }, 300);
         }
     }
 
+    // --- Desktop webcam (MJPEG stream from server) ---
+
     function startWebcamStream() {
         webcamStatus.textContent = 'Connecting...';
         webcamStatus.classList.remove('hidden');
+        webcamFeed.classList.remove('hidden');
+        webcamVideo.classList.add('hidden');
 
-        // Use Fetch + ReadableStream for Safari compatibility
         webcamAbort = new AbortController();
         const url = authUrl('/api/webcam/stream');
 
@@ -1628,20 +1670,16 @@
                 function pump() {
                     return reader.read().then(({ done, value }) => {
                         if (done) return;
-                        // Append chunk to buffer
                         const tmp = new Uint8Array(buffer.length + value.length);
                         tmp.set(buffer);
                         tmp.set(value, buffer.length);
                         buffer = tmp;
-
-                        // Extract JPEG frames from multipart stream
                         extractFrames();
                         return pump();
                     });
                 }
 
                 function extractFrames() {
-                    // Find JPEG SOI (0xFFD8) and EOI (0xFFD9)
                     while (buffer.length > 4) {
                         let soi = -1;
                         for (let i = 0; i < buffer.length - 1; i++) {
@@ -1660,16 +1698,15 @@
                                 break;
                             }
                         }
-                        if (eoi === -1) return; // Incomplete frame
+                        if (eoi === -1) return;
 
                         const frame = buffer.slice(0, eoi + 2);
                         buffer = buffer.slice(eoi + 2);
 
-                        // Display frame
                         const blob = new Blob([frame], { type: 'image/jpeg' });
-                        const url = URL.createObjectURL(blob);
+                        const blobUrl = URL.createObjectURL(blob);
                         const prev = webcamFeed.src;
-                        webcamFeed.src = url;
+                        webcamFeed.src = blobUrl;
                         if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
 
                         webcamStatus.classList.add('hidden');
@@ -1682,7 +1719,6 @@
                 if (err.name === 'AbortError') return;
                 webcamStatus.textContent = 'Disconnected';
                 webcamStatus.classList.remove('hidden');
-                // Auto-reconnect after 2s
                 if (webcamOpen) {
                     setTimeout(() => {
                         if (webcamOpen) startWebcamStream();
@@ -1702,18 +1738,143 @@
         webcamFeed.removeAttribute('src');
     }
 
+    // --- Mobile camera (getUserMedia) ---
+
+    async function startMobileCamera() {
+        webcamStatus.textContent = 'Starting camera...';
+        webcamStatus.classList.remove('hidden');
+        webcamFeed.classList.add('hidden');
+        webcamVideo.classList.remove('hidden');
+
+        try {
+            const constraints = {
+                video: { facingMode: mobileFacing, width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false,
+            };
+            mobileStream = await navigator.mediaDevices.getUserMedia(constraints);
+            webcamVideo.srcObject = mobileStream;
+            webcamStatus.classList.add('hidden');
+
+            // Show switch button if device has multiple cameras
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const cameras = devices.filter(d => d.kind === 'videoinput');
+                if (cameras.length > 1) {
+                    webcamSwitch.classList.remove('hidden');
+                }
+            } catch (e) {
+                // Can't enumerate — hide switch button
+            }
+        } catch (err) {
+            webcamStatus.textContent = 'Camera access denied';
+            webcamStatus.classList.remove('hidden');
+            console.error('getUserMedia error:', err);
+        }
+    }
+
+    function stopMobileCamera() {
+        if (mobileStream) {
+            mobileStream.getTracks().forEach(t => t.stop());
+            mobileStream = null;
+        }
+        webcamVideo.srcObject = null;
+        webcamVideo.classList.add('hidden');
+        webcamSwitch.classList.add('hidden');
+    }
+
+    async function switchCamera() {
+        mobileFacing = mobileFacing === 'environment' ? 'user' : 'environment';
+        localStorage.setItem('jarvis-camera-facing', mobileFacing);
+        stopMobileCamera();
+        await startMobileCamera();
+    }
+
+    // --- Frame capture for server requests (mobile → WS → LLM) ---
+
+    function captureAndSendFrame(requestId) {
+        if (!mobileStream || webcamVideo.readyState < 2) {
+            // Video not ready or camera panel closed
+            if (ws) {
+                ws.send(JSON.stringify({
+                    type: 'frame_response',
+                    request_id: requestId,
+                    error: 'Camera panel is not open. Please open the camera panel first.',
+                }));
+            }
+            return;
+        }
+
+        try {
+            const t0 = performance.now();
+            const canvas = document.createElement('canvas');
+            canvas.width = webcamVideo.videoWidth;
+            canvas.height = webcamVideo.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(webcamVideo, 0, 0);
+            const t1 = performance.now();
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const t2 = performance.now();
+            // Strip "data:image/jpeg;base64," prefix
+            const b64 = dataUrl.split(',')[1];
+            console.log(`[JARVIS] frame capture: draw=${(t1-t0).toFixed(0)}ms, encode=${(t2-t1).toFixed(0)}ms, size=${(b64.length/1024).toFixed(0)}KB, res=${canvas.width}x${canvas.height}`);
+
+            if (ws) {
+                ws.send(JSON.stringify({
+                    type: 'frame_response',
+                    request_id: requestId,
+                    image_data: b64,
+                }));
+                console.log(`[JARVIS] frame_response sent, total=${(performance.now()-t0).toFixed(0)}ms`);
+                // Camera flash effect
+                if (webcamFlash) {
+                    webcamFlash.classList.remove('active');
+                    void webcamFlash.offsetWidth;  // force reflow
+                    webcamFlash.classList.add('active');
+                }
+            }
+        } catch (err) {
+            console.error('Frame capture error:', err);
+            if (ws) {
+                ws.send(JSON.stringify({
+                    type: 'frame_response',
+                    request_id: requestId,
+                    error: 'Failed to capture frame: ' + err.message,
+                }));
+            }
+        }
+    }
+
+    // --- Webcam event listeners ---
+
     if (btnWebcam) btnWebcam.addEventListener('click', toggleWebcamPanel);
     if (webcamClose) webcamClose.addEventListener('click', toggleWebcamPanel);
+    if (webcamSwitch) webcamSwitch.addEventListener('click', switchCamera);
 
-    // Check webcam availability on load and show/hide button
-    fetch(authUrl('/api/webcam/status'))
-        .then(r => r.json())
-        .then(data => {
-            if (!data.available && btnWebcam) {
-                btnWebcam.style.display = 'none';
-            }
-        })
-        .catch(() => {});
+    // Check webcam availability on load — show button for desktop (if device exists) or mobile (always)
+    if (isMobileClient) {
+        // Mobile: always show camera button (getUserMedia)
+        if (btnWebcam) btnWebcam.style.display = '';
+    } else {
+        fetch(authUrl('/api/webcam/status'))
+            .then(r => r.json())
+            .then(data => {
+                if (!data.available && btnWebcam) {
+                    btnWebcam.style.display = 'none';
+                }
+            })
+            .catch(() => {});
+    }
+
+    // Mobile: reposition webcam panel when keyboard opens (iOS scrolls fixed elements offscreen)
+    if (isMobileClient && window.visualViewport) {
+        const vv = window.visualViewport;
+        const repositionWebcam = () => {
+            if (!webcamPanel || !webcamPanel.classList.contains('open')) return;
+            webcamPanel.style.top = (vv.offsetTop + 8) + 'px';
+        };
+        vv.addEventListener('resize', repositionWebcam);
+        vv.addEventListener('scroll', repositionWebcam);
+    }
 
     // --- Init ---
     connect();

@@ -99,10 +99,23 @@
     <aside id="webcam-panel" class="webcam-panel hidden">
         <div class="webcam-header">
             <span>Live Feed</span>
-            <button id="webcam-close" title="Close webcam">&times;</button>
+            <div class="webcam-header-actions">
+                <button id="webcam-switch" class="webcam-switch-btn hidden" title="Switch camera">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/>
+                        <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/>
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="m18 22-3-3 3-3"/>
+                        <path d="m6 2 3 3-3 3"/>
+                    </svg>
+                </button>
+                <button id="webcam-close" title="Close webcam">&times;</button>
+            </div>
         </div>
         <div class="webcam-stream-container">
             <img id="webcam-feed" alt="Webcam feed">
+            <video id="webcam-video" class="hidden" autoplay playsinline muted></video>
+            <div class="webcam-flash" id="webcam-flash"></div>
             <div class="webcam-status" id="webcam-status">Connecting...</div>
         </div>
     </aside>

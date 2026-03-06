@@ -16,6 +16,7 @@ os.environ['HSA_OVERRIDE_GFX_VERSION'] = '11.0.0'
 os.environ['ROCM_PATH'] = '/opt/rocm-7.2.0'
 os.environ['TQDM_DISABLE'] = '1'  # Suppress sentence-transformer progress bars
 
+import ssl
 import sys
 import re
 import time
@@ -23,6 +24,7 @@ import json
 import asyncio
 import logging
 import argparse
+import signal
 import threading
 from pathlib import Path
 
@@ -57,7 +59,7 @@ from core.self_awareness import SelfAwareness
 from core.task_planner import TaskPlanner
 from core.interaction_cache import get_interaction_cache, Artifact
 from core.readback_session import ReadbackSession
-from core.webcam_manager import get_webcam_manager, WebcamManager
+from core.webcam_manager import get_webcam_manager, WebcamManager, get_mobile_relay
 import hmac
 
 
@@ -1759,6 +1761,91 @@ def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Chat message handler (runs as background task so WS loop stays free)
+# ---------------------------------------------------------------------------
+
+async def _handle_chat_message(ws, cmd_lock, components, tts_proxy, config,
+                               doc_buffer, content, msg_image_data):
+    """Process a chat message as a background task.
+
+    Running this outside the WS read loop allows the loop to continue
+    receiving other message types (e.g. frame_response for mobile camera)
+    while the LLM / tool pipeline executes.
+    """
+    logger.info("User: %s%s", content[:200], " [+image]" if msg_image_data else "")
+    async with cmd_lock:
+        try:
+            result = await process_command(
+                content, components, tts_proxy, config,
+                ws=ws, image_data=msg_image_data,
+            )
+            # Drain announcements queued during command processing
+            # (skills call tts_proxy.speak() which would duplicate
+            # the response as a gold announcement banner)
+            tts_proxy.get_pending_announcements()
+
+            # Speak LLM responses via TTS when voice is enabled
+            # (skills already speak internally; this covers LLM fallback)
+            if result.get('used_llm') and result['response'] and tts_proxy.hybrid and tts_proxy.real_tts:
+                threading.Thread(
+                    target=tts_proxy.real_tts.speak,
+                    args=(result['response'],),
+                    daemon=True,
+                ).start()
+
+            # Check for structured health data from developer_tools
+            health_data = _extract_health_data(components['skill_manager'])
+
+            # Use corrected brief when health data is present
+            # (raw brief counts web-irrelevant warnings)
+            response_text = result['response']
+            if health_data and health_data.get('brief'):
+                response_text = health_data['brief']
+
+            logger.info("JARVIS: %s%s", (response_text or "")[:200],
+                        " [streamed]" if result.get('streamed') else "")
+
+            # Only send response message if not already streamed
+            if not result.get('streamed') and response_text:
+                await ws.send_json({
+                    'type': 'response',
+                    'content': response_text,
+                })
+            if result['stats']:
+                await ws.send_json({
+                    'type': 'stats',
+                    'data': result['stats'],
+                })
+            # Send structured health report for rich rendering
+            if health_data:
+                await ws.send_json({
+                    'type': 'health_report',
+                    'data': health_data['layers'],
+                })
+            # Send doc buffer status
+            await ws.send_json({
+                'type': 'doc_status',
+                'active': doc_buffer.active,
+                'tokens': doc_buffer.token_estimate,
+                'source': doc_buffer.source,
+            })
+            # Send updated system stats for header readout
+            await ws.send_json({
+                'type': 'system_stats',
+                'data': _gather_system_stats(components),
+            })
+        except Exception:
+            logger.exception("Error processing command")
+            try:
+                await ws.send_json({
+                    'type': 'error',
+                    'content': "An error occurred processing your request.",
+                })
+            except Exception:
+                pass  # WS may have closed
+
+
+# ---------------------------------------------------------------------------
 # WebSocket handler
 # ---------------------------------------------------------------------------
 
@@ -1856,70 +1943,12 @@ async def websocket_handler(request):
                     # Extract inline image data (base64) if present
                     msg_image_data = data.get('image_data') or None
 
-                    async with cmd_lock:
-                        try:
-                            result = await process_command(
-                                content, components, tts_proxy, config,
-                                ws=ws, image_data=msg_image_data,
-                            )
-                            # Drain announcements queued during command processing
-                            # (skills call tts_proxy.speak() which would duplicate
-                            # the response as a gold announcement banner)
-                            tts_proxy.get_pending_announcements()
-
-                            # Speak LLM responses via TTS when voice is enabled
-                            # (skills already speak internally; this covers LLM fallback)
-                            if result.get('used_llm') and result['response'] and tts_proxy.hybrid and tts_proxy.real_tts:
-                                threading.Thread(
-                                    target=tts_proxy.real_tts.speak,
-                                    args=(result['response'],),
-                                    daemon=True,
-                                ).start()
-
-                            # Check for structured health data from developer_tools
-                            health_data = _extract_health_data(components['skill_manager'])
-
-                            # Use corrected brief when health data is present
-                            # (raw brief counts web-irrelevant warnings)
-                            response_text = result['response']
-                            if health_data and health_data.get('brief'):
-                                response_text = health_data['brief']
-
-                            # Only send response message if not already streamed
-                            if not result.get('streamed') and response_text:
-                                await ws.send_json({
-                                    'type': 'response',
-                                    'content': response_text,
-                                })
-                            if result['stats']:
-                                await ws.send_json({
-                                    'type': 'stats',
-                                    'data': result['stats'],
-                                })
-                            # Send structured health report for rich rendering
-                            if health_data:
-                                await ws.send_json({
-                                    'type': 'health_report',
-                                    'data': health_data['layers'],
-                                })
-                            # Send doc buffer status
-                            await ws.send_json({
-                                'type': 'doc_status',
-                                'active': doc_buffer.active,
-                                'tokens': doc_buffer.token_estimate,
-                                'source': doc_buffer.source,
-                            })
-                            # Send updated system stats for header readout
-                            await ws.send_json({
-                                'type': 'system_stats',
-                                'data': _gather_system_stats(components),
-                            })
-                        except Exception:
-                            logger.exception("Error processing command")
-                            await ws.send_json({
-                                'type': 'error',
-                                'content': "An error occurred processing your request.",
-                            })
+                    # Run as background task so the WS read loop stays free
+                    # to receive frame_response messages during tool execution
+                    asyncio.create_task(_handle_chat_message(
+                        ws, cmd_lock, components, tts_proxy, config,
+                        doc_buffer, content, msg_image_data,
+                    ))
 
                 elif msg_type == 'slash_command':
                     cmd = data.get('command', '')
@@ -2010,6 +2039,27 @@ async def websocket_handler(request):
                     is_mobile = any(k in ua for k in _mobile_kw) or sw < 768
                     conversation.client_type = "mobile" if is_mobile else "desktop"
                     logger.info(f"Client type: {conversation.client_type} (screen_width={sw})")
+                    # Register mobile client for camera relay
+                    if is_mobile:
+                        relay = request.app.get('mobile_relay')
+                        if relay:
+                            relay.set_ws(ws, asyncio.get_event_loop())
+                            logger.info("Mobile camera relay attached to this WS")
+
+                elif msg_type == 'frame_response':
+                    # Mobile browser sending a captured camera frame
+                    relay = request.app.get('mobile_relay')
+                    rid = data.get('request_id', '')
+                    logger.info("Received frame_response (id=%s, has_relay=%s)", rid, relay is not None)
+                    if relay:
+                        error = data.get('error')
+                        if error:
+                            logger.warning("Mobile frame error from browser: %s", error)
+                            relay.deliver_error(rid, error)
+                        else:
+                            image_data = data.get('image_data', '')
+                            logger.info("Delivering frame to relay (id=%s, data_len=%d)", rid, len(image_data))
+                            relay.deliver_frame(rid, image_data)
 
                 elif msg_type == 'restart':
                     logger.info("Restart requested via web UI")
@@ -2021,6 +2071,11 @@ async def websocket_handler(request):
                 break
     finally:
         pump_task.cancel()
+        # Clean up mobile camera relay if this WS was the relay source
+        relay = request.app.get('mobile_relay')
+        if relay and relay._ws is ws:
+            relay.clear_ws()
+            logger.info("Mobile camera relay disconnected")
 
     return ws
 
@@ -3335,9 +3390,11 @@ async def webcam_snapshot_handler(request):
 async def webcam_status_handler(request):
     """Webcam feed status (JSON)."""
     wm: WebcamManager | None = request.app.get('webcam_manager')
+    desktop_available = wm is not None and wm.device_available
     return web.json_response({
-        'available': wm is not None and wm.device_available,
+        'available': desktop_available,
         'running': wm.is_running if wm else False,
+        'mobile_supported': True,  # Mobile clients can always use getUserMedia
     })
 
 
@@ -3409,6 +3466,13 @@ async def on_startup(app):
     except Exception as e:
         logger.warning("Webcam manager not available: %s", e)
         app['webcam_manager'] = None
+
+    # Initialize mobile camera relay (WebSocket frame relay for getUserMedia)
+    from core.tool_executor import set_mobile_camera_relay
+    relay = get_mobile_relay()
+    app['mobile_relay'] = relay
+    set_mobile_camera_relay(relay)
+    logger.info("Mobile camera relay initialized")
 
     # Wire live dashboard push — MetricsTracker calls this after each record()
     metrics = components.get('metrics')
@@ -3496,8 +3560,50 @@ def main():
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
 
-    print(f"\n  J.A.R.V.I.S. Web UI → http://{host}:{port}\n")
-    web.run_app(app, host=host, port=port, print=None)
+    tls_config = config.get("web.tls", {}) or {}
+    tls_enabled = tls_config.get("enabled", False)
+
+    async def run_server():
+        runner = web.AppRunner(app)
+        await runner.setup()
+
+        # HTTP — localhost only (secure context for desktop browsers)
+        http_site = web.TCPSite(runner, '127.0.0.1', port)
+        await http_site.start()
+        logger.info("HTTP  → http://127.0.0.1:%s", port)
+
+        # HTTPS — all interfaces (mobile via Tailscale)
+        if tls_enabled:
+            base = Path(__file__).parent
+            cert_path = base / tls_config.get("cert", ".certs/ts.crt")
+            key_path = base / tls_config.get("key", ".certs/ts.key")
+            tls_port = tls_config.get("port", 8443)
+
+            if cert_path.exists() and key_path.exists():
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(str(cert_path), str(key_path))
+                https_site = web.TCPSite(runner, '0.0.0.0', tls_port, ssl_context=ctx)
+                await https_site.start()
+                logger.info("HTTPS → https://0.0.0.0:%s", tls_port)
+            else:
+                logger.warning("TLS enabled but cert/key not found (%s, %s) — HTTPS disabled",
+                               cert_path, key_path)
+
+        print(f"\n  J.A.R.V.I.S. Web UI → http://127.0.0.1:{port}")
+        if tls_enabled:
+            print(f"  J.A.R.V.I.S. Web UI → https://0.0.0.0:{tls_config.get('port', 8443)}")
+        print()
+
+        # Wait for SIGTERM/SIGINT
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+        await stop.wait()
+
+        await runner.cleanup()
+
+    asyncio.run(run_server())
 
 
 if __name__ == "__main__":
