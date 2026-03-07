@@ -50,6 +50,8 @@ _SUBSYSTEM_MAP = {
     'core.user_profile': 'conversation',
     'jarvis.web': 'web',
     'core.news_manager': 'news',
+    'jarvis.presence': 'presence',
+    'core.presence_detector': 'presence',
 }
 
 # Populated by configure_module_levels() — subsystem key → logging level int

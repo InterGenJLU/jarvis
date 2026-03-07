@@ -59,3 +59,11 @@ def set_mobile_camera_relay(relay):
     Called during init in jarvis_web.py.
     """
     inject_dependencies({"mobile_camera_relay": relay})
+
+
+def set_presence_detector(detector):
+    """Wire the presence detector for enroll_face tool dispatch.
+
+    Called during init in jarvis_continuous.py.
+    """
+    inject_dependencies({"presence_detector": detector})

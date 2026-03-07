@@ -1818,40 +1818,7 @@ header h1 {
    ========================================================================= */
 @media (max-height: 500px) and (orientation: landscape) {
     .header-stats {
-        display: flex;
-        gap: 14px;
-        padding: 4px 12px;
-        background: var(--stats-bg);
-        border: 1px solid rgba(56, 189, 248, 0.15);
-        border-radius: 4px;
-        flex-shrink: 1;
-        overflow: hidden;
-        position: relative;
-    }
-
-    .header-stats::before {
-        height: 1px;
-    }
-
-    /* Show only MEMORY + CONTEXT in landscape (items 3 and 4) */
-    .header-stats .hud-stat {
-        padding: 0;
-        gap: 4px;
         display: none;
-    }
-
-    .header-stats .hud-stat:nth-child(3),
-    .header-stats .hud-stat:nth-child(4) {
-        display: flex;
-    }
-
-    .header-stats .hud-label {
-        font-size: 0.5rem;
-        min-width: auto;
-    }
-
-    .header-stats .hud-value {
-        font-size: 0.6rem;
     }
 
     header {
@@ -1865,6 +1832,12 @@ header h1 {
     }
 
     .voice-label {
+        display: none;
+    }
+
+    /* Hide side columns — no room in landscape */
+    .input-col-left,
+    .input-col-right {
         display: none;
     }
 
@@ -2087,14 +2060,19 @@ body.webcam-open #image-indicator {
 /* Mobile landscape: webcam as compact floating overlay */
 @media (max-height: 500px) and (orientation: landscape) {
     .webcam-panel {
-        width: 200px;
-        height: 160px;
+        width: 220px;
+        height: 180px;
         top: auto;
-        bottom: 60px;
-        right: 8px;
+        bottom: 50px;
+        right: calc(8px + env(safe-area-inset-right, 0px));
         border-radius: 12px;
         border: 1px solid var(--border, #1a1a2e);
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
+    }
+
+    .webcam-panel.open {
+        transform: translateX(0);
     }
 
     body.webcam-open #chat-area,
@@ -2107,9 +2085,16 @@ body.webcam-open #image-indicator {
     .webcam-header {
         padding: 4px 8px;
         font-size: 0.7rem;
+        flex-shrink: 0;
     }
 
     .webcam-stream-container {
         padding: 4px;
+        min-height: 0;
+    }
+
+    #webcam-feed,
+    #webcam-video {
+        max-height: calc(180px - 30px);
     }
 }

@@ -91,6 +91,14 @@ class PeopleManager:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_person_facts ON person_facts(person_id)")
                 # Enable foreign key enforcement (for CASCADE)
                 conn.execute("PRAGMA foreign_keys = ON")
+
+                # Migrations: add columns if table already existed without them
+                columns = [row[1] for row in conn.execute("PRAGMA table_info(people)")]
+                if "face_embedding_path" not in columns:
+                    conn.execute("ALTER TABLE people ADD COLUMN face_embedding_path TEXT")
+                    conn.commit()
+                    self.logger.info("Migrated: added face_embedding_path column")
+
                 conn.commit()
             finally:
                 conn.close()
@@ -243,6 +251,37 @@ class PeopleManager:
             name_lower = row[0].lower()
             self._pronunciation_cache.pop(name_lower, None)
             self.logger.info(f"Deleted person: {row[0]}")
+
+    # ------------------------------------------------------------------
+    # Face embedding storage
+    # ------------------------------------------------------------------
+
+    def set_face_embedding_path(self, person_id: str, path: str):
+        """Store the path to a face embedding .npy file."""
+        with self._db_lock:
+            conn = sqlite3.connect(str(self.db_path))
+            try:
+                conn.execute(
+                    "UPDATE people SET face_embedding_path = ?, updated_at = ? WHERE person_id = ?",
+                    (path, time.time(), person_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        self.logger.info(f"Set face embedding path for {person_id}: {path}")
+
+    def get_people_with_face_embeddings(self) -> list[dict]:
+        """Return all people who have face embeddings enrolled."""
+        with self._db_lock:
+            conn = sqlite3.connect(str(self.db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM people WHERE face_embedding_path IS NOT NULL"
+                ).fetchall()
+                return [dict(r) for r in rows]
+            finally:
+                conn.close()
 
     # ------------------------------------------------------------------
     # TTS pronunciation integration

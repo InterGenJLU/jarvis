@@ -951,13 +951,324 @@ def test_part5():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PART 6: Presence detection + face enrollment tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_part6():
+    log("\n═══ Part 6: Presence detection + face enrollment ═══")
+
+    import tempfile
+    import shutil
+    from unittest.mock import MagicMock, patch, PropertyMock
+    from PIL import Image
+    import numpy as np
+
+    # --- Test 6.1: PresenceState enum ---
+    log("\n── 6.1: PresenceState enum values ──")
+    from core.presence_detector import PresenceState, PersonPresence
+    assert_true("state: ABSENT exists", PresenceState.ABSENT is not None)
+    assert_true("state: DETECTED exists", PresenceState.DETECTED is not None)
+    assert_true("state: GREETED exists", PresenceState.GREETED is not None)
+    assert_true("state: PRESENT exists", PresenceState.PRESENT is not None)
+
+    # --- Test 6.2: PersonPresence dataclass defaults ---
+    log("\n── 6.2: PersonPresence defaults ──")
+    pp = PersonPresence(person_id="test123")
+    assert_eq("presence: default state", pp.state, PresenceState.ABSENT)
+    assert_eq("presence: default first_seen", pp.first_seen, 0.0)
+    assert_eq("presence: default confidence", pp.confidence, 0.0)
+
+    # --- Test 6.3: PresenceDetector initialization ---
+    log("\n── 6.3: PresenceDetector init ──")
+    from core.presence_detector import PresenceDetector
+
+    tmpdir = tempfile.mkdtemp(prefix="jarvis_test_presence_")
+    mock_config = MagicMock()
+    mock_config.get = MagicMock(side_effect=lambda key, default=None: {
+        "vision.presence": {
+            "detection_interval": 5,
+            "greeting_cooldown": 3600,
+            "face_confidence_threshold": 0.6,
+            "min_face_size": 80,
+            "greet_unknown": False,
+            "absence_threshold": 30,
+        },
+        "system.storage_path": tmpdir,
+    }.get(key, default))
+
+    mock_tts = MagicMock()
+    mock_webcam = MagicMock()
+    mock_webcam.device_available = True
+    mock_people = MagicMock()
+    mock_people.get_people_with_face_embeddings.return_value = []
+    mock_conv = MagicMock()
+    mock_conv.conversation_active = False
+
+    detector = PresenceDetector(
+        mock_config, mock_tts, mock_webcam, mock_people, mock_conv
+    )
+    assert_true("init: not running", not detector._running)
+    assert_eq("init: interval", detector._interval, 5)
+    assert_eq("init: cooldown", detector._cooldown, 3600)
+    assert_eq("init: empty face cache", len(detector._face_cache), 0)
+
+    # --- Test 6.4: _should_skip during conversation ---
+    log("\n── 6.4: _should_skip guards ──")
+    mock_conv.conversation_active = True
+    assert_true("skip: during conversation", detector._should_skip())
+
+    mock_conv.conversation_active = False
+    assert_true("skip: not during idle", not detector._should_skip())
+
+    mock_webcam.device_available = False
+    assert_true("skip: no webcam", detector._should_skip())
+    mock_webcam.device_available = True
+
+    # --- Test 6.5: _greeting_allowed cooldown ---
+    log("\n── 6.5: Greeting cooldown ──")
+    now = time.time()
+
+    # No prior state — greeting allowed
+    assert_true("cooldown: first time allowed",
+                detector._greeting_allowed("person1", now))
+
+    # Set a recent greeting
+    detector._person_states["person1"] = PersonPresence(
+        person_id="person1",
+        state=PresenceState.PRESENT,
+        last_greeted=now - 100,  # 100s ago (within 3600s cooldown)
+    )
+    assert_true("cooldown: within cooldown blocked",
+                not detector._greeting_allowed("person1", now))
+
+    # Set an old greeting (beyond cooldown)
+    detector._person_states["person1"].last_greeted = now - 4000
+    assert_true("cooldown: beyond cooldown allowed",
+                detector._greeting_allowed("person1", now))
+
+    # --- Test 6.6: _was_long_absence ---
+    log("\n── 6.6: Long absence detection ──")
+    # Last greeted 2 hours ago — long absence
+    detector._person_states["person1"].last_greeted = now - 7200
+    assert_true("absence: 2h = long",
+                detector._was_long_absence("person1", now))
+
+    # Last greeted 10 minutes ago — not long
+    detector._person_states["person1"].last_greeted = now - 600
+    assert_true("absence: 10m = not long",
+                not detector._was_long_absence("person1", now))
+
+    # First time ever — not a "return"
+    assert_true("absence: first time = not return",
+                not detector._was_long_absence("person_new", now))
+
+    # --- Test 6.7: State machine transitions ---
+    log("\n── 6.7: State machine transitions ──")
+    detector._person_states.clear()
+
+    # Mock greeting to not actually speak
+    detector._fire_greeting = MagicMock()
+
+    # First detection: ABSENT → DETECTED → fires greeting → GREETED
+    detector._handle_detection("person_x", 0.85, now)
+    state = detector._person_states["person_x"]
+    assert_eq("sm: first detect → GREETED", state.state, PresenceState.GREETED)
+    assert_true("sm: greeting fired", detector._fire_greeting.called)
+
+    # Second detection: GREETED → PRESENT
+    detector._handle_detection("person_x", 0.85, now + 1)
+    assert_eq("sm: greeted → PRESENT", state.state, PresenceState.PRESENT)
+
+    # Continued detection: stays PRESENT
+    detector._handle_detection("person_x", 0.85, now + 2)
+    assert_eq("sm: stays PRESENT", state.state, PresenceState.PRESENT)
+
+    # --- Test 6.8: ABSENT transition after absence_threshold ---
+    log("\n── 6.8: Absence timeout ──")
+    state.last_seen = now - 60  # Last seen 60s ago
+    detector._update_all_absent()
+    assert_eq("absent: after timeout", state.state, PresenceState.ABSENT)
+
+    # --- Test 6.9: Re-detection after absence triggers greeting again ---
+    log("\n── 6.9: Re-detection after cooldown ──")
+    detector._fire_greeting.reset_mock()
+    state.last_greeted = now - 4000  # Beyond cooldown
+    state.state = PresenceState.ABSENT
+
+    detector._handle_detection("person_x", 0.85, now + 100)
+    assert_eq("re-detect: → GREETED", state.state, PresenceState.GREETED)
+    assert_true("re-detect: greeting fired", detector._fire_greeting.called)
+
+    # --- Test 6.10: Re-detection within cooldown skips greeting ---
+    log("\n── 6.10: Re-detection within cooldown skips greeting ──")
+    detector._fire_greeting.reset_mock()
+    state.last_greeted = now + 100  # Just greeted
+    state.state = PresenceState.ABSENT
+
+    detector._handle_detection("person_x", 0.85, now + 200)
+    assert_eq("cooldown_skip: → PRESENT (no greeting)", state.state, PresenceState.PRESENT)
+    assert_true("cooldown_skip: no greeting fired",
+                not detector._fire_greeting.called)
+
+    # --- Test 6.11: Haar cascade face detection ---
+    log("\n── 6.11: Haar cascade detection ──")
+    detector._ensure_cascade()
+    assert_true("cascade: loaded", detector._cascade is not None)
+
+    # Create a synthetic image with no faces — should detect 0
+    blank = np.zeros((480, 640, 3), dtype=np.uint8)
+    faces = detector._detect_faces(blank)
+    assert_eq("cascade: blank image = 0 faces", len(faces), 0)
+
+    # --- Test 6.12: Face enrollment ---
+    log("\n── 6.12: Face enrollment ──")
+    # Create a real face-like image for enrollment
+    # (face_recognition needs a real face, so we test the error path)
+    img = Image.new("RGB", (640, 480), color=(180, 140, 100))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    no_face_jpeg = buf.getvalue()
+
+    success, msg = detector.enroll_face("test_person", no_face_jpeg, "Test Person")
+    assert_true("enroll: no face fails", not success)
+    assert_in("enroll: error mentions face", "face", msg.lower())
+
+    # --- Test 6.13: _fire_greeting produces speech ---
+    log("\n── 6.13: Greeting delivery ──")
+    # Restore real _fire_greeting
+    detector._fire_greeting = PresenceDetector._fire_greeting.__get__(detector)
+    mock_tts.speak.reset_mock()
+    mock_pause = MagicMock()
+    mock_resume = MagicMock()
+    mock_window = MagicMock()
+    detector._pause_listener_callback = mock_pause
+    detector._resume_listener_callback = mock_resume
+    detector._window_callback = mock_window
+
+    with patch("core.presence_detector.set_honorific") as mock_set_h:
+        detector._fire_greeting("person_x", is_return=False)
+
+    assert_true("greeting: TTS called", mock_tts.speak.called)
+    greeting_text = mock_tts.speak.call_args[0][0]
+    assert_true("greeting: has text", len(greeting_text) > 5)
+    assert_true("greeting: pause called", mock_pause.called)
+    assert_true("greeting: resume called", mock_resume.called)
+    assert_true("greeting: window opened", mock_window.called)
+    assert_eq("greeting: window duration", mock_window.call_args[0][0], 8.0)
+
+    # --- Test 6.14: Return greeting with pending reminders ---
+    log("\n── 6.14: Return greeting with pending reminders ──")
+    mock_tts.speak.reset_mock()
+    mock_reminder_mgr = MagicMock()
+    mock_reminder_mgr.get_pending_acks.return_value = [{"id": 1, "title": "test"}]
+    detector._reminder_manager = mock_reminder_mgr
+
+    with patch("core.presence_detector.set_honorific"):
+        detector._fire_greeting("person_x", is_return=True)
+
+    greeting_text = mock_tts.speak.call_args[0][0]
+    # Should contain reminder-related language
+    assert_true("return_reminder: mentions reminders",
+                "reminder" in greeting_text.lower() or
+                "while you were" in greeting_text.lower() or
+                "came up" in greeting_text.lower() or
+                "held" in greeting_text.lower())
+
+    # --- Test 6.15: get_status ---
+    log("\n── 6.15: get_status ──")
+    status = detector.get_status()
+    assert_in("status: has 'running'", "running", status)
+    assert_in("status: has 'enrolled_faces'", "enrolled_faces", status)
+    assert_in("status: has 'tracked_people'", "tracked_people", status)
+    assert_in("status: has 'states'", "states", status)
+
+    # --- Test 6.16: enroll_face tool handler ---
+    log("\n── 6.16: enroll_face tool (not initialized) ──")
+    import core.tools.enroll_face as enroll_tool
+    original_pd = enroll_tool._presence_detector
+    enroll_tool._presence_detector = None
+
+    result = enroll_tool.handler({})
+    assert_isinstance("tool_no_pd: returns str", result, str)
+    assert_in("tool_no_pd: mentions not available", "not available", result.lower())
+
+    enroll_tool._presence_detector = original_pd
+
+    # --- Test 6.17: Persona presence_greeting helper ---
+    log("\n── 6.17: Persona presence greeting pools ──")
+    from core.persona import presence_greeting, _POOLS
+
+    # Verify all pools exist
+    for pool_name in ["presence_morning", "presence_afternoon", "presence_evening",
+                      "presence_return", "presence_return_reminders"]:
+        assert_in(f"pool: {pool_name} exists", pool_name, _POOLS)
+        assert_true(f"pool: {pool_name} non-empty", len(_POOLS[pool_name]) > 0)
+
+    # Test helper produces output
+    with patch("core.persona.get_honorific", return_value="sir"):
+        greeting = presence_greeting("morning")
+        assert_true("helper: morning greeting has text", len(greeting) > 5)
+
+        greeting = presence_greeting("evening", is_return=True)
+        assert_true("helper: return greeting has text", len(greeting) > 5)
+
+        greeting = presence_greeting("afternoon", is_return=True,
+                                      has_pending_reminders=True)
+        assert_true("helper: reminder greeting has text", len(greeting) > 5)
+        assert_true("helper: reminder greeting mentions reminders",
+                    "reminder" in greeting.lower() or
+                    "while you were" in greeting.lower() or
+                    "came up" in greeting.lower() or
+                    "held" in greeting.lower())
+
+    # --- Test 6.18: PRESENCE_DETECTED event type exists ---
+    log("\n── 6.18: PRESENCE_DETECTED event type ──")
+    from core.events import EventType
+    assert_true("event: PRESENCE_DETECTED exists",
+                hasattr(EventType, 'PRESENCE_DETECTED'))
+
+    # --- Test 6.19: People manager face embedding methods ---
+    log("\n── 6.19: People manager face embedding DB ──")
+    from core.people_manager import PeopleManager
+    pm_tmpdir = tempfile.mkdtemp(prefix="jarvis_test_people_")
+    pm_config = MagicMock()
+    pm_config.get = MagicMock(side_effect=lambda key, default=None: {
+        "people.db_path": f"{pm_tmpdir}/people.db",
+        "people.enabled": True,
+    }.get(key, default))
+
+    # Patch TTS normalizer registration to avoid import issues
+    with patch.object(PeopleManager, '_register_tts_normalizer'):
+        pm = PeopleManager(pm_config)
+
+    # Add a person and set face embedding
+    pid = pm.add_person("Test User", relationship="owner")
+    pm.set_face_embedding_path(pid, "/tmp/face_test.npy")
+
+    # Verify it's retrievable
+    people_with_faces = pm.get_people_with_face_embeddings()
+    assert_eq("pm_face: count", len(people_with_faces), 1)
+    assert_eq("pm_face: path",
+              people_with_faces[0]["face_embedding_path"], "/tmp/face_test.npy")
+
+    # Person without embedding should not appear
+    pm.add_person("No Face User", relationship="contact")
+    people_with_faces = pm.get_people_with_face_embeddings()
+    assert_eq("pm_face: only enrolled", len(people_with_faces), 1)
+
+    # Cleanup
+    shutil.rmtree(pm_tmpdir, ignore_errors=True)
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
     global verbose
 
     parser = argparse.ArgumentParser(description="Vision System Unit Tests")
     parser.add_argument("--verbose", action="store_true", help="Show each test result")
-    parser.add_argument("--part", type=int, choices=[1, 2, 3, 4, 5],
+    parser.add_argument("--part", type=int, choices=[1, 2, 3, 4, 5, 6],
                        help="Run only one part")
     args = parser.parse_args()
     verbose = args.verbose
@@ -970,6 +1281,7 @@ def main():
         3: ("capture_webcam Handler", test_part3),
         4: ("take_screenshot Handler", test_part4),
         5: ("MobileCameraRelay + Mobile Fallback", test_part5),
+        6: ("Presence Detection + Face Enrollment", test_part6),
     }
 
     if args.part:

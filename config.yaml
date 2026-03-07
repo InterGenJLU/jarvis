@@ -109,6 +109,7 @@ logging:
     # web: DEBUG               # Web frontend, WebSocket handling
     # news: DEBUG              # News feed monitoring
     vision: DEBUG              # Webcam manager, mobile camera relay, frame capture
+    # presence: DEBUG          # Presence detection, face recognition, greetings
 # LLM metrics tracking (dashboard + analytics)
 metrics:
   db_path: /mnt/storage/jarvis/data/metrics.db
@@ -320,6 +321,14 @@ vision:
   screenshot_tool: gnome-screenshot # grim needs wlroots; gnome-screenshot works on Mutter
   webcam_device: /dev/video0
   webcam_fps: 15
+  presence:
+    enabled: false                    # Off until faces enrolled
+    detection_interval: 10            # Seconds between checks
+    greeting_cooldown: 7200           # 2 hours between greetings to same person
+    face_confidence_threshold: 0.6    # face_recognition distance threshold
+    min_face_size: 80                 # Minimum face pixel size to detect
+    greet_unknown: false              # Don't greet unknown faces
+    absence_threshold: 30             # Seconds absent before return greeting triggers
 
 # Web UI settings
 web:

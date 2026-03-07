@@ -953,6 +953,9 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     if not command:
         command = "jarvis_only"
 
+    logger.debug("process_command: raw=%r image=%s client_type=%s",
+                 command[:200], bool(image_data), getattr(conversation, 'client_type', None))
+
     if image_data:
         conversation.add_message("user", f"[Image attached] {command}")
     else:
@@ -975,6 +978,10 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
         image_data=image_data,
     )
     t_match = time.perf_counter()
+    logger.debug("route result: handled=%s intent=%s skip=%s has_tools=%s match=%s",
+                 result.handled, getattr(result, 'intent', None), result.skip,
+                 bool(getattr(result, 'use_tools', None)),
+                 result.match_info.get('layer') if result.match_info else None)
 
     streamed = False
     _resp_image_url = None  # Set by _stream_llm_ws when tool produces an image
@@ -1087,6 +1094,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     elif (not result.handled
           and conv_state.jarvis_asked_question
           and (delivery_mode := _detect_delivery_mode(command, conv_state.last_response_text))):
+        logger.debug("delivery mode detected: %s", delivery_mode)
 
         if delivery_mode == "read":
             used_llm = True
@@ -1131,6 +1139,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 user_id=conversation.current_user,
                 conv_state=conv_state,
                 image_data=result.image_data,
+                client_type=conversation.client_type,
             )
         else:
             response = await _llm_fallback(
@@ -1205,7 +1214,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           tool_presence_penalty=None,
                           memory_manager=None, raw_command=None,
                           user_id=None, conv_state=None,
-                          image_data=None) -> tuple:
+                          image_data=None, client_type=None) -> tuple:
     """Stream LLM response over WebSocket with quality gate and tool calling.
 
     Returns (response_text, streamed_bool, image_url_or_none).
@@ -1216,6 +1225,9 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
     if raw_command is None:
         raw_command = command
     _enable_tools = llm.tool_calling and (web_researcher or use_tools_list)
+    logger.debug("_stream_llm_ws: client_type=%s tools_enabled=%s tool_count=%d",
+                 client_type, _enable_tools,
+                 len(use_tools_list) if use_tools_list else 0)
     queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
 
@@ -1385,12 +1397,18 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     'content': f'Running: {tool_call_request.name}',
                 })
                 _tool_args = tool_call_request.arguments
-                # Auto-route capture_webcam to mobile when client is mobile
+                # Force capture_webcam to mobile when client is mobile —
+                # don't trust LLM source param, it may hallucinate 'desktop'
                 if (tool_call_request.name == 'capture_webcam'
-                        and conversation.client_type == 'mobile'
-                        and _tool_args.get('source', 'auto') == 'auto'):
+                        and client_type == 'mobile'):
+                    _orig = _tool_args.get('source', 'auto')
                     _tool_args = {**_tool_args, 'source': 'mobile'}
-                    logger.info("Auto-routing capture_webcam to mobile (client_type=mobile)")
+                    if _orig != 'mobile':
+                        logger.info("Mobile override: capture_webcam source '%s' -> 'mobile' (client_type=%s)",
+                                    _orig, client_type)
+                elif tool_call_request.name == 'capture_webcam':
+                    logger.debug("capture_webcam: no override needed (client_type=%s, source=%s)",
+                                 client_type, _tool_args.get('source', 'auto'))
 
                 raw_result = await asyncio.to_thread(
                     execute_tool, tool_call_request.name,
@@ -1780,7 +1798,9 @@ async def _handle_chat_message(ws, cmd_lock, components, tts_proxy, config,
     receiving other message types (e.g. frame_response for mobile camera)
     while the LLM / tool pipeline executes.
     """
-    logger.info("User: %s%s", content[:200], " [+image]" if msg_image_data else "")
+    logger.info("User: %s%s (client_type=%s)", content[:200],
+                " [+image]" if msg_image_data else "",
+                getattr(components.get('conversation'), 'client_type', 'unknown'))
     async with cmd_lock:
         try:
             result = await process_command(
@@ -1935,6 +1955,7 @@ async def websocket_handler(request):
                     continue
 
                 msg_type = data.get('type', '')
+                logger.debug("WS message: type=%s", msg_type)
 
                 if msg_type == 'message':
                     content = data.get('content', '').strip()
@@ -2044,9 +2065,11 @@ async def websocket_handler(request):
                     sw = data.get('screen_width', 9999)
                     # Mobile heuristic: UA contains mobile keywords OR narrow screen
                     _mobile_kw = ('iPhone', 'iPad', 'Android', 'Mobile')
-                    is_mobile = any(k in ua for k in _mobile_kw) or sw < 768
+                    _ua_match = [k for k in _mobile_kw if k in ua]
+                    is_mobile = bool(_ua_match) or sw < 768
                     conversation.client_type = "mobile" if is_mobile else "desktop"
-                    logger.info(f"Client type: {conversation.client_type} (screen_width={sw})")
+                    logger.info("Client detected: type=%s screen_width=%d ua_keywords=%s",
+                                conversation.client_type, sw, _ua_match or 'none')
                     # Register mobile client for camera relay
                     if is_mobile:
                         relay = request.app.get('mobile_relay')
@@ -2074,6 +2097,9 @@ async def websocket_handler(request):
                     await ws.send_json({'type': 'info', 'content': 'Restarting...'})
                     # Schedule restart after WebSocket closes cleanly
                     asyncio.get_event_loop().call_later(0.5, _restart_server)
+
+                else:
+                    logger.debug("Unknown WS message type: %s", msg_type)
 
             elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                 break

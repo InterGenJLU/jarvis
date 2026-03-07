@@ -42,6 +42,9 @@ class EventType(Enum):
     PLAN_STEP_COMPLETE = auto()         # A plan step finished (data: step dict)
     PLAN_INTERRUPTED = auto()           # Plan was interrupted (data: reason str)
 
+    # Presence detection
+    PRESENCE_DETECTED = auto()          # Person detected via webcam (data: dict)
+
     # System
     SHUTDOWN = auto()                   # Graceful shutdown requested
     ERROR = auto()                      # Error propagation (data: dict with source, error)

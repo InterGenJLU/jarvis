@@ -276,6 +276,47 @@ class JarvisContinuous:
         else:
             self.news_manager = None
 
+        # --- Presence detection (face recognition greetings) ---
+        self.presence_detector = None
+        if config.get("vision.presence.enabled", False):
+            from core.presence_detector import get_presence_detector
+            from core.webcam_manager import get_webcam_manager
+            from core.people_manager import get_people_manager
+            try:
+                webcam_mgr = get_webcam_manager(config)
+                people_mgr = get_people_manager(config)
+                tts_proxy = self.bg_tts if self.event_mode else self.tts
+                self.presence_detector = get_presence_detector(
+                    config, tts_proxy, webcam_mgr, people_mgr,
+                    self.conversation,
+                    reminder_manager=self.reminder_manager,
+                )
+                if self.event_mode:
+                    self.presence_detector.set_listener_callbacks(
+                        pause=self.bridge.pause_listening,
+                        resume=self.bridge.resume_listening,
+                    )
+                    self.presence_detector.set_window_callback(
+                        lambda duration: self.bridge.open_conversation_window(duration)
+                    )
+                else:
+                    self.presence_detector.set_listener_callbacks(
+                        pause=self.listener.pause_listening,
+                        resume=self.listener.resume_listening,
+                    )
+                    self.presence_detector.set_window_callback(
+                        lambda duration: self.listener.open_conversation_window(duration)
+                    )
+
+                # Wire for enroll_face tool
+                from core.tool_executor import set_presence_detector
+                set_presence_detector(self.presence_detector)
+
+                self.presence_detector.start()
+                self.logger.info("Presence detection started")
+            except Exception as e:
+                self.logger.warning(f"Presence detection init failed: {e}")
+
         # --- Create pipeline workers and coordinator (event mode) ---
         if self.event_mode:
             self.stt_worker = STTWorker(
@@ -883,6 +924,8 @@ class JarvisContinuous:
                     self.context_window.flush()
                 self.audio_queue.put(None)   # STT worker shutdown sentinel
                 self.tts_queue.put(None)     # TTS worker shutdown sentinel
+                if self.presence_detector:
+                    self.presence_detector.stop()
                 if self.mcp_bridge:
                     self.mcp_bridge.stop()
                 if self.news_manager:
@@ -907,6 +950,8 @@ class JarvisContinuous:
                 print("\n\nShutdown signal received...")
                 self.logger.info("Shutdown requested")
             finally:
+                if self.presence_detector:
+                    self.presence_detector.stop()
                 if self.mcp_bridge:
                     self.mcp_bridge.stop()
                 if self.news_manager:

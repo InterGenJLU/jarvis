@@ -243,6 +243,36 @@ _POOLS = {
         "I can go through it step by step, show the full text here, send it to the printer, or open it online. Which works best, {h}?",
     ],
 
+    # Presence detection: time-of-day greetings
+    "presence_morning": [
+        "Good morning, {h}. Ready to take on the day?",
+        "Morning, {h}. Hope you slept well.",
+        "Good morning, {h}. What's on the agenda today?",
+        "Ah, good morning, {h}.",
+    ],
+    "presence_afternoon": [
+        "Good afternoon, {h}.",
+        "Afternoon, {h}. How's the day treating you?",
+        "Hello, {h}. Good to see you.",
+    ],
+    "presence_evening": [
+        "Good evening, {h}.",
+        "Evening, {h}. Winding down?",
+        "Welcome home, {h}.",
+    ],
+    "presence_return": [
+        "Welcome back, {h}.",
+        "Ah, {h}, welcome back. What's on your mind?",
+        "There you are, {h}. Ready when you are.",
+        "Good to see you again, {h}.",
+    ],
+    "presence_return_reminders": [
+        "Welcome back, {h}. There were a few reminders while you were out — would you like to review them?",
+        "Ah, {h}, welcome back. A few things came up while you were away. Want me to go through them?",
+        "Good to see you again, {h}. You've got some pending reminders — shall I run through them?",
+        "There you are, {h}. I held a few reminders for you. Want to hear them?",
+    ],
+
     # Guest mode: greeting for unrecognized voices (HAL 9000 easter egg)
     # {tod} = time of day (morning/afternoon/evening)
     "guest_greeting": [
@@ -379,6 +409,25 @@ def _time_of_day() -> str:
     elif hour < 17:
         return "afternoon"
     return "evening"
+
+
+def presence_greeting(time_of_day: str, is_return: bool = False,
+                      has_pending_reminders: bool = False) -> str:
+    """Pick a presence-detection greeting based on context.
+
+    Args:
+        time_of_day: 'morning', 'afternoon', or 'evening'
+        is_return: True if person was absent >30min and came back
+        has_pending_reminders: True if reminders fired while they were away
+    """
+    if is_return and has_pending_reminders:
+        pool_name = "presence_return_reminders"
+    elif is_return:
+        pool_name = "presence_return"
+    else:
+        pool_name = f"presence_{time_of_day}"
+    template = random.choice(_POOLS[pool_name])
+    return template.format(h=get_honorific())
 
 
 def guest_greeting() -> str:
