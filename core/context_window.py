@@ -152,6 +152,7 @@ class ContextWindow:
         self.segments: List[TopicSegment] = []
         self._current_segment: Optional[TopicSegment] = None
         self._last_embedding: Optional[np.ndarray] = None
+        self._current_user_id: str = "primary_user"  # set via set_user()
 
         if self.enabled:
             self._init_db()
@@ -163,6 +164,12 @@ class ContextWindow:
             )
 
     # ----- public API -----
+
+    def set_user(self, user_id: str):
+        """Update the current user for segment persistence and loading."""
+        if user_id and user_id != self._current_user_id:
+            self._current_user_id = user_id
+            self.logger.info("Context window user set to: %s", user_id)
 
     def on_message(self, message: Dict):
         """Hook called from conversation.add_message() on every new message."""
@@ -436,6 +443,21 @@ class ContextWindow:
                     "CREATE INDEX IF NOT EXISTS idx_segments_time "
                     "ON topic_segments(start_time DESC)"
                 )
+                # Migration: add user_id column if missing
+                try:
+                    conn.execute("SELECT user_id FROM topic_segments LIMIT 1")
+                except sqlite3.OperationalError:
+                    conn.execute(
+                        "ALTER TABLE topic_segments "
+                        "ADD COLUMN user_id TEXT NOT NULL DEFAULT 'user'"
+                    )
+                    self.logger.info(
+                        "Migrated topic_segments: added user_id column"
+                    )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_segments_user "
+                    "ON topic_segments(user_id, start_time DESC)"
+                )
                 conn.commit()
             finally:
                 conn.close()
@@ -456,8 +478,9 @@ class ContextWindow:
                     conn.execute("""
                         INSERT OR REPLACE INTO topic_segments
                             (segment_id, session_id, label, start_time, end_time,
-                             messages_json, embedding, token_count, summary, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             messages_json, embedding, token_count, summary,
+                             created_at, user_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         segment.segment_id,
                         self._session_id,
@@ -469,6 +492,7 @@ class ContextWindow:
                         segment.token_count,
                         segment.summary,
                         time.time(),
+                        self._current_user_id,
                     ))
                     conn.commit()
                 finally:
@@ -511,8 +535,9 @@ class ContextWindow:
                 try:
                     rows = conn.execute(
                         "SELECT * FROM topic_segments "
+                        "WHERE user_id = ? "
                         "ORDER BY start_time DESC LIMIT ?",
-                        (self.max_segments,),
+                        (self._current_user_id, self.max_segments),
                     ).fetchall()
                 finally:
                     conn.close()

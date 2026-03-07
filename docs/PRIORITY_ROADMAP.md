@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 5, 2026 (session 166 — new strategic direction: cross-platform utility, Vision → Email)
+**Updated:** March 7, 2026 (session 190 — validated full sweep: Vision complete, test gaps identified)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -40,22 +40,24 @@
 ## Priority Tier 1: Owner-Directed Priority Sequence
 
 *the user's ordered priority list. Work these in sequence.*
-*Strategic direction (session 166): prioritize features with highest cross-platform utility (desktop web UI + mobile). Vision and email are force multipliers — vision is multiplicative (new input modality on every device), email is additive (same utility everywhere).*
+*Strategic direction (session 166): prioritize features with highest cross-platform utility (desktop web UI + mobile). Vision and email are force multipliers.*
 
 | # | Item | Effort | Status | Notes |
 |---|------|--------|--------|-------|
 | 20P3 | ~~**Vision Phases 1-3**~~ — multimodal LLM + web/mobile image upload | — | **DONE** | — |
 | 20P4 | ~~**Vision Phase 4**~~ — console `/image` + `/screenshot` commands | — | **DONE** | — |
 | 20P5 | ~~**Vision Phase 5**~~ — `take_screenshot` LLM tool for voice mode | — | **DONE** | — |
-| 20P6 | **Vision Phase 6** — Image thumbnails in web chat responses | 1-2 hours | **NEXT** | Low effort polish |
-| 20P7 | **Vision Phase 7** — Webcam capture. LLM tool + console `/webcam` + voice "what do you see?" | 2-4 hours | NOT STARTED | `ffmpeg -f v4l2` one-shot. Completes JARVIS vision |
-| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | NOT STARTED — config stub + MCP bridge ready | Cross-platform: same utility from desk or pocket. the user=Gmail, secondary=AOL |
-| 60 | **Mobile app** — web UI phase 1 done (auth + responsive layout + mobile routing). Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** — web UI works on mobile | Plan: `memory/plan_mobile_ios_app.md`. Routing fixes: skill filtering, tool exclusion, pre-exec blocking, always-on tool fallback, 82-test suite |
+| 20P6 | ~~**Vision Phase 6**~~ — Image thumbnails in web chat responses | — | **DONE** | Thumbnails + lightbox + session persistence |
+| 20P7a | ~~**Vision Phase 7a**~~ — Desktop webcam capture (ffmpeg MJPEG + LLM tool) | — | **DONE** | WebcamManager + capture_webcam tool + web endpoints |
+| 20P7b | ~~**Vision Phase 7b**~~ — Mobile camera capture (WS relay + getUserMedia) | — | **DONE** | MobileCameraRelay + auto-routing |
+| 20P7c | ~~**Vision Phase 7c**~~ — Presence detection + face recognition greetings | — | **DONE (code)** | PresenceDetector + enroll_face tool + 180 tests. NOT YET LIVE — needs face enrollment |
+| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | **NEXT** | Config stub + MCP bridge ready. the user=Gmail, secondary=AOL |
+| 60 | **Mobile app** — web UI phase 1 done. Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** | Plan: `memory/plan_mobile_ios_app.md` |
 | — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | DB column exists (`caldav_event_id`), zero CalDAV code |
 | 61 | **Concurrent multi-user support** — handle two simultaneous mobile users | 4-8 hours | NOT STARTED | Depends on #60. Needs `--parallel 2`, per-user history, STT/TTS queuing |
-| 11 | **"Onscreen please" — retroactive visual display** — buffer last raw output, display on command | 2-3 hours | NOT STARTED | Bridge voice-to-visual gap |
-| 12 | ~~**Profile-aware skill routing**~~ | 3-4 hours | **DONE** (session 158) | Speaker ID + profiles + skill-level `current_user` routing |
-| 46 | ~~**Dual-model STT (secondary user voice)**~~ | 4-6 hours | **DONE** (session 159) | Two Whisper models, speaker-ID-first routing |
+| 11 | **"Onscreen please" — retroactive visual display** | 2-3 hours | PARTIAL | Opens generated docs. Retroactive display of arbitrary artifacts NOT implemented |
+| 12 | ~~**Profile-aware skill routing**~~ | — | **DONE** (session 158) | — |
+| 46 | ~~**Dual-model STT**~~ | — | **DONE** (session 159) | — |
 
 ---
 
@@ -86,9 +88,7 @@
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility | Shared access with secondary user |
 | 13 | **Audio recording skill** — voice-triggered recording, date-based playback, 6 intents | 4-6 hours | Meeting notes, voice memos, dictation | skills/personal/audio_recording/ |
 | 14 | **Music control (Apple Music)** — playlist learning, volume via pactl | 6-10 hours | Entertainment integration | Per-user playlists. Apple Music web interface finicky |
-| 15 | **Screenshot via GNOME extension** — add screenshot D-Bus method, bypass portal dialog | 2-3 hours | Developer tools "show me" integration | Phase 5c from desktop plan |
-| 16 | ~~**Unknown speaker / guest mode**~~ | 3-4 hours | — | **DONE** — moved to Completed Items |
-| 30 | ~~**Multi-speaker conversation tracking**~~ | 4-6 hours | — | **DONE** — moved to Completed Items |
+| 15 | **Screenshot via GNOME extension** — add screenshot D-Bus method, bypass portal dialog | 2-3 hours | Developer tools "show me" integration | PARTIAL: uses D-Bus for monitor detection, still shells out to `gnome-screenshot` |
 
 ---
 
@@ -141,17 +141,22 @@
 
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
-| B2 | Batch extraction (Phase 4) untested | Low | Needs 25+ messages in one session to trigger |
+| B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
+| B8 | EventTTSProxy `speak()` returns None | Medium | `done.wait()` return not captured. Causes reminder retry false positives. Nag cap mitigates. Zero tests |
+| B9 | Speaker ID no accuracy benchmarks | Low | Threshold 0.75, re-enrolled with better clips. No dedicated tests |
 
 ---
 
-## Test Gaps
+## Test Gaps (validated Mar 7, session 190)
 
-| Item | Notes |
-|------|-------|
-| Routing integration tests | Exist (`test_router.py`, 9 functions) but no adversarial/conflict coverage |
-| Web UI automation | Zero automated tests for WebSocket flows |
-| Tier 3 skill execution tests | Edge case suite has no skill handler execution tests |
+| Item | Status | Notes |
+|------|--------|-------|
+| Routing integration tests | **CLOSED** | `test_router.py` — 718 lines, 12 categories, adversarial priority conflicts, guest mode, multi-speaker |
+| Web UI automation | **CLOSED** | `test_web_handler.py` — 61 tests, 5 phases (handler smoke, mobile routing, client detection, tool overrides, WS dispatch) |
+| Skill execution tests | **OPEN** | `test_edge_cases.py` Tier 3-4 marked "future" — routing tested but no actual handler execution |
+| EventTTSProxy tests | **OPEN** | Zero tests for speak() return value / timeout behavior |
+| Batch extraction tests | **OPEN** | Feature implemented (Phase 4), zero test coverage |
+| Speaker ID tests | **OPEN** | Zero dedicated tests, no accuracy benchmarks |
 
 ---
 
@@ -208,14 +213,11 @@
 - Context window Phase 3 — background Qwen summarization (`context_window.py:610-663`) (verified Mar 4)
 - Context window Phase 4 — SQLite persistence (`context_window.py:385-549`) (verified Mar 4)
 - Memory _pending_forget Phase 6 — full confirm/cancel at P2.5 (verified Mar 4)
+- #20P6: Vision Phase 6 — image thumbnails in web chat with lightbox + session persistence (Mar 5)
+- #20P7a: Vision Phase 7a — desktop webcam capture, WebcamManager ffmpeg MJPEG, web endpoints (Mar 6)
+- #20P7b: Vision Phase 7b — mobile camera capture, MobileCameraRelay WS protocol, auto-routing (Mar 6)
+- #20P7c: Vision Phase 7c — presence detection + face recognition greetings, PresenceDetector, enroll_face tool, 180 tests (Mar 6). NOT YET LIVE — needs face enrollment
 - Mobile routing fixes A-D — web_navigation semantic tightening, web_search guardrails, mobile skill/tool filtering, always-on tool fallback, pre-exec skill blocking (Mar 5)
-
-### Tier 1 (Owner Priority)
-- #12: Profile-aware skill routing — speaker ID + profiles + skill-level current_user routing (Mar 4, session 158)
-- #46: Dual-model STT — two Whisper models, speaker-ID-first routing (Mar 4, session 159)
-- #16: Unknown speaker / guest mode — `__guest__` sentinel, HAL 9000 greeting, tool filtering, LLM guest context (Mar 4, session 160)
-- #30: Multi-speaker conversation tracking — speaker-attributed history, LLM multi-speaker context, rapid-switch retort, 61/61 tests (Mar 4, session 161)
-- #60 Phase 1: Mobile web UI — auth layer, responsive layout, mobile routing (skill filtering, tool exclusion, pre-exec blocking, always-on tool fallback), 82-test e2e suite (Mar 4-5, sessions 163-165)
 
 ### Other Completed (non-roadmap enhancements)
 - Time injection into LLM system prompts — all 5 prompt injection points, correct time-of-day greetings (Feb 27)
@@ -232,6 +234,10 @@
 - Rundown bug fixes — event time dedup, weekly re-offer, missed events (Mar 2)
 - Reminder staleness guard — auto-cancel reminders >24h overdue (Mar 2)
 - 5 additional bug fixes (Mar 2)
+- Web handler test suite — 61 tests, 5 phases (handler smoke, mobile routing, client detection, tool overrides, WS dispatch) (Mar 6)
+- HUD context % — shows usage percentage instead of raw segment/token counts (Mar 7)
+- Memory extraction names — uses real display names (the user/secondary user) instead of "User" (Mar 7)
+- Memory transient filtering — extraction prompts filter transient state ("at desk", "on screen") (Mar 7)
 
 ### Tier 3
 - #40: News headline trimming — 25 per category (Feb 20)

@@ -342,7 +342,7 @@ def setup_state(components, case):
 
     if setup.get("awaiting_ack"):
         if reminder_manager:
-            reminder_manager.is_awaiting_ack = lambda: True
+            reminder_manager.is_awaiting_ack = lambda created_by=None: True
 
     if setup.get("pending_confirmation"):
         fe = skill_manager.skills.get("file_editor")

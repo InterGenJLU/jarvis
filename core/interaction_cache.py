@@ -1179,13 +1179,15 @@ class InteractionCache:
             try:
                 if artifact_ids:
                     # Direct lookup by ID — any tier (cold artifacts may have
-                    # been rehydrated to hot in a previous recall)
+                    # been rehydrated to hot in a previous recall).
+                    # Still scoped to user_id to prevent cross-user leakage.
                     placeholders = ",".join("?" for _ in artifact_ids)
                     rows = conn.execute(
                         f"""SELECT * FROM artifacts
                             WHERE artifact_id IN ({placeholders})
+                              AND user_id = ?
                             ORDER BY created_at DESC""",
-                        artifact_ids,
+                        [*artifact_ids, user_id],
                     ).fetchall()
                     return [_row_to_artifact(r) for r in rows]
 

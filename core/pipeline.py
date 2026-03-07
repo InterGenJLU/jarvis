@@ -1874,6 +1874,8 @@ class Coordinator:
             formal = self.profile_manager.get_formal_address_for(speaker_id)
             set_honorific(honorific, formal)
             self.conversation.current_user = speaker_id
+            if self.context_window:
+                self.context_window.set_user(speaker_id)
             self.logger.info(
                 f"Speaker identified: {speaker_id} (confidence={confidence:.3f}, "
                 f"honorific={honorific}, formal={formal})"

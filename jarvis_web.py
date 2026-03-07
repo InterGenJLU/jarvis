@@ -1909,6 +1909,11 @@ async def websocket_handler(request):
     try:
         conversation = components['conversation']
         all_messages = await asyncio.to_thread(conversation.load_full_history)
+
+        # Filter by current user (matches set_user behaviour)
+        uid = conversation.current_user or 'christopher'
+        all_messages = [m for m in all_messages if m.get('user_id', 'christopher') == uid]
+
         sessions = _detect_sessions(all_messages)
         meta = _load_sessions_meta(config)
 
@@ -2020,6 +2025,10 @@ async def websocket_handler(request):
                 elif msg_type == 'set_user':
                     uid = data.get('user_id', 'christopher')
                     conversation.current_user = uid
+                    # Update context window user for segment scoping
+                    cw = components.get('context_window')
+                    if cw:
+                        cw.set_user(uid)
                     # Update honorific + formal address for the switched user
                     from core.honorific import set_honorific
                     try:
@@ -2453,6 +2462,10 @@ async def history_handler(request):
 
     # Load all messages from disk (personal assistant — file is manageable)
     all_messages = await asyncio.to_thread(conversation.load_full_history)
+
+    # Filter by user (matches session endpoints)
+    user_filter = request.query.get('user', conversation.current_user or 'christopher')
+    all_messages = [m for m in all_messages if m.get('user_id', 'christopher') == user_filter]
 
     # Filter by timestamp if paginating
     if before:

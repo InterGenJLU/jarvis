@@ -604,8 +604,19 @@ class ReminderManager:
 
         self.logger.info(f"Firing reminder #{rid}: '{title}' (priority={priority})")
 
-        # Reminders are owner-directed — restore owner honorific
-        set_honorific("sir")
+        # Set honorific for the reminder's creator (not hardcoded to owner)
+        creator = reminder.get("created_by", "primary_user")
+        try:
+            from core.user_profile import ProfileManager
+            pm = ProfileManager(self.config)
+            set_honorific(pm.get_honorific_for(creator),
+                          pm.get_formal_address_for(creator))
+        except Exception:
+            # Fallback if profile lookup fails
+            if creator == "secondary_user":
+                set_honorific("ma'am", "Ms. Guest")
+            else:
+                set_honorific("sir")
 
         # Pause listening to prevent speaker-to-mic bleed
         if self._pause_listener_callback:
@@ -740,22 +751,34 @@ class ReminderManager:
     # Acknowledgment
     # ------------------------------------------------------------------
 
-    def get_pending_acks(self) -> List[Dict]:
-        """Get all reminders that have fired but await acknowledgment."""
+    def get_pending_acks(self, created_by: str = None) -> List[Dict]:
+        """Get reminders that have fired but await acknowledgment.
+
+        Args:
+            created_by: If set, only return reminders created by this user.
+        """
         with self._db_lock:
             conn = self._conn()
             try:
-                rows = conn.execute(
-                    "SELECT * FROM reminders WHERE status = 'fired' "
-                    "AND requires_ack = 1 ORDER BY priority ASC"
-                ).fetchall()
+                if created_by:
+                    rows = conn.execute(
+                        "SELECT * FROM reminders WHERE status = 'fired' "
+                        "AND requires_ack = 1 AND created_by = ? "
+                        "ORDER BY priority ASC",
+                        (created_by,)
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM reminders WHERE status = 'fired' "
+                        "AND requires_ack = 1 ORDER BY priority ASC"
+                    ).fetchall()
                 return [dict(r) for r in rows]
             finally:
                 conn.close()
 
-    def is_awaiting_ack(self) -> bool:
+    def is_awaiting_ack(self, created_by: str = None) -> bool:
         """Check if any reminders are awaiting acknowledgment."""
-        return len(self.get_pending_acks()) > 0
+        return len(self.get_pending_acks(created_by)) > 0
 
     def acknowledge_reminder(self, reminder_id: int) -> bool:
         """Acknowledge a fired reminder."""

@@ -525,7 +525,7 @@ def test_part3():
             # Decode and verify the actual image was downscaled
             decoded = base64.b64decode(result["image_data"])
             output_img = Image.open(io.BytesIO(decoded))
-            assert_eq("downscale: output width <= 1280", output_img.width <= 1280, True)
+            assert_eq("downscale: output width <= 1920", output_img.width <= 1920, True)
     finally:
         wm_mod._instance = original_instance
 

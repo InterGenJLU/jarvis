@@ -403,7 +403,7 @@ class ConversationRouter:
     def _handle_reminder_ack(self) -> RouteResult | None:
         """P2: Reminder acknowledgment."""
         rm = self.reminder_manager
-        if not rm or not rm.is_awaiting_ack():
+        if not rm or not rm.is_awaiting_ack(created_by=self._user_id):
             return None
         logger.info("Treating response as reminder acknowledgment")
         rm.acknowledge_last(created_by=self._user_id)
