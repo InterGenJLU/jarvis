@@ -935,6 +935,11 @@ class TTSNormalizer:
             r"\bsystemd\b": "system d",
             r"\bpkill\b": "p kill",
 
+            # Place abbreviations (unambiguous only)
+            r"\bMt\.\s": "Mount ",
+            r"\bFt\.\s": "Fort ",
+            r"\bPt\.\s": "Point ",
+
             # Full words
             r"\betc\b": "etcetera",
             r"\be\.g\.\b": "for example",

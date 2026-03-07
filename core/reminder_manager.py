@@ -66,6 +66,7 @@ class ReminderManager:
         self.nag_high_min = config.get("reminders.nag.high_minutes", 15)
         self.nag_backoff_count = config.get("reminders.nag.backoff_after_count", 3)
         self.nag_backoff_min = config.get("reminders.nag.backoff_minutes", 30)
+        self.nag_max_count = config.get("reminders.nag.max_count", 5)
 
         # Daily rundown config
         self.rundown_enabled = config.get("reminders.daily_rundown.enabled", True)
@@ -102,6 +103,7 @@ class ReminderManager:
         # Background thread state
         self._running = False
         self._poll_thread = None
+        self._announcing_missed = False
 
         # Ack tracking
         self._last_announced_id = None
@@ -663,19 +665,22 @@ class ReminderManager:
         if self._resume_listener_callback:
             self._resume_listener_callback()
 
-        # If TTS failed, leave as pending so it retries next poll cycle
+        # Always update fire_count and last_fired_at so backoff/max logic works
+        new_fire_count = reminder["fire_count"] + 1
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # If TTS failed, still count the attempt but keep pending for retry
         if not tts_ok:
             self.logger.warning(
-                f"Reminder #{rid} TTS failed — keeping pending for retry"
+                f"Reminder #{rid} TTS failed (attempt {new_fire_count}) — keeping pending for retry"
             )
+            self._update_status(rid, "fired",
+                                fire_count=new_fire_count,
+                                last_fired_at=now_str)
             return
 
         # Track last announced for ack
         self._last_announced_id = rid
-
-        # Update status
-        new_fire_count = reminder["fire_count"] + 1
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         if reminder["requires_ack"]:
             self._update_status(rid, "fired",
@@ -833,6 +838,12 @@ class ReminderManager:
 
     def _should_nag(self, reminder: Dict) -> bool:
         """Check if an unacked reminder should be re-announced."""
+        fire_count = reminder.get("fire_count", 0)
+
+        # Hard cap: stop nagging after max_count attempts
+        if fire_count >= self.nag_max_count:
+            return False
+
         last_fired = reminder.get("last_fired_at")
         if not last_fired:
             return True
@@ -843,7 +854,6 @@ class ReminderManager:
             return True
 
         elapsed_min = (datetime.now() - last).total_seconds() / 60
-        fire_count = reminder.get("fire_count", 0)
 
         if fire_count >= self.nag_backoff_count:
             return elapsed_min >= self.nag_backoff_min
@@ -974,6 +984,13 @@ class ReminderManager:
 
     def announce_missed_reminders(self):
         """Announce missed reminders on startup."""
+        self._announcing_missed = True
+        try:
+            self._announce_missed_inner()
+        finally:
+            self._announcing_missed = False
+
+    def _announce_missed_inner(self):
         missed = self.scan_missed_reminders()
         if not missed:
             self.logger.info("No missed reminders")
@@ -1001,7 +1018,7 @@ class ReminderManager:
             time.sleep(0.3)
 
             for r in critical:
-                self.tts.speak(f"Did you remember to {r['title']}?")
+                self.tts.speak(f"{r['title']}. Did you get to that, {get_honorific()}?")
                 time.sleep(0.5)
                 # Mark as fired (awaiting ack)
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1676,6 +1693,12 @@ class ReminderManager:
         """Main polling loop: check for due reminders every poll_interval seconds."""
         while self._running:
             try:
+                # Skip if missed-reminder announcement is in progress
+                if self._announcing_missed:
+                    self.logger.debug("Poll cycle: skipped (missed announcement in progress)")
+                    time.sleep(5)
+                    continue
+
                 # 1. Check due reminders
                 due = self._check_due_reminders()
                 self.logger.debug("Poll cycle: %d due, %d awaiting ack",
