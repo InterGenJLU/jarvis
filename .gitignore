@@ -66,6 +66,7 @@ experiments/
 # Local backups & archives
 .backup/
 .archive/
+share/archive/
 
 # Console history
 .console_history

@@ -316,6 +316,10 @@ class ConversationRouter:
         # Attach always-on tools (web_search, recall_memory) even when no
         # domain tool matched.  This ensures queries like "Alabama football
         # score" or "gas prices in Gardendale" can still trigger web_search.
+        #
+        # If P4-LLM deferred to P4 skill routing (non-migrated guard) and
+        # P4 also failed, re-include the deferred domain tools so the LLM
+        # can still call them.  This prevents tool starvation.
         from core.tool_registry import ALWAYS_INCLUDED_TOOLS
         result = self._prepare_llm_context(
             command,
@@ -324,6 +328,16 @@ class ConversationRouter:
         )
         if not result.use_tools and not result.handled:
             always_on = list(ALWAYS_INCLUDED_TOOLS.values())
+            # Re-include domain tools stashed by the non-migrated guard
+            deferred = getattr(self, '_deferred_domain_tools', None)
+            if deferred:
+                logger.info(
+                    "P4 failed — restoring %d deferred domain tools: %s",
+                    len(deferred),
+                    [t["function"]["name"] for t in deferred],
+                )
+                always_on = always_on + deferred
+                self._deferred_domain_tools = None
             if self._is_guest:
                 always_on = [t for t in always_on
                              if t["function"]["name"] in self._GUEST_ALLOWED_TOOLS]
@@ -1891,6 +1905,9 @@ class ConversationRouter:
         Hard cap: even if many skills pass the threshold, only the top
         _MAX_DOMAIN_TOOLS (4) are kept, preventing the 5-6 tool cliff.
         """
+        # NOTE: do NOT reset self._deferred_domain_tools here — the
+        # stash may have been set by a previous deferral and is consumed
+        # by the LLM fallback path in route().
         sm = self.skill_manager
         if not hasattr(sm, '_embedding_model') or not sm._embedding_model:
             return None
@@ -2039,8 +2056,10 @@ class ConversationRouter:
             return list(ALWAYS_INCLUDED_TOOLS.values())
 
         # Guard: if a non-migrated skill (including web_navigation) scores
-        # higher than the best migrated/always-included tool, defer to P4
-        # so native skill handlers run instead of LLM tool-calling.
+        # meaningfully higher than the best migrated/always-included tool,
+        # defer to P4 so native skill handlers run instead of LLM tool-calling.
+        # Stash the domain tools so the main route() can use them if P4
+        # also fails (prevents tool starvation).
         effective_non_migrated = max(best_non_migrated_score, web_nav_score)
         if effective_non_migrated > effective_migrated:
             winner = (best_non_migrated_name if best_non_migrated_score >= web_nav_score
@@ -2050,6 +2069,9 @@ class ConversationRouter:
                 "(%.2f > migrated %.2f) — deferring to P4",
                 winner, effective_non_migrated, effective_migrated,
             )
+            # Stash domain tools for fallback if P4 also fails
+            domain_tools = [t[1] for t in matched_tools]
+            self._deferred_domain_tools = domain_tools if domain_tools else None
             return None
 
         # Hard cap: keep only the top-scoring domain tools

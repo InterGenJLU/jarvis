@@ -7,6 +7,7 @@ for LLM-driven web research via tool calling.
 Thread-safe, error-resilient — never crashes the pipeline.
 """
 
+import re
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -52,6 +53,12 @@ class WebResearcher:
         self._rate_limit_gap = 1.0  # seconds between searches
         self.logger.info("WebResearcher initialized")
 
+    # Local filesystem path patterns — web search is never useful for these
+    _LOCAL_PATH_RE = re.compile(
+        r'(?:^|[ "\'(])(?:/home/|~/|/mnt/|/usr/|/etc/|/opt/|/var/|/tmp/|'
+        r'[A-Z]:\\)',
+    )
+
     def search(self, query: str, max_results: int = 5) -> list[dict]:
         """Search the web via DuckDuckGo.
 
@@ -63,6 +70,20 @@ class WebResearcher:
             List of dicts with keys: title, url, snippet
             Empty list on error.
         """
+        # Guard: reject queries containing local filesystem paths
+        if self._LOCAL_PATH_RE.search(query):
+            self.logger.warning(
+                "Web search blocked — query contains local path: %s", query
+            )
+            return [{
+                "title": "Error",
+                "url": "",
+                "snippet": (
+                    "Cannot find local files via web search. "
+                    "Use the find_files tool instead."
+                ),
+            }]
+
         # Check cache
         cache_key = f"{query}:{max_results}"
         cached = self._search_cache.get(cache_key)

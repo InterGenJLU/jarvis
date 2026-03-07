@@ -41,6 +41,13 @@ ImageSearch = _img_search_mod.ImageSearch
 # Sandboxed directory — all file operations restricted here
 SHARE_DIR = Path(os.path.expanduser("~/jarvis/share"))
 
+# Allowed read-only prefixes beyond share/ (absolute paths)
+_READ_ALLOWED_PREFIXES = [
+    Path(os.path.expanduser("~/jarvis")).resolve(),
+    Path(os.path.expanduser("~/Documents")).resolve(),
+]
+MAX_READ_BYTES = 50 * 1024        # 50KB max for read outside share/
+
 # Safety limits
 MAX_WRITE_BYTES = 50 * 1024       # 50KB max file write
 MAX_EDIT_BYTES = 15 * 1024        # 15KB max file for editing
@@ -477,13 +484,49 @@ class FileEditorSkill(BaseSkill):
     # Intent: read_file
     # ------------------------------------------------------------------
 
+    def _resolve_read_path(self, user_text: str) -> Optional[Path]:
+        """Resolve a file path for reading.
+
+        Tries in order:
+        1. Absolute path from user text (if within allowed prefixes)
+        2. Filename extracted → _safe_path (share/ sandbox)
+
+        Returns resolved Path or None.
+        """
+        # Check for absolute paths in the user text
+        abs_match = re.search(r'(/[\w./-]+)', user_text)
+        if abs_match:
+            candidate = Path(abs_match.group(1))
+            if candidate.is_file():
+                resolved = candidate.resolve()
+                # Block path traversal
+                if '..' in str(candidate):
+                    return None
+                # Check against allowed prefixes
+                for prefix in _READ_ALLOWED_PREFIXES:
+                    if str(resolved).startswith(str(prefix)):
+                        if resolved.stat().st_size <= MAX_READ_BYTES:
+                            return resolved
+                        self.logger.warning(
+                            "[file_editor] read_file: %s exceeds %dKB limit",
+                            resolved, MAX_READ_BYTES // 1024,
+                        )
+                        return None
+
+        # Fall back to share/ sandbox
+        filename = self._extract_filename(user_text)
+        if filename:
+            return self._safe_path(filename)
+        return None
+
     def read_file(self, entities: dict) -> str:
-        """Read and display a file from the share/ directory."""
+        """Read and display a file from the share/ directory or allowed paths."""
         user_text = entities.get('original_text', '')
         self.logger.info(f"[file_editor] read_file request: {user_text[:80]}")
 
-        filename = self._extract_filename(user_text)
-        if not filename:
+        target = self._resolve_read_path(user_text)
+        if not target:
+            # No path resolved — offer share/ listing
             files = [f.name for f in SHARE_DIR.iterdir() if f.is_file()] if SHARE_DIR.exists() else []
             if files:
                 file_list = ', '.join(files[:10])
@@ -491,9 +534,8 @@ class FileEditorSkill(BaseSkill):
                         f"I have: {file_list}")
             return f"There are no files in the share folder, {self.honorific}."
 
-        target = self._safe_path(filename)
-        if not target or not target.exists():
-            return f"I can't find {filename} in the share folder, {self.honorific}."
+        if not target.exists():
+            return f"I can't find that file, {self.honorific}."
 
         content = target.read_text(encoding='utf-8', errors='replace')
         lines = content.count('\n') + 1
@@ -502,7 +544,7 @@ class FileEditorSkill(BaseSkill):
         # For voice mode: LLM summary. For console: show full content.
         # We return full content — the pipeline/console handles display.
         # Prefix with a spoken summary, then the raw content.
-        header = f"Here's {filename}, {self.honorific} — {lines} lines, {size}:\n\n"
+        header = f"Here's {target.name}, {self.honorific} — {lines} lines, {size}:\n\n"
         return header + content
 
     # ------------------------------------------------------------------

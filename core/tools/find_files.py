@@ -19,11 +19,12 @@ SCHEMA = {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["search", "count_files", "count_code"],
+                    "enum": ["search", "count_files", "count_code", "list_files"],
                     "description": (
                         "search: find files matching a name pattern. "
                         "count_files: count files in a directory. "
-                        "count_code: count lines of code in the codebase."
+                        "count_code: count lines of code in the codebase. "
+                        "list_files: list files in a directory with sizes."
                     )
                 },
                 "pattern": {
@@ -42,9 +43,11 @@ SCHEMA = {
 
 SYSTEM_PROMPT_RULE = (
     "For questions about files on THIS COMPUTER (find files, count files, "
-    "count code lines), call find_files. "
+    "list files, count code lines), call find_files. "
     "Examples: 'find my resume' → search, 'how many Python files?' → count_files, "
-    "'lines of code in the project?' → count_lines. "
+    "'list the files in documents' → list_files, "
+    "'lines of code in the project?' → count_code. "
+    "Use list_files when the user asks to see/list/show the files in a directory. "
     "NOT for: reading file contents, editing files, web downloads."
 )
 
@@ -56,6 +59,8 @@ def handler(args: dict) -> str:
         return _find_count_code()
     elif action == "count_files":
         return _find_count_files(args.get("directory", "home"))
+    elif action == "list_files":
+        return _find_list_files(args.get("directory", "home"))
     elif action == "search":
         pattern = args.get("pattern", "")
         if not pattern:
@@ -148,6 +153,64 @@ def _find_count_files(directory: str) -> str:
     if dir_count:
         parts.append(f"{dir_count:,} folders")
     return f"'{directory}' contains {' and '.join(parts)}."
+
+
+def _find_list_files(directory: str) -> str:
+    """List files in a named directory with sizes."""
+    dir_map = {
+        "documents": Path.home() / "Documents",
+        "downloads": Path.home() / "Downloads",
+        "desktop": Path.home() / "Desktop",
+        "home": Path.home(),
+        "pictures": Path.home() / "Pictures",
+        "videos": Path.home() / "Videos",
+        "music": Path.home() / "Music",
+        "scripts": Path.home() / "scripts",
+        "jarvis": Path.home() / "jarvis",
+        "core": Path.home() / "jarvis" / "core",
+        "skills": Path("/mnt/storage/jarvis/skills"),
+        "models": Path("/mnt/models"),
+    }
+    target = dir_map.get(directory.lower())
+    if not target:
+        target = Path(directory).expanduser()
+    if not target.exists():
+        return f"Directory '{directory}' does not exist."
+    try:
+        entries = sorted(target.iterdir(), key=lambda p: p.name.lower())
+    except PermissionError:
+        return f"Permission denied accessing '{directory}'."
+
+    if not entries:
+        return f"'{directory}' is empty."
+
+    lines = []
+    for entry in entries[:100]:
+        if entry.name.startswith('.'):
+            continue
+        if entry.is_dir():
+            lines.append(f"  [DIR] {entry.name}/")
+        else:
+            try:
+                size = entry.stat().st_size
+                if size < 1024:
+                    sz = f"{size} B"
+                elif size < 1024 * 1024:
+                    sz = f"{size / 1024:.1f} KB"
+                else:
+                    sz = f"{size / (1024 * 1024):.1f} MB"
+                lines.append(f"  {entry.name}  ({sz})")
+            except OSError:
+                lines.append(f"  {entry.name}")
+
+    if not lines:
+        return f"'{directory}' contains only hidden files."
+
+    total = len([e for e in entries if not e.name.startswith('.')])
+    header = f"'{directory}' — {total} items:"
+    if total > 100:
+        lines.append(f"  ... and {total - 100} more")
+    return header + "\n" + "\n".join(lines)
 
 
 def _find_count_code() -> str:

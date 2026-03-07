@@ -186,6 +186,9 @@ class ContextWindow:
             )
             embedding = np.array(embedding, dtype=np.float32)
 
+            # Stash for _detect_topic_shift → _is_continuation
+            self._pending_message_text = content
+
             if self._current_segment is None:
                 self._open_segment(message, embedding)
             elif self._detect_topic_shift(embedding):
@@ -599,10 +602,54 @@ class ContextWindow:
 
     # ----- internal -----
 
+    # Short follow-ups with anaphoric pronouns or continuation verbs.
+    # These are almost always continuations of the current topic, even when
+    # their embeddings diverge from the segment centroid.
+    _ANAPHORIC_PRONOUNS = frozenset({"them", "it", "those", "these", "that", "they"})
+    _CONTINUATION_VERBS = frozenset({
+        "list", "show", "display", "tell", "give", "read", "continue",
+        "go", "more", "details", "elaborate", "explain", "repeat",
+    })
+    _MAX_CONTINUATION_WORDS = 8
+
+    def _is_continuation(self, message_text: str) -> bool:
+        """Detect short anaphoric follow-ups that should not trigger topic shifts.
+
+        Examples: "list them for me", "show me more", "tell me about those",
+        "go on", "continue", "what about it"
+        """
+        words = message_text.lower().split()
+        if len(words) > self._MAX_CONTINUATION_WORDS:
+            return False
+        word_set = frozenset(words)
+        has_pronoun = bool(word_set & self._ANAPHORIC_PRONOUNS)
+        has_verb = bool(word_set & self._CONTINUATION_VERBS)
+        return has_pronoun or has_verb
+
     def _detect_topic_shift(self, new_embedding: np.ndarray) -> bool:
         """Return True if the new message represents a topic shift."""
         if self._current_segment is None or self._current_segment.embedding is None:
             return True
+
+        # Check for short anaphoric follow-ups before cosine comparison.
+        # "list them for me" has low similarity to any topic centroid but
+        # is clearly a continuation of whatever was just discussed.
+        if self._current_segment.messages:
+            last_msg = self._current_segment.messages[-1]
+            # Use the NEW message being processed — it's the one that just
+            # came in via on_message(). We need to peek at it before it's
+            # added to the segment, but on_message() passes it as `message`
+            # to _open_segment or add_message. We check the pending content
+            # by looking at what was most recently passed. Since on_message()
+            # calls us before adding, we check via the embedding's source.
+            # Simplest: store the pending text and check here.
+            pending = getattr(self, '_pending_message_text', '')
+            if pending and self._is_continuation(pending):
+                self.logger.info(
+                    f"Continuation detected ('{pending[:40]}') — "
+                    f"suppressing topic shift check"
+                )
+                return False
 
         # Cosine similarity (both embeddings are normalized, so dot = cosine)
         sim = float(np.dot(new_embedding, self._current_segment.embedding))
