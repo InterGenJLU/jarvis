@@ -2611,6 +2611,7 @@ def _gather_system_stats(components: dict) -> dict:
             'segments': cw_stats['segments'],
             'tokens': cw_stats['estimated_tokens'],
             'open': cw_stats['open_segment'],
+            'usage_pct': cw.get_usage_percentage(),
         }
     else:
         data['context_window'] = None

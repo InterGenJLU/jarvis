@@ -509,8 +509,8 @@
 
         // Context window
         if (data.context_window) {
-            statContext.textContent = data.context_window.segments + ' seg · ' +
-                data.context_window.tokens + ' tok';
+            const pct = data.context_window.usage_pct;
+            statContext.textContent = (pct !== undefined ? pct + '%' : data.context_window.tokens + ' tok');
             statContext.className = 'hud-value active';
         } else {
             statContext.textContent = 'OFF';

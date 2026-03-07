@@ -909,12 +909,14 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     BATCH_EXTRACTION_PROMPT = (
-        "Analyze these recent conversation messages and extract any personal facts, "
-        "preferences, relationships, habits, plans, or opinions mentioned by the user.\n\n"
+        "Analyze these recent conversation messages from {user_name} and extract any personal facts, "
+        "preferences, relationships, habits, plans, or opinions.\n\n"
         "For each fact found, output a JSON line with:\n"
         '- "category": one of [preference, relationship, habit, plan, opinion, location, work, health, general]\n'
         '- "subject": brief topic (1-3 words)\n'
-        '- "content": the fact in a clear sentence\n\n'
+        '- "content": the fact in third person using their name (e.g. "{user_name} prefers dark roast coffee")\n\n'
+        "Only extract DURABLE facts — things that will still be true next week.\n"
+        "DO NOT extract: transient state (current location, what they are doing right now, what is on screen).\n\n"
         "Messages:\n{messages}\n\n"
         "Output only JSON lines, one per fact. If no facts found, output nothing."
     )
@@ -940,10 +942,16 @@ class MemoryManager:
                 for m in recent
             )
 
+            user_id = recent[0].get("user_id") or "primary_user"
+            user_name = self._get_display_name(user_id)
+
             from core.llm_router import get_llm_router
             llm = get_llm_router(self.config)
             response = llm.chat(
-                user_message=self.BATCH_EXTRACTION_PROMPT.format(messages=formatted),
+                user_message=self.BATCH_EXTRACTION_PROMPT.format(
+                    user_name=user_name,
+                    messages=formatted,
+                ),
                 max_tokens=300,
             )
 
@@ -956,7 +964,6 @@ class MemoryManager:
                     fact_data = json.loads(line)
                     if "content" not in fact_data:
                         continue
-                    user_id = recent[0].get("user_id") or "primary_user"
                     fact_id = self.store_fact({
                         "user_id": user_id,
                         "category": fact_data.get("category", "general"),
@@ -982,16 +989,17 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     PER_TURN_EXTRACTION_PROMPT = (
-        "The user just said:\n\"{user_message}\"\n\n"
+        "{user_name} just said:\n\"{user_message}\"\n\n"
         "The assistant responded:\n\"{assistant_message}\"\n\n"
-        "Extract any NEW personal facts about the user from this exchange "
+        "Extract any NEW personal facts about {user_name} from this exchange "
         "(preferences, relationships, work, location, health, habits, plans).\n\n"
         "For each fact, output a JSON line:\n"
         '- "category": one of [preference, relationship, habit, plan, opinion, location, work, health, general]\n'
         '- "subject": brief topic (1-3 words)\n'
-        '- "content": the fact in third person (e.g. "User prefers dark roast coffee")\n\n'
-        "Only extract facts the user directly stated or strongly implied. "
-        "DO NOT extract greetings, questions, commands, or transient context.\n"
+        '- "content": the fact in third person using their name (e.g. "{user_name} prefers dark roast coffee")\n\n'
+        "Only extract DURABLE facts — things that will still be true next week.\n"
+        "DO NOT extract: greetings, questions, commands, transient state "
+        "(e.g. current location, what they are doing right now, what is on screen).\n"
         "If no facts found, output nothing."
     )
 
@@ -1005,6 +1013,20 @@ class MemoryManager:
         )
         thread.start()
 
+    def _get_display_name(self, user_id: str) -> str:
+        """Resolve user_id to a capitalized display name."""
+        try:
+            from core.user_profile import get_profile_manager
+            pm = get_profile_manager()
+            if pm:
+                profile = pm.get_profile(user_id)
+                if profile and profile.get("name"):
+                    return profile["name"]
+        except Exception:
+            pass
+        # Fallback: capitalize the user_id itself
+        return user_id.capitalize() if user_id and user_id != "__guest__" else "User"
+
     def _run_per_turn_extraction(self, user_msg: str, assistant_msg: str, user_id: str):
         """Background: extract facts from a single exchange via Qwen."""
         try:
@@ -1012,10 +1034,13 @@ class MemoryManager:
             user_msg = user_msg[:500]
             assistant_msg = assistant_msg[:500]
 
+            user_name = self._get_display_name(user_id)
+
             from core.llm_router import get_llm_router
             llm = get_llm_router(self.config)
             response = llm.chat(
                 user_message=self.PER_TURN_EXTRACTION_PROMPT.format(
+                    user_name=user_name,
                     user_message=user_msg,
                     assistant_message=assistant_msg,
                 ),
