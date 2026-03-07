@@ -8,8 +8,8 @@ by injecting text directly into the pipeline — no voice/mic/TTS needed.
 Tiers:
   1 — Unit tests: ambient filter, noise filter, TTS normalizer, speech chunker
   2 — Routing tests: real skills loaded, text → router.route() → validate RouteResult
-  3 — Execution tests: run skill handlers, validate response content (future)
-  4 — Pipeline tests: needs llama-server running (future)
+  3 — Execution tests: run skill handlers, validate response content
+  4 — Pipeline tests: needs llama-server running
 
 Usage:
     python3 scripts/test_edge_cases.py              # Tiers 1+2 (default)
@@ -83,6 +83,11 @@ class TestCase:
     expect_self_awareness: Optional[str] = None  # self-awareness test type
     expect_task_planner: Optional[str] = None    # task planner test type
     expect_intro_flow: Optional[str] = None      # intro state machine test type
+
+    # Execution expectations (Tier 3)
+    expect_response_contains: Optional[str] = None  # response must contain (case-insensitive)
+    expect_response_not_none: Optional[bool] = None  # response must not be None
+    expect_response_is_none: Optional[bool] = None   # response must be None (tool-calling path)
 
     # LLM expectations (Tier 4)
     llm_system: Optional[str] = None          # system prompt (None = use default JARVIS prompt)
@@ -1931,6 +1936,41 @@ def run_routing_test(case, components):
 
 
 # ===========================================================================
+# Tier 3: Execution test runner (calls execute_intent on real skills)
+# ===========================================================================
+
+def run_execution_test(case, components):
+    """Execute an intent through SkillManager and validate the response."""
+    skill_manager = components["skill_manager"]
+
+    try:
+        response = skill_manager.execute_intent(case.input)
+    except Exception as e:
+        return False, f"CRASH: {e}"
+
+    failures = []
+
+    if case.expect_response_not_none and response is None:
+        failures.append("response is None, expected a string")
+
+    if case.expect_response_is_none and response is not None:
+        failures.append(f"response should be None, got: {response[:80]!r}")
+
+    if case.expect_response_contains is not None and response is not None:
+        if case.expect_response_contains.lower() not in response.lower():
+            failures.append(
+                f"response missing {case.expect_response_contains!r}, "
+                f"got: {response[:100]!r}"
+            )
+
+    resp_preview = repr(response[:80]) if response else "None"
+
+    if failures:
+        return False, f"{'; '.join(failures)} [response={resp_preview}]"
+    return True, f"response={resp_preview}"
+
+
+# ===========================================================================
 # Tier 4: LLM test runner (requires llama-server on port 8080)
 # ===========================================================================
 
@@ -2163,6 +2203,11 @@ def run_test(case, components, results):
             passed, detail = run_intro_flow_test(case, components)
         else:
             passed, detail = run_routing_test(case, components)
+    elif case.tier == 3:
+        if not components:
+            results.skip(case.id, "Tier 3 components not loaded")
+            return
+        passed, detail = run_execution_test(case, components)
     elif case.tier == 4:
         passed, detail = run_llm_test(case)
     else:
@@ -3401,6 +3446,124 @@ TESTS += [
 
 
 # ===========================================================================
+# TIER 3: Skill Execution Tests
+# ===========================================================================
+# These tests call skill_manager.execute_intent(text) with real skills loaded
+# and validate the response string. Focused on non-migrated skills that have
+# real handlers (not tool-calling). Reuses Tier 2 components.
+#
+# Migrated skills (time_info, system_info, filesystem, weather, reminders,
+# developer_tools, news) return None from execute_intent — they route through
+# LLM tool-calling instead. These are tested via Tier 4.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# TIER 3: Phase 3A — App Launcher Execution
+# ---------------------------------------------------------------------------
+# Tests that app_launcher handlers return meaningful response strings.
+# Side-effect handlers (launch, close) execute real desktop ops —
+# only test read-only handlers here.
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("3A-01", "what apps can you launch",
+             3, "3A", "App Launcher Execution",
+             expect_response_not_none=True,
+             expect_response_contains="launch",
+             notes="list_apps handler — returns launchable apps list"),
+    TestCase("3A-02", "what's the volume",
+             3, "3A", "App Launcher Execution",
+             expect_response_not_none=True,
+             notes="get_volume handler — returns volume level or desktop manager unavailable"),
+    TestCase("3A-03", "what windows are open",
+             3, "3A", "App Launcher Execution",
+             expect_response_not_none=True,
+             notes="list_windows handler — enumerates open windows"),
+    TestCase("3A-04", "what's on my clipboard",
+             3, "3A", "App Launcher Execution",
+             expect_response_not_none=True,
+             notes="read_clipboard handler — reads clipboard contents"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 3: Phase 3B — Web Navigation Execution
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("3B-01", "search the web for python programming",
+             3, "3B", "Web Navigation Execution",
+             expect_response_not_none=True,
+             notes="search_web handler — opens browser with search query"),
+    TestCase("3B-02", "search YouTube for guitar tutorials",
+             3, "3B", "Web Navigation Execution",
+             expect_response_not_none=True,
+             notes="search_youtube handler — opens YouTube search"),
+    TestCase("3B-03", "open github.com",
+             3, "3B", "Web Navigation Execution",
+             expect_response_not_none=True,
+             notes="open_url handler — opens URL in browser"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 3: Phase 3C — File Editor Execution (read-only ops)
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("3C-01", "what files are in the share folder",
+             3, "3C", "File Editor Execution",
+             expect_response_not_none=True,
+             notes="list_share_contents handler — lists ~/jarvis/share/"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 3: Phase 3D — Social Introductions Execution
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("3D-01", "who do you know",
+             3, "3D", "Social Introductions Execution",
+             expect_response_not_none=True,
+             notes="list_people handler — lists known people"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 3: Phase 3E — Skills with Pattern-Based Handlers
+# ---------------------------------------------------------------------------
+# These skills have real handle_intent() methods (pattern-based routing).
+# In the full pipeline they route via LLM tool-calling, but execute_intent()
+# still works via direct pattern match → handler.
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("3E-01", "what time is it",
+             3, "3E", "Pattern Handler Execution",
+             expect_response_not_none=True,
+             notes="time_info — handle_intent returns time string"),
+    TestCase("3E-02", "what's the weather",
+             3, "3E", "Pattern Handler Execution",
+             expect_response_not_none=True,
+             notes="weather — handle_intent returns conditions"),
+    TestCase("3E-03", "list my reminders",
+             3, "3E", "Pattern Handler Execution",
+             expect_response_not_none=True,
+             expect_response_contains="reminder",
+             notes="reminders — handle_intent returns reminders list"),
+]
+
+# ---------------------------------------------------------------------------
+# TIER 3: Phase 3F — Error Resilience
+# ---------------------------------------------------------------------------
+# Invalid inputs should produce graceful responses, not crashes.
+# ---------------------------------------------------------------------------
+
+TESTS += [
+    TestCase("3F-01", "open the nonexistent_app_xyz_fake",
+             3, "3F", "Execution Error Resilience",
+             notes="Unknown app — should either return error string or None, not crash"),
+]
+
+
+# ===========================================================================
 # TIER 4: LLM Response Quality Tests (requires llama-server)
 # ===========================================================================
 # These tests send prompts to the live LLM and validate response quality,
@@ -3971,8 +4134,8 @@ def filter_tests(tests, args):
         return [t for t in tests if t.tier == args.tier]
     if args.all:
         return tests
-    # Default: tiers 1 + 2
-    return [t for t in tests if t.tier <= 2]
+    # Default: tiers 1 + 2 + 3
+    return [t for t in tests if t.tier <= 3]
 
 
 def main():
@@ -3997,12 +4160,12 @@ def main():
     process_tracker = ProcessGuard()
     process_tracker.start()
 
-    # Load Tier 2 components if needed
-    if 2 in tiers_needed:
+    # Load Tier 2/3 components if needed (Tier 3 reuses Tier 2 components)
+    if 2 in tiers_needed or 3 in tiers_needed:
         try:
             components = init_tier2_components()
         except Exception as e:
-            print(f"\nFailed to load Tier 2 components: {e}")
+            print(f"\nFailed to load components: {e}")
             # Fall back to tier 1 only
             selected = [t for t in selected if t.tier == 1]
             if not selected:

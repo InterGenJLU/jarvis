@@ -418,10 +418,10 @@ def test_part3():
                 f"got: {TOOL_HANDLERS.get('web_search')!r}")
 
     # --- Test: ALWAYS_INCLUDED_TOOLS count ---
-    assert_eq("registry: exactly 4 always-included tools",
-              len(ALWAYS_INCLUDED_TOOLS), 4)
+    assert_eq("registry: exactly 5 always-included tools",
+              len(ALWAYS_INCLUDED_TOOLS), 5)
     ai_names = set(ALWAYS_INCLUDED_TOOLS.keys()) if isinstance(ALWAYS_INCLUDED_TOOLS, dict) else {t["function"]["name"] for t in ALWAYS_INCLUDED_TOOLS}
-    for expected in ("web_search", "recall_memory", "take_screenshot", "capture_webcam"):
+    for expected in ("web_search", "recall_memory", "take_screenshot", "capture_webcam", "enroll_face"):
         assert_true(f"registry: {expected} is always-included",
                     expected in ai_names,
                     f"{expected} not found in ALWAYS_INCLUDED_TOOLS")
@@ -440,6 +440,188 @@ def test_part3():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Part 4: Batch extraction tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_part4():
+    log("\n── Part 4: Batch extraction ─────────────────────────────────\n")
+
+    tmpdir = tempfile.mkdtemp(prefix="jarvis_mem_test_")
+
+    # --- Test: counter increments on user messages ---
+    db1 = os.path.join(tmpdir, "batch1.db")
+    mm = make_memory_manager(db1)
+    assert_eq("init: batch counter is 0", mm._message_count_since_batch, 0)
+    mm.on_message({"role": "user", "content": "Hello there Jarvis"})
+    assert_eq("counter: increments on user message", mm._message_count_since_batch, 1)
+
+    # --- Test: counter does NOT increment on assistant messages ---
+    mm.on_message({"role": "assistant", "content": "Hello sir."})
+    assert_eq("counter: unchanged on assistant message", mm._message_count_since_batch, 1)
+
+    # --- Test: multiple user messages increment counter ---
+    for i in range(3):
+        mm.on_message({"role": "user", "content": f"Message number {i+2} from me"})
+    assert_eq("counter: 4 after 4 user messages", mm._message_count_since_batch, 4)
+
+    # --- Test: batch triggers at batch_interval and counter resets ---
+    db2 = os.path.join(tmpdir, "batch2.db")
+    mm2 = make_memory_manager(db2)
+    triggered = []
+    mm2._trigger_batch_extraction = lambda: triggered.append(True)
+    mm2.batch_interval = 5  # Lower for testing
+
+    for i in range(4):
+        mm2.on_message({"role": "user", "content": f"User message {i+1} padding text"})
+    assert_eq("trigger: not triggered at 4 messages (interval=5)", len(triggered), 0)
+
+    mm2.on_message({"role": "user", "content": "User message 5 padding text here"})
+    assert_eq("trigger: triggered at 5 messages", len(triggered), 1)
+    # Counter reset happens inside the real _trigger_batch_extraction (which we
+    # mocked out), so verify that real method does reset:
+    db2b = os.path.join(tmpdir, "batch2b.db")
+    mm2b = make_memory_manager(db2b)
+    mm2b.batch_interval = 3
+    # Disable actual thread spawn — call _run_batch_extraction directly
+    mm2b.conversation.session_history = [
+        {"role": "user", "content": "Msg padding text here", "timestamp": 100, "user_id": "user"},
+    ]
+    mock_llm_noop = MagicMock()
+    mock_llm_noop.chat = MagicMock(return_value="")
+    with patch("core.llm_router.get_llm_router", return_value=mock_llm_noop):
+        # Simulate reaching batch_interval
+        mm2b._message_count_since_batch = 3
+        mm2b._trigger_batch_extraction()
+    assert_eq("trigger: counter reset to 0 by _trigger_batch_extraction",
+              mm2b._message_count_since_batch, 0)
+
+    # --- Test: _run_batch_extraction collects only user messages ---
+    db3 = os.path.join(tmpdir, "batch3.db")
+    mm3 = make_memory_manager(db3)
+    mm3.conversation.session_history = [
+        {"role": "user", "content": "I love pizza", "timestamp": 1000, "user_id": "user"},
+        {"role": "assistant", "content": "Noted.", "timestamp": 1001},
+        {"role": "user", "content": "I also like sushi", "timestamp": 1002, "user_id": "user"},
+        {"role": "assistant", "content": "Great.", "timestamp": 1003},
+    ]
+
+    llm_response = (
+        '{"category": "preference", "subject": "pizza", "content": "the user loves pizza"}\n'
+        '{"category": "preference", "subject": "sushi", "content": "the user likes sushi"}'
+    )
+    mock_llm = MagicMock()
+    mock_llm.chat = MagicMock(return_value=llm_response)
+
+    with patch("core.llm_router.get_llm_router", return_value=mock_llm):
+        mm3._run_batch_extraction()
+
+    # Verify LLM was called
+    assert_true("batch: LLM chat() called", mock_llm.chat.called,
+                "LLM chat() was never called")
+
+    # Verify prompt contains user messages but not assistant messages
+    if mock_llm.chat.called:
+        call_args = mock_llm.chat.call_args
+        prompt = call_args[1].get("user_message", "")
+        assert_true("batch: prompt contains 'pizza'", "pizza" in prompt,
+                     f"prompt missing 'pizza'")
+        assert_true("batch: prompt contains 'sushi'", "sushi" in prompt,
+                     f"prompt missing 'sushi'")
+        assert_true("batch: prompt does NOT contain 'Noted'", "Noted" not in prompt,
+                     "prompt includes assistant message")
+
+    # --- Test: valid JSON lines produce stored facts ---
+    facts3 = mm3.get_facts("primary_user")
+    inferred = [f for f in facts3 if f["source"] == "inferred"]
+    assert_true("batch: at least 1 inferred fact stored",
+                len(inferred) >= 1,
+                f"got {len(inferred)} inferred facts")
+    if inferred:
+        assert_eq("batch: confidence=0.70", inferred[0]["confidence"], 0.70)
+        assert_eq("batch: source=inferred", inferred[0]["source"], "inferred")
+
+    # --- Test: multi-line response extracts multiple facts ---
+    assert_true("batch: 2 inferred facts from 2 JSON lines",
+                len(inferred) >= 2,
+                f"got {len(inferred)} facts, expected 2")
+
+    # --- Test: malformed JSON lines skipped, valid lines still stored ---
+    db4 = os.path.join(tmpdir, "batch4.db")
+    mm4 = make_memory_manager(db4)
+    mm4.conversation.session_history = [
+        {"role": "user", "content": "I like coffee", "timestamp": 2000, "user_id": "user"},
+    ]
+    mixed_response = (
+        'not json at all\n'
+        '{broken json\n'
+        '{"category": "preference", "subject": "drink", "content": "the user likes coffee"}\n'
+        '{"no_content_key": true}\n'
+    )
+    mock_llm4 = MagicMock()
+    mock_llm4.chat = MagicMock(return_value=mixed_response)
+
+    with patch("core.llm_router.get_llm_router", return_value=mock_llm4):
+        mm4._run_batch_extraction()
+
+    facts4 = mm4.get_facts("primary_user")
+    inferred4 = [f for f in facts4 if f["source"] == "inferred"]
+    assert_eq("malformed: only 1 valid fact stored (3 bad lines skipped)",
+              len(inferred4), 1)
+    if inferred4:
+        assert_true("malformed: stored fact contains 'coffee'",
+                     "coffee" in inferred4[0]["content"].lower(),
+                     f"got: {inferred4[0]['content']!r}")
+
+    # --- Test: empty LLM response → 0 facts, no crash ---
+    db5 = os.path.join(tmpdir, "batch5.db")
+    mm5 = make_memory_manager(db5)
+    mm5.conversation.session_history = [
+        {"role": "user", "content": "How is the weather", "timestamp": 3000, "user_id": "user"},
+    ]
+    mock_llm5 = MagicMock()
+    mock_llm5.chat = MagicMock(return_value="")
+
+    with patch("core.llm_router.get_llm_router", return_value=mock_llm5):
+        mm5._run_batch_extraction()
+
+    facts5 = mm5.get_facts("primary_user")
+    assert_eq("empty response: 0 facts stored", len(facts5), 0)
+
+    # --- Test: LLM exception → caught, non-fatal ---
+    db6 = os.path.join(tmpdir, "batch6.db")
+    mm6 = make_memory_manager(db6)
+    mm6.conversation.session_history = [
+        {"role": "user", "content": "Test message here", "timestamp": 4000, "user_id": "user"},
+    ]
+    mock_llm6 = MagicMock()
+    mock_llm6.chat = MagicMock(side_effect=Exception("LLM crashed"))
+
+    with patch("core.llm_router.get_llm_router", return_value=mock_llm6):
+        # Should NOT raise — exception caught internally
+        mm6._run_batch_extraction()
+
+    facts6 = mm6.get_facts("primary_user")
+    assert_eq("LLM error: 0 facts stored, no crash", len(facts6), 0)
+
+    # --- Test: empty session history → no LLM call ---
+    db7 = os.path.join(tmpdir, "batch7.db")
+    mm7 = make_memory_manager(db7)
+    mm7.conversation.session_history = []
+    mock_llm7 = MagicMock()
+
+    with patch("core.llm_router.get_llm_router", return_value=mock_llm7):
+        mm7._run_batch_extraction()
+
+    assert_true("empty history: LLM NOT called",
+                not mock_llm7.chat.called,
+                "LLM was called with empty history")
+
+    # Cleanup
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main():
     log("Self-Managing Memory — Test Suite\n")
@@ -447,6 +629,7 @@ def main():
     test_part1()
     test_part2()
     test_part3()
+    test_part4()
 
     passed = sum(1 for r in results if r.passed)
     failed = sum(1 for r in results if not r.passed)
