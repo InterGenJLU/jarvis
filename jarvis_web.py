@@ -1384,9 +1384,17 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     'type': 'info',
                     'content': f'Running: {tool_call_request.name}',
                 })
+                _tool_args = tool_call_request.arguments
+                # Auto-route capture_webcam to mobile when client is mobile
+                if (tool_call_request.name == 'capture_webcam'
+                        and conversation.client_type == 'mobile'
+                        and _tool_args.get('source', 'auto') == 'auto'):
+                    _tool_args = {**_tool_args, 'source': 'mobile'}
+                    logger.info("Auto-routing capture_webcam to mobile (client_type=mobile)")
+
                 raw_result = await asyncio.to_thread(
                     execute_tool, tool_call_request.name,
-                    tool_call_request.arguments,
+                    _tool_args,
                 )
                 tool_result, tool_image_data = parse_tool_result(raw_result)
 
