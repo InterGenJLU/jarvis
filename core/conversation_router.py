@@ -2195,9 +2195,13 @@ class ConversationRouter:
             # Mobile context: tell LLM not to suggest desktop actions
             if self._is_mobile:
                 mobile_note = (
-                    "MOBILE SESSION — the user is on a phone. Do NOT suggest opening "
+                    "MOBILE SESSION — the user is on their phone. Do NOT suggest opening "
                     "browsers, launching apps, editing files on the server, or any "
-                    "desktop-only actions. Prefer concise answers."
+                    "desktop-only actions. Prefer concise answers. "
+                    "The user's PHONE CAMERA is available. When they ask you to look at "
+                    "something, see something, or capture an image, ALWAYS use "
+                    "capture_webcam with source='mobile' — NEVER use source='auto' or "
+                    "source='desktop'."
                 )
                 memory_context = (
                     f"{mobile_note}\n\n{memory_context}" if memory_context
