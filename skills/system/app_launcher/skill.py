@@ -35,7 +35,7 @@ class AppLauncherSkill(BaseSkill):
                 "open settings",
             ],
             handler=self.launch_app,
-            threshold=0.48,
+            threshold=0.62,
         )
 
         self.register_semantic_intent(
@@ -189,7 +189,7 @@ class AppLauncherSkill(BaseSkill):
                 "switch to the browser",
             ],
             handler=self.focus_app,
-            threshold=0.48,
+            threshold=0.62,
         )
 
         self.register_semantic_intent(

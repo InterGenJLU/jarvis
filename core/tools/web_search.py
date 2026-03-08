@@ -9,9 +9,13 @@ SCHEMA = {
     "function": {
         "name": "web_search",
         "description": (
-            "Search the web for current information. Use this for ANY factual question "
-            "about the real world: distances, people, events, news, scores, prices, "
-            "statistics, locations, travel times, or anything requiring accurate data."
+            "Search the web for CURRENT or REAL-TIME information only. "
+            "Use for: breaking news, live scores, stock prices, current events, "
+            "recent product releases, event dates/tickets, travel times, "
+            "local business info, recent statistics, things that change frequently. "
+            "Do NOT use for: general knowledge, definitions, explanations, "
+            "how things work, history, science facts, math, coding help, "
+            "or follow-ups to questions already answered in this conversation."
         ),
         "parameters": {
             "type": "object",

@@ -25,6 +25,18 @@ _generic_keywords = {"search", "open", "find", "look", "browse", "navigate", "we
 # Keywords with explicit handler aliases get a bonus so they win ties
 _keyword_aliases = {"google", "codebase"}
 
+# Keyword negative contexts: when the regex matches, suppress that keyword
+# to prevent false routing (e.g. "Google Home" ≠ search intent)
+_keyword_negative_contexts = {
+    "google": re.compile(
+        r'\bgoogle\s+(home|nest|assistant|calendar|drive|maps|photos|docs|'
+        r'sheets|pixel|chrome|play|cloud|fi|meet|classroom|lens|earth|'
+        r'translate|flights|store|workspace|one|hub)\b', re.I),
+    "find": re.compile(
+        r'(script.*\bfind\b|command.*\bfind\b|\bfind\s+\.'
+        r'|\bdoes\s+find\b|\bthat\s+(does\s+)?find\b)', re.I),
+}
+
 
 class SkillManager:
     """Manages skill discovery, loading, and execution"""
@@ -322,7 +334,13 @@ class SkillManager:
         if not hasattr(self, '_embedding_model'):
             return None
 
-        user_embedding = self._embedding_model.encode(user_text, convert_to_tensor=True, show_progress_bar=False)
+        try:
+            user_embedding = self._embedding_model.encode(user_text, convert_to_tensor=True, show_progress_bar=False)
+        except (RuntimeError, Exception) as e:
+            if 'out of memory' in str(e).lower():
+                self.logger.warning("VRAM OOM in semantic matching — falling through to LLM")
+                return None
+            raise
 
         best_match = None
         best_score = 0.0
@@ -390,6 +408,14 @@ class SkillManager:
             matched_kws = []
             for keyword in keywords:
                 if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text):
+                    # Suppress keyword if negative context matches
+                    neg_ctx = _keyword_negative_contexts.get(keyword.lower())
+                    if neg_ctx and neg_ctx.search(normalized_text):
+                        self.logger.debug(
+                            "Keyword '%s' suppressed by negative context in: %s",
+                            keyword, normalized_text[:80],
+                        )
+                        continue
                     if keyword.lower() in _keyword_aliases:
                         score += 2
                         matched_kws.append(f"{keyword}(+2)")
@@ -526,9 +552,12 @@ class SkillManager:
         skill_keywords = getattr(
             self.skill_metadata.get(skill_name), 'keywords', [],
         )
+        user_text_lower = user_text.lower()
         matched_kws = sorted(
             [kw for kw in skill_keywords
-             if re.search(r'\b' + re.escape(kw.lower()) + r'\b', user_text.lower())],
+             if re.search(r'\b' + re.escape(kw.lower()) + r'\b', user_text_lower)
+             and not (kw.lower() in _keyword_negative_contexts
+                      and _keyword_negative_contexts[kw.lower()].search(user_text_lower))],
             key=len, reverse=True,
         )
 
@@ -597,9 +626,15 @@ class SkillManager:
         from sentence_transformers import util as _st_util
         if not hasattr(self, '_embedding_model'):
             return None
-        _user_emb = self._embedding_model.encode(
-            user_text, convert_to_tensor=True, show_progress_bar=False,
-        )
+        try:
+            _user_emb = self._embedding_model.encode(
+                user_text, convert_to_tensor=True, show_progress_bar=False,
+            )
+        except (RuntimeError, Exception) as e:
+            if 'out of memory' in str(e).lower():
+                self.logger.warning("VRAM OOM in suffix disambiguation — skipping")
+                return None
+            raise
         _best_sim, _best_pair = -1.0, None
         for _sid, _sdata in suffix_matches:
             _ex = self._semantic_embedding_cache.get((skill_name, _sid))
@@ -631,9 +666,15 @@ class SkillManager:
         if not hasattr(self, '_embedding_model'):
             return None
 
-        user_emb = self._embedding_model.encode(
-            user_text, convert_to_tensor=True, show_progress_bar=False,
-        )
+        try:
+            user_emb = self._embedding_model.encode(
+                user_text, convert_to_tensor=True, show_progress_bar=False,
+            )
+        except (RuntimeError, Exception) as e:
+            if 'out of memory' in str(e).lower():
+                self.logger.warning("VRAM OOM in keyword semantic fallback — skipping")
+                return None
+            raise
         best_handler = None
         best_score = 0.0
         best_intent = None

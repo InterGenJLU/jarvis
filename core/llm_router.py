@@ -964,37 +964,30 @@ class LLMRouter:
                 + rules_text
             )
         else:
-            # --- Web-search-only prompt (original prescriptive rules) ---
-            # Tested 15 runs × 7 queries + 15 edge cases × 3 runs = 0 failures.
+            # --- Web-search-only prompt ---
+            # Balanced: search for current data, answer knowledge from training.
             system_prompt += (
-                f"\n\nToday's date is {today}. Current time: {current_time}. "
-                "Your training data is OUTDATED and UNRELIABLE.\n\n"
-                "RULES — follow these EXACTLY:\n"
-                "1. You MUST call web_search for ANY question that has a verifiable "
-                "answer. This includes: people, events, dates, releases, versions, "
-                "products, prices, scores, statistics, organizations, places, distances, "
-                "travel, weather, news, technology, software, science, politics — "
-                "ANYTHING that could be looked up.\n"
-                "2. NEVER answer from memory if the answer could change or be wrong.\n"
-                "3. NEVER say 'I don't have information', 'check official sources', "
-                "'you might want to check', or tell the user to look it up themselves. "
-                "If you don't know, SEARCH.\n"
-                "4. When in doubt: SEARCH. An unnecessary search is harmless. "
-                "A wrong answer is unacceptable.\n"
-                "5. When building search queries, extract ONLY the informational need. "
-                "Strip conversational filler ('can you find me', 'I need', 'please', "
-                "'I'm hungry'). Example: 'Can you find me a good homemade pizza recipe?' "
-                "→ query: 'best homemade pizza recipe'.\n\n"
-                "ONLY skip the search for:\n"
-                "- Greetings ('hello', 'how are you', 'thanks')\n"
+                f"\n\nToday's date is {today}. Current time: {current_time}.\n\n"
+                "You have one tool: web_search. Use it ONLY for current or "
+                "real-time information:\n"
+                "- Breaking news, live scores, stock prices, current events\n"
+                "- Recent product releases, event dates, ticket prices\n"
+                "- Travel times, local businesses, recent statistics\n"
+                "- Anything that changes frequently or happened recently\n\n"
+                "ANSWER DIRECTLY (no search) for:\n"
+                "- General knowledge (definitions, how things work, history, "
+                "science, concepts)\n"
+                "- Follow-ups to your previous answers ('tell me more', "
+                "'explain that', 'is that normal?', 'elaborate')\n"
                 "- Creative requests (jokes, stories, poems)\n"
-                "- Following instructions ('repeat that', 'say it again')\n"
-                "- Follow-up requests about YOUR previous answer ('elaborate', "
-                "'expand on that', 'tell me more', 'go deeper', 'explain further', "
-                "'break it down more') — just give a more detailed answer using "
-                "the context provided\n"
-                "- Pure opinions with no factual component\n"
-                "- Time or date questions — answer directly from the date/time above"
+                "- Math, coding help, explanations, comparisons\n"
+                "- Greetings and small talk\n"
+                "- Time or date questions — use the date/time above\n\n"
+                "When you DO search, strip conversational filler from the query. "
+                "Example: 'Can you find me a good pizza recipe?' "
+                "→ query: 'best homemade pizza recipe'.\n"
+                "NEVER tell the user to look something up themselves — "
+                "either search or answer from your knowledge."
             )
 
         if memory_context:
@@ -1027,6 +1020,12 @@ class LLMRouter:
         assert len(messages) == 2, (
             f"Tool-calling messages must be exactly [system, user], got {len(messages)}"
         )
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_llm_messages(messages, tool_count=len(tools),
+                               temperature=temp, presence_penalty=pp,
+                               label="stream_with_tools")
 
         # Store messages for continue_after_tool_call()
         self._tool_call_messages = messages
@@ -1308,6 +1307,11 @@ class LLMRouter:
         messages.append(self._build_user_message(synthesis_text, image_data))
         self.logger.debug("continue_after_tool_call: %d messages, synthesis_text_len=%d",
                           len(messages), len(synthesis_text))
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_llm_messages(messages, tool_count=len(tools) if tools else 0,
+                               label="continue_after_tool_call")
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()

@@ -1152,9 +1152,22 @@ class Coordinator:
             # Cap at 3 to prevent runaway loops.
             _MAX_TOOL_CHAIN = 3
             tool_chain_count = 0
+            _tool_call_counts = {}  # Per-turn dedup: {tool_name: count}
 
             while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
                 tool_chain_count += 1
+
+                # Deduplication: skip if same tool called 2+ times this turn
+                _tc_name = tool_call_request.name
+                _tool_call_counts[_tc_name] = _tool_call_counts.get(_tc_name, 0) + 1
+                if _tool_call_counts[_tc_name] > 2:
+                    self.logger.warning(
+                        "⚠️ Dedup: %s called %d times this turn — "
+                        "skipping, synthesizing from prior results",
+                        _tc_name, _tool_call_counts[_tc_name],
+                    )
+                    break
+
                 self.logger.info(
                     f"🔧 Tool call: {tool_call_request.name}({tool_call_request.arguments})"
                 )
@@ -1261,6 +1274,14 @@ class Coordinator:
                                 )
                             except Exception as e:
                                 self.logger.warning(f"Display hook error: {e}")
+
+                # Store compact tool result for follow-up context.
+                # This powers anaphoric references ("list them", "which ones?")
+                # by giving the next turn access to the actual tool data.
+                _tool_summary = tool_result[:800] if tool_result else ""
+                self.conv_state.last_tool_result_text = (
+                    f"[{tool_call_request.name}] {_tool_summary}"
+                )
 
                 # Stream synthesis — may yield text tokens or another ToolCallRequest
                 _synth_img = tool_image_data if tool_call_request.name != "web_search" else None

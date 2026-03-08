@@ -1871,6 +1871,16 @@ class ConversationRouter:
 
         logger.debug(f"P4-LLM: selected {len(tools)} tools, routing to LLM")
 
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg._write("tool_selection", {
+            "command": command[:200],
+            "tool_count": len(tools),
+            "tool_names": [t["function"]["name"] for t in tools],
+            "guest": self._is_guest,
+            "mobile": self._is_mobile,
+        })
+
         # Prepare the same LLM context as _prepare_llm_context()
         result = self._prepare_llm_context(
             command,
@@ -1921,9 +1931,15 @@ class ConversationRouter:
         except ImportError:
             return None
 
-        user_embedding = sm._embedding_model.encode(
-            command, convert_to_tensor=True, show_progress_bar=False
-        )
+        try:
+            user_embedding = sm._embedding_model.encode(
+                command, convert_to_tensor=True, show_progress_bar=False
+            )
+        except (RuntimeError, Exception) as e:
+            if 'out of memory' in str(e).lower():
+                logger.warning("VRAM OOM in tool pruner — including all tools")
+                return None
+            raise
 
         # Score always-included tools that declare INTENT_EXAMPLES.
         # These tools have no corresponding skill, so the skill loop below
@@ -2087,6 +2103,12 @@ class ConversationRouter:
         # Always include always-on tools (web_search, recall_memory)
         return list(ALWAYS_INCLUDED_TOOLS.values()) + [t[1] for t in matched_tools]
 
+    # Global confidence floor for skill routing.  Matches below this
+    # threshold fall through to LLM instead of executing the skill.
+    # Prevents short ambiguous utterances ("delete it", "open it") from
+    # triggering low-confidence skill matches (0.52-0.54).
+    _SKILL_CONFIDENCE_FLOOR = 0.60
+
     def _handle_skill_routing(self, command: str) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""
         # Mobile mode: check match BEFORE executing to prevent side effects
@@ -2097,6 +2119,37 @@ class ConversationRouter:
                 logger.debug(f"P4: blocked desktop-only skill '{match[0]}' on mobile (pre-exec)")
                 return None
 
+        # Pre-check confidence before executing (avoids side effects from
+        # low-confidence matches).  Layers without confidence scores
+        # (exact, fuzzy, keyword-direct with single match) are trusted.
+        match = self.skill_manager.match_intent(command)
+        match_info = self.skill_manager._last_match_info
+        if match and match_info:
+            conf = match_info.get("confidence")
+            layer = match_info.get("layer", "")
+            if conf is not None and conf < self._SKILL_CONFIDENCE_FLOOR:
+                logger.info(
+                    "P4: skill '%s' confidence %.2f < floor %.2f "
+                    "(layer=%s, intent=%s) — falling through to LLM",
+                    match_info.get("skill_name"), conf,
+                    self._SKILL_CONFIDENCE_FLOOR, layer,
+                    match_info.get("intent_id"),
+                )
+                return None
+
+        if not match:
+            return None
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_skill_match(
+            skill_name=match_info.get("skill_name", "") if match_info else "",
+            layer=match_info.get("layer") if match_info else None,
+            confidence=match_info.get("confidence") if match_info else None,
+            intent_id=match_info.get("intent_id") if match_info else None,
+        )
+
+        # Confidence OK — execute the skill
         response = self.skill_manager.execute_intent(command)
         match_info = self.skill_manager._last_match_info
 
@@ -2266,7 +2319,7 @@ class ConversationRouter:
                 if history[i].get("role") == "user" and history[i+1].get("role") == "assistant":
                     exchange_num += 1
                     q = history[i]["content"][:200]
-                    a = history[i+1]["content"][:400]
+                    a = history[i+1]["content"][:800]
                     if multi_speaker:
                         speaker = self.conversation._get_speaker_label(
                             history[i].get("user_id"))
@@ -2279,14 +2332,22 @@ class ConversationRouter:
                 else:
                     i += 1
 
+            # Inject tool result data for anaphoric follow-ups.
+            # If the last turn used a tool, include the raw result so the
+            # LLM can answer "list them", "which ones?", etc. from context.
+            if self.conv_state.last_tool_result_text:
+                prior_lines.append(
+                    f"[tool_data] {self.conv_state.last_tool_result_text[:800]}"
+                )
+
             # Fall back to conv_state if session_history is empty
             if not prior_lines:
                 if self.conv_state.research_exchange:
                     prev_q = self.conv_state.research_exchange['query']
-                    prev_a = self.conv_state.research_exchange['answer'][:400]
+                    prev_a = self.conv_state.research_exchange['answer'][:800]
                 elif self.conv_state.last_response_text:
                     prev_q = self.conv_state.last_command
-                    prev_a = self.conv_state.last_response_text[:400]
+                    prev_a = self.conv_state.last_response_text[:800]
                 else:
                     prev_q = prev_a = None
                 if prev_q and prev_a:
@@ -2305,6 +2366,17 @@ class ConversationRouter:
 
         # Max tokens hint for document queries
         max_tokens = 600 if (doc_buffer and doc_buffer.active) else None
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_conversation_history(
+            history_text=history,
+            message_count=len(context_messages) if context_messages else 0,
+        )
+        _dbg.log_context_window(
+            segments_count=len(context_messages) if context_messages else 0,
+            query=command[:200],
+        )
 
         return RouteResult(
             handled=False,

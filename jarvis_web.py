@@ -377,6 +377,8 @@ def _detect_delivery_mode(command: str, last_response: str) -> str | None:
 
     # 2) Check for clarify phrases ("show me" without specifying how)
     #    But first: "show me in the chat" → resolve to specific mode
+    #    Guard: if the remainder after "show me" is >4 words, it's a new
+    #    content request ("show me what that would look like"), not delivery.
     clarify_match = cmd in _DELIVERY_CLARIFY or any(cmd.startswith(p) for p in _DELIVERY_CLARIFY)
     if clarify_match:
         # Strip the clarify prefix to check for a trailing mode resolver
@@ -389,6 +391,9 @@ def _detect_delivery_mode(command: str, last_response: str) -> str | None:
             for mode, resolvers in _SHOW_ME_RESOLVERS.items():
                 if remainder in resolvers or any(remainder.startswith(r) for r in resolvers):
                     return mode
+            # Long remainder = substantive content request, not delivery mode
+            if len(remainder.split()) > 4:
+                return None
         return "clarify"
 
     # 3) Affirm-based: "yes" / "sure" etc. — need context from last response
@@ -956,6 +961,14 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     logger.debug("process_command: raw=%r image=%s client_type=%s",
                  command[:200], bool(image_data), getattr(conversation, 'client_type', None))
 
+    from core.debug_logger import get_debug_logger
+    _dbg = get_debug_logger()
+    _dbg.log_command_received(
+        command, user_id=conversation.current_user,
+        client_type=getattr(conversation, 'client_type', None),
+        in_conversation=True, image_data=bool(image_data),
+    )
+
     if image_data:
         conversation.add_message("user", f"[Image attached] {command}")
     else:
@@ -982,6 +995,8 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                  result.handled, getattr(result, 'intent', None), result.skip,
                  bool(getattr(result, 'use_tools', None)),
                  result.match_info.get('layer') if result.match_info else None)
+    _dbg.log_route_decision(command, result,
+                            routing_time_ms=(t_match - t_start) * 1000)
 
     streamed = False
     _resp_image_url = None  # Set by _stream_llm_ws when tool produces an image
@@ -1199,6 +1214,14 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     # Build stats
     stats = _build_stats(match_info, llm, used_llm, t_start, t_match, t_end)
 
+    _info = llm.last_call_info or {}
+    _dbg.log_response(
+        response, total_ms=(t_end - t_start) * 1000,
+        llm_model=_info.get('model'),
+        tokens=_info.get('output_tokens', 0),
+        stats=stats,
+    )
+
     return {
         'response': response,
         'stats': stats,
@@ -1234,6 +1257,15 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
     def _producer():
         """Sync thread: run LLM streaming, push items to async queue."""
         try:
+            from core.debug_logger import get_debug_logger
+            _dbg = get_debug_logger()
+            _dbg.log_llm_context(
+                user_message=command,
+                memory_context=memory_context,
+                history=history,
+                context_messages=conversation_messages,
+                tools=use_tools_list,
+            )
             logger.debug(f"LLM input (first 200): {command[:200]}")
             logger.debug(f"Tools: {[t['function']['name'] for t in use_tools_list] if use_tools_list else 'none'}")
             source = (
@@ -1339,6 +1371,10 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             logger.debug("Tool chain #%d: %s, arg_keys=%s",
                          tool_chain_count, tool_call_request.name,
                          list(tool_call_request.arguments.keys()))
+            from core.debug_logger import get_debug_logger
+            _dbg = get_debug_logger()
+            _dbg.log_tool_call(tool_call_request.name,
+                               tool_call_request.arguments, tool_chain_count)
             if tool_call_request.name == 'web_search':
                 query = tool_call_request.arguments.get('query', command)
                 await ws.send_json({
@@ -1447,6 +1483,9 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s",
                              tcr.name, len(tr) if tr else 0,
                              f"yes ({len(img)//1024}KB)" if img else "no")
+                from core.debug_logger import get_debug_logger
+                _dbg = get_debug_logger()
+                _dbg.log_tool_result(tcr.name, tr, len(tr) if tr else 0)
                 try:
                     _token_count = 0
                     for token in llm.continue_after_tool_call(
@@ -2119,6 +2158,14 @@ async def websocket_handler(request):
         if relay and relay._ws is ws:
             relay.clear_ws()
             logger.info("Mobile camera relay disconnected")
+
+        # Reset conversation state and session history to prevent
+        # tool data / history bleeding into the next WS session
+        conv_state = components['conv_state']
+        conv_state.close_window()
+        conversation = components['conversation']
+        conversation.clear_session_history()
+        logger.info("WS disconnect: conv_state and session history reset")
 
     return ws
 

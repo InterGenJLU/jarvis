@@ -139,9 +139,10 @@ def register_external_tool(name, schema, handler, system_prompt_rule, skill_name
 # ---------------------------------------------------------------------------
 
 _GLOBAL_RULES_PREFIX = [
-    "If a tool matches the user's request, ALWAYS call it — "
-    "even if you think you already know the answer. Tools return "
-    "live data; your knowledge may be stale.",
+    "If a tool matches the user's request AND the question requires "
+    "current or real-time data, call the tool. For general knowledge, "
+    "definitions, explanations, how things work, or follow-ups to "
+    "prior context, answer directly from your training — do NOT search.",
 ]
 
 _GLOBAL_RULES_SUFFIX = [
