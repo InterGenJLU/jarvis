@@ -10,6 +10,7 @@ Observe first, assert later — initial runs generate data for human review.
 Usage:
     python3 scripts/test_conversations.py --verbose              # All conversations
     python3 scripts/test_conversations.py --id C17               # Single conversation
+    python3 scripts/test_conversations.py --ids C02,C05,C17      # Multiple conversations
     python3 scripts/test_conversations.py --category road-trip   # By category
     python3 scripts/test_conversations.py --core-only            # C01-C10 only
     python3 scripts/test_conversations.py --list                 # List all conversations
@@ -983,6 +984,7 @@ def main():
         description="Multi-turn conversational test suite for JARVIS"
     )
     parser.add_argument('--id', help="Run single conversation by ID (e.g., C17)")
+    parser.add_argument('--ids', help="Run multiple conversations by ID (comma-separated, e.g., C02,C05,C17)")
     parser.add_argument('--category',
                         help="Run conversations by category (e.g., road-trip)")
     parser.add_argument('--list', action='store_true',
@@ -1044,6 +1046,18 @@ def main():
         if not convs:
             print(f"Unknown conversation ID: {args.id}")
             print(f"Valid IDs: {', '.join(c.id for c in all_convs)}")
+            return
+    elif args.ids:
+        requested = {x.strip().upper() for x in args.ids.split(',')}
+        convs = [c for c in all_convs if c.id.upper() in requested]
+        found = {c.id.upper() for c in convs}
+        missing = requested - found
+        if missing:
+            print(f"Unknown conversation IDs: {', '.join(sorted(missing))}")
+            print(f"Valid IDs: {', '.join(c.id for c in all_convs)}")
+            return
+        if not convs:
+            print("No conversations matched")
             return
     elif args.category:
         convs = [c for c in all_convs
