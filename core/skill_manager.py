@@ -35,6 +35,10 @@ _keyword_negative_contexts = {
     "find": re.compile(
         r'(script.*\bfind\b|command.*\bfind\b|\bfind\s+\.'
         r'|\bdoes\s+find\b|\bthat\s+(does\s+)?find\b)', re.I),
+    "script": re.compile(
+        r'(\b(wrote|write|writing|have|had|got|made|built|created)\b.*\bscript\b'
+        r'|\bbash\s+script\b|\bpython\s+script\b|\bshell\s+script\b'
+        r'|\bscript\s+(that|which|to)\b)', re.I),
 }
 
 

@@ -608,7 +608,7 @@ def print_conversation_result(cr, verbose=True):
     for tr in cr.turn_results:
         print(f"\n  [{tr.turn_num}] USER: \"{tr.user}\"")
         if verbose:
-            resp_display = truncate(tr.response, 300)
+            resp_display = tr.response.replace('\n', ' ').strip()
             print(f"      JARVIS: \"{resp_display}\"")
         routing = format_routing(tr)
         print(f"      routing: {routing} | {tr.word_count} words | {tr.total_ms}ms")
