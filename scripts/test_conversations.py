@@ -801,6 +801,9 @@ async def run_suite(conversations, config, delay=2.0, verbose=True,
     """Run all conversations and return results."""
     results = []
 
+    # Capture timestamp before run so cleanup can delete test-created data
+    run_start_ts = time.time()
+
     # Snapshot share/ before run so we can remove new files after
     pre_run_files = set()
     if os.path.isdir(SHARE_DIR):
@@ -860,7 +863,7 @@ async def run_suite(conversations, config, delay=2.0, verbose=True,
         await client.close()
 
     # Clean up artifacts created during testing
-    await cleanup_test_artifacts(config, pre_run_files)
+    await cleanup_test_artifacts(config, pre_run_files, run_start_ts)
 
     return results
 
@@ -880,8 +883,11 @@ CLEANUP_COMMANDS = [
 ]
 
 
-async def cleanup_test_artifacts(config, pre_run_files):
-    """Remove reminders and files created by test conversations."""
+async def cleanup_test_artifacts(config, pre_run_files, run_start_ts):
+    """Remove reminders, files, and memory artifacts created by test conversations."""
+    import sqlite3
+    import glob as glob_mod
+
     print(f"\n{'─'*70}")
     print("  Cleaning up test artifacts...")
 
@@ -911,6 +917,73 @@ async def cleanup_test_artifacts(config, pre_run_files):
                     print(f"    [removed] {f}")
                 except OSError:
                     pass
+
+    # 3. Purge memory artifacts created during this test run
+    data_dir = "/mnt/storage/jarvis/data"
+
+    # 3a. memory.db — facts, interaction_log, topic_segments
+    memory_db = os.path.join(data_dir, "memory.db")
+    if os.path.exists(memory_db):
+        try:
+            conn = sqlite3.connect(memory_db)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM facts WHERE created_at >= ?", (run_start_ts,))
+            facts_del = cur.rowcount
+            cur.execute("DELETE FROM interaction_log WHERE created_at >= ?", (run_start_ts,))
+            ilog_del = cur.rowcount
+            cur.execute("DELETE FROM topic_segments WHERE created_at >= ?", (run_start_ts,))
+            tseg_del = cur.rowcount
+            cur.execute("DELETE FROM extraction_state")
+            conn.commit()
+            conn.close()
+            print(f"    [memory.db] deleted {facts_del} facts, {ilog_del} interaction_log, {tseg_del} topic_segments")
+        except Exception as e:
+            print(f"    [memory.db] cleanup error: {e}")
+
+    # 3b. FAISS index — rebuild would require loading the model, just delete the files
+    #     They'll be rebuilt on next JARVIS startup from remaining facts
+    faiss_dir = os.path.join(data_dir, "memory_faiss")
+    if os.path.isdir(faiss_dir):
+        removed = 0
+        for f in glob_mod.glob(os.path.join(faiss_dir, "*")):
+            try:
+                os.remove(f)
+                removed += 1
+            except OSError:
+                pass
+        if removed:
+            print(f"    [memory_faiss] removed {removed} index files (will rebuild on next startup)")
+
+    # 3c. interaction_cache.db — artifacts and links
+    cache_db = os.path.join(data_dir, "interaction_cache.db")
+    if os.path.exists(cache_db):
+        try:
+            conn = sqlite3.connect(cache_db)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM artifact_links WHERE created_at >= ?", (run_start_ts,))
+            links_del = cur.rowcount
+            cur.execute("DELETE FROM artifacts WHERE created_at >= ?", (run_start_ts,))
+            arts_del = cur.rowcount
+            conn.commit()
+            conn.close()
+            print(f"    [interaction_cache.db] deleted {arts_del} artifacts, {links_del} links")
+        except Exception as e:
+            print(f"    [interaction_cache.db] cleanup error: {e}")
+
+    # 3d. web_queries.db — search history
+    wq_db = os.path.join(data_dir, "web_queries.db")
+    if os.path.exists(wq_db):
+        try:
+            conn = sqlite3.connect(wq_db)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM web_queries WHERE timestamp >= datetime(?, 'unixepoch')", (run_start_ts,))
+            wq_del = cur.rowcount
+            conn.commit()
+            conn.close()
+            if wq_del:
+                print(f"    [web_queries.db] deleted {wq_del} queries")
+        except Exception as e:
+            print(f"    [web_queries.db] cleanup error: {e}")
 
     print("  Cleanup complete.")
     print(f"{'─'*70}")

@@ -2,63 +2,56 @@
 
 ## What Was Done
 
-### Run 013 — C02 Targeted Test (Anaphoric Carryover Validation)
-- **C02 only**, 4 turns, 47s total
-- Results saved: `tests/iterative_results/run_013_results.json`, `run_013_raw_output.txt`, `run_013_results_debug.jsonl`
-- MANIFEST.md updated with full run 013 entry
+### Run 013 — Anaphoric Carryover Validation (C02 targeted)
+- Fix at `conversation_router.py:347` validated — T2 and T3 correctly used `find_files` via carryover
+- T4 still used `web_search` because `developer_tools` wasn't in the tool list (carryover only re-injected tools from the prior turn)
 
-### Anaphoric Carryover Fix CONFIRMED WORKING
-- Fix at `conversation_router.py:347` validated — T2 "list them" and T3 "which ones are the biggest" both correctly used `find_files` via carryover
-- This was the sole remaining routing bug from runs 010-012 (C02 T2-T4)
-- T2: `find_files` ✅ (was `manage_reminders` in run 012)
-- T3: `find_files` ✅ (was `web_search` in run 012)
+### Run 014 — Tool-Family Carryover Validation (C02 targeted)
+- Implemented Option B: tool-family carryover in `_apply_anaphoric_carryover()`
+- When any member of `{find_files, developer_tools, get_system_info}` is used, all members are injected on the next turn
+- **C02 fully passing — 4/4 turns.** T4 answered from context in 4.9s (was 13.3s web_search in run 013).
+- **All routing bugs from run 010 are now FIXED.** C02 was the last one.
 
-### T4 Partial — LLM Tool Selection Issue
-- T4 "delete the largest one" — routing correctly injected `find_files` via carryover (confirmed in debug `route_decision`)
-- But LLM chose `web_search` (query: "delete directory 1201 files 11 subdirectories") instead of `find_files`
-- Response was functionally correct — identified Comerica, asked for confirmation
-- **Root cause:** `developer_tools` (the tool that can execute `rm -rf`) was NOT in the tool list. Carryover only re-injects tools from the prior turn (T3 used `find_files`, not `developer_tools`). `find_files` is read-only and can't delete.
-- **Options discussed with owner:**
-  - **Option B:** Tool-family carryover — define related groups (`find_files` + `developer_tools` + `get_system_info`), inject the whole family if any member was used
-  - **Option C:** Inject ALL eligible carryover tools if any one was used — simpler, produces identical results for current 3-tool set
-  - Analysis: No meaningful drawback to either for the current tool set. C is simpler today; B is more future-proof if unrelated families are added later
-  - **Owner deferred decision — will decide after sleep**
+### Commits
+- `b761bd6` — Anaphoric carryover fix + confidence floor + readback merge + test runs 010-013
+- `9ecd33c` — Tool-family carryover for anaphoric follow-ups — C02 fully passing
+- Both published to public repo.
+
+### MEMORY.md Cleanup
+- Removed redundant rules from HARD RULES — TESTING that duplicated ABSOLUTE RULES #1/#2/#4/#5
+- Updated Current State and Content Quality Findings to reflect all routing bugs fixed
 
 ---
 
-## Uncommitted Changes
+## Current State
 
-Same as session 213 + run 013 artifacts:
-- `tests/iterative_results/run_013_results.json`
-- `tests/iterative_results/run_013_raw_output.txt`
-- `tests/iterative_results/run_013_results_debug.jsonl`
-- `memory/handoff_session214.md`
-- `tests/iterative_results/MANIFEST.md` (updated with run 013)
+- **Working tree CLEAN** — all changes committed.
+- **SentenceTransformer CPU fix on disk but NOT YET VERIFIED LIVE.**
+- **Unit tests:** 314/314 PASS as of unit_run_001. Code changes since then require unit_run_002.
 
 ---
 
 ## Next Steps (for session 215)
 
-1. **Owner decides on T4 fix approach** (Option B family vs Option C all-eligible)
-2. **Implement chosen approach** — small change to `_apply_anaphoric_carryover()` in `conversation_router.py`
-3. **Re-run C02** as run 014 to validate T4 fix
-4. **If C02 passes:** Run full 10-conversation targeted test
-5. **Unit tests** — unit_run_002 (multiple core files modified since unit_run_001)
-6. **Commit all fixes** after both test suites pass
-7. **Verify SentenceTransformer on CPU** — still not confirmed live (owner was restarting jarvis-web at end of session 213)
+1. **Run full conversation test suite** (run 015) — full 40-conversation, 174-turn suite to validate all fixes together
+   ```
+   python3 scripts/test_conversations.py --verbose --save tests/iterative_results/run_015_results.json > tests/iterative_results/run_015_raw_output.txt 2>&1
+   ```
+2. **Unit tests** (unit_run_002):
+   ```
+   scripts/unit_tests.sh --all --verbose > /tmp/test_output.txt 2>&1
+   ```
 
 ---
 
 ## Test State
-- **Conversation manifest:** CURRENT through run 013. Next = **run 014**.
+- **Conversation manifest:** CURRENT through run 014. Next = **run 015**.
 - **Unit manifest:** CURRENT through unit_run_001. Next = **unit_run_002**.
-- **Unit tests:** 314/314 PASS as of unit_run_001. Code changes require re-run.
 
 ---
 
 ## Key References
-- **Anaphoric carryover fix:** `core/conversation_router.py:347`
-- **Carryover method:** `core/conversation_router.py:2117-2140`
-- **Eligible tools set:** `core/conversation_router.py:2115`
-- **Run 013 debug log:** `tests/iterative_results/run_013_results_debug.jsonl` (events 33-42 = T4 pipeline)
-- **T4 route_decision (event 36):** shows `find_files` WAS in tool list — LLM chose `web_search`
+- **Tool-family carryover:** `core/conversation_router.py:2114-2119` (`_ANAPHORIC_TOOL_FAMILIES`)
+- **Carryover method:** `core/conversation_router.py:2121-2155`
+- **Carryover call in LLM fallback:** `core/conversation_router.py:347`
+- **Run 014 results:** `tests/iterative_results/run_014_results.json`
