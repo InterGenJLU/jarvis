@@ -40,6 +40,9 @@ class ConversationState:
     research_exchange: Optional[dict] = None   # {"query": ..., "answer": ...}
     last_tool_result_text: str = ""            # Full formatted tool result for follow-up reads
 
+    # --- Tool context (for anaphoric follow-ups like "list them") ---
+    last_tools_called: list = field(default_factory=list)  # Tool names called in prior turn
+
     # --- Conversation depth ---
     turn_count: int = 0                    # Number of user turns in current window
 
@@ -104,6 +107,7 @@ class ConversationState:
         self.last_response_type = ""
         self.last_response_text = ""
         self.last_command = ""
+        self.last_tools_called = []
         self.turn_count = 0
         self.window_id = ""
         self.nav_artifact_id = None

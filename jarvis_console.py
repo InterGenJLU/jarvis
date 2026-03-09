@@ -349,10 +349,16 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
         first_tool_name = tool_call_request.name if tool_call_request else None
         first_tool_args = tool_call_request.arguments.copy() if tool_call_request else {}
         search_results_cache = None
+        # Track tools called this turn for anaphoric follow-up resolution
+        if conv_state is not None:
+            conv_state.last_tools_called = []
 
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
             tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
+            # Record tool name for anaphoric context in next turn
+            if conv_state is not None and tool_call_request.name not in conv_state.last_tools_called:
+                conv_state.last_tools_called.append(tool_call_request.name)
 
             if tool_call_request.name == "web_search":
                 query = tool_call_request.arguments.get("query", command)

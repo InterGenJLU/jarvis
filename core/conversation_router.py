@@ -344,6 +344,7 @@ class ConversationRouter:
             if self._is_mobile:
                 always_on = [t for t in always_on
                              if t["function"]["name"] not in self._MOBILE_EXCLUDED_TOOLS]
+            always_on = self._apply_anaphoric_carryover(always_on)
             if always_on:
                 result.use_tools = always_on
                 result.tool_temperature = 0.0
@@ -2037,7 +2038,7 @@ class ConversationRouter:
                     "routing with always-on tools",
                     best_always_included_score,
                 )
-                return list(ALWAYS_INCLUDED_TOOLS.values())
+                return self._apply_anaphoric_carryover(list(ALWAYS_INCLUDED_TOOLS.values()))
 
             # No domain tools matched.  If web_navigation scored well,
             # defer to P4 so the native handlers (YouTube, Amazon, etc.)
@@ -2069,7 +2070,7 @@ class ConversationRouter:
             # Still give the LLM always-on tools (web_search, recall_memory)
             # so queries like "Alabama football score" can trigger web_search.
             logger.debug("P4-LLM: no domain tools, falling through with always-on tools")
-            return list(ALWAYS_INCLUDED_TOOLS.values())
+            return self._apply_anaphoric_carryover(list(ALWAYS_INCLUDED_TOOLS.values()))
 
         # Guard: if a non-migrated skill (including web_navigation) scores
         # meaningfully higher than the best migrated/always-included tool,
@@ -2101,7 +2102,42 @@ class ConversationRouter:
             matched_tools = matched_tools[:self._MAX_DOMAIN_TOOLS]
 
         # Always include always-on tools (web_search, recall_memory)
-        return list(ALWAYS_INCLUDED_TOOLS.values()) + [t[1] for t in matched_tools]
+        result_tools = list(ALWAYS_INCLUDED_TOOLS.values()) + [t[1] for t in matched_tools]
+
+        # Anaphoric carryover: if the prior turn called domain tools
+        # (filesystem, developer), keep them available for follow-up
+        # references like "list them", "what's in there", "delete the largest"
+        result_tools = self._apply_anaphoric_carryover(result_tools)
+
+        return result_tools
+
+    # Tools eligible for anaphoric carryover from prior turn.
+    _ANAPHORIC_CARRYOVER_TOOLS = {"find_files", "developer_tools", "get_system_info"}
+
+    def _apply_anaphoric_carryover(self, tools: list) -> list:
+        """Add prior-turn domain tools for anaphoric follow-ups.
+
+        When the prior turn called filesystem/developer tools, keep them
+        in the toolset for follow-up references like 'list them',
+        'what's in there now', 'delete the largest one'.
+        """
+        prior = getattr(self.conv_state, 'last_tools_called', None)
+        if not prior:
+            return tools
+
+        current_names = {t["function"]["name"] for t in tools}
+        from core.tool_registry import SKILL_TOOLS
+        added = []
+        for tool_name in prior:
+            if (tool_name in self._ANAPHORIC_CARRYOVER_TOOLS
+                    and tool_name not in current_names):
+                schema = SKILL_TOOLS.get(tool_name)
+                if schema:
+                    tools.append(schema)
+                    added.append(tool_name)
+        if added:
+            logger.info("Anaphoric carryover: added %s from prior turn", added)
+        return tools
 
     # Global confidence floor for skill routing.  Matches below this
     # threshold fall through to LLM instead of executing the skill.
@@ -2149,9 +2185,22 @@ class ConversationRouter:
             intent_id=match_info.get("intent_id") if match_info else None,
         )
 
-        # Confidence OK — execute the skill
+        # Confidence OK per pre-check — execute the skill
         response = self.skill_manager.execute_intent(command)
         match_info = self.skill_manager._last_match_info
+
+        # Post-execution floor re-check: match_intent() returns
+        # confidence=None for keyword-layer matches, but execute_intent()
+        # computes a real confidence during disambiguation.  If it's now
+        # below the floor, discard the result and fall through to LLM.
+        if match_info:
+            final_conf = match_info.get("confidence")
+            if final_conf is not None and final_conf < self._SKILL_CONFIDENCE_FLOOR:
+                logger.info(
+                    "P4: post-exec confidence %.2f < floor %.2f — falling through",
+                    final_conf, self._SKILL_CONFIDENCE_FLOOR,
+                )
+                return None
 
         if response:
             logger.info("Handled by skill")

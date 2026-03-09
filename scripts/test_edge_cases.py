@@ -20,6 +20,7 @@ Usage:
     python3 scripts/test_edge_cases.py --all        # All tiers
     python3 scripts/test_edge_cases.py --json       # JSON output
     python3 scripts/test_edge_cases.py --verbose    # Show all tests (not just failures)
+    python3 scripts/test_edge_cases.py --save path  # Save results JSON + debug JSONL
 """
 
 import os
@@ -30,6 +31,7 @@ os.environ['JARVIS_LOG_FILE_ONLY'] = '1'
 import sys
 import time
 import json
+import shutil
 import argparse
 import subprocess
 import warnings
@@ -144,6 +146,147 @@ class TestResults:
             "pass_rate": f"{self.passed / self.total * 100:.1f}%" if self.total else "N/A",
             "tests": [{"id": r[0], "status": r[1], "detail": r[2]} for r in self.results],
         }
+
+
+# ===========================================================================
+# Structured JSONL debug logger for unit tests
+# ===========================================================================
+
+class UnitTestDebugLogger:
+    """Writes one JSONL event per test with full routing metadata.
+
+    Activated via ``--save <path>``.  Additionally places a sentinel file
+    so that the pipeline's ConversationDebugLogger emits inline events
+    into a companion ``*_pipeline.jsonl`` file.
+    """
+
+    _SENTINEL = "/tmp/.jarvis_debug_active"
+
+    def __init__(self, output_path: str):
+        self.output_path = output_path
+        self.pipeline_path = output_path.replace('.jsonl', '_pipeline.jsonl')
+        self._fh = open(output_path, 'w')
+        self._started = time.time()
+        # Activate pipeline debug logger via sentinel
+        try:
+            with open(self._SENTINEL, 'w') as f:
+                f.write(self.pipeline_path)
+        except OSError:
+            pass
+
+    def log_test(self, case, passed: bool, detail: str,
+                 route_result=None, duration_ms: float = 0):
+        """Log a single test event with all available routing metadata."""
+        record = {
+            "ts": time.time(),
+            "type": "unit_test",
+            "test_id": case.id,
+            "tier": case.tier,
+            "phase": case.phase,
+            "category": case.category,
+            "input": case.input,
+            "passed": passed,
+            "detail": detail,
+            "duration_ms": round(duration_ms, 1),
+        }
+
+        # Expectations
+        expectations = {}
+        for attr in ("expect_handled", "expect_skill", "expect_not_skill",
+                     "expect_intent", "expect_layer", "expect_skip",
+                     "expect_source", "expect_intro_flow",
+                     "expect_response_contains", "expect_response_not_none"):
+            val = getattr(case, attr, None)
+            if val is not None:
+                expectations[attr] = val
+        if expectations:
+            record["expectations"] = expectations
+
+        # Full RouteResult (Tier 2)
+        if route_result is not None:
+            rr = {
+                "handled": route_result.handled,
+                "intent": getattr(route_result, 'intent', None),
+                "source": getattr(route_result, 'source', None),
+                "skip": getattr(route_result, 'skip', False),
+                "text_len": len(route_result.text) if route_result.text else 0,
+                "text_preview": (route_result.text[:200]
+                                 if route_result.text else None),
+            }
+            mi = route_result.match_info
+            if mi:
+                rr["match_info"] = {
+                    "layer": mi.get("layer"),
+                    "skill_name": mi.get("skill_name"),
+                    "intent_id": mi.get("intent_id"),
+                    "confidence": mi.get("confidence"),
+                    "handler_name": mi.get("handler_name"),
+                }
+            if getattr(route_result, 'use_tools', None):
+                rr["tools_selected"] = [
+                    t["function"]["name"] for t in route_result.use_tools
+                ]
+            record["route_result"] = rr
+
+        if case.notes:
+            record["notes"] = case.notes
+
+        try:
+            self._fh.write(json.dumps(record, default=str) + "\n")
+            self._fh.flush()
+        except Exception:
+            pass
+
+    def _log_extra(self, test_id: str, extra: dict):
+        """Log extra metadata (Tier 3/4) as a companion event."""
+        record = {
+            "ts": time.time(),
+            "type": "test_extra",
+            "test_id": test_id,
+            **extra,
+        }
+        try:
+            self._fh.write(json.dumps(record, default=str) + "\n")
+            self._fh.flush()
+        except Exception:
+            pass
+
+    def log_summary(self, results, tier_counts: dict, duration_s: float):
+        """Write a final summary event."""
+        record = {
+            "ts": time.time(),
+            "type": "suite_summary",
+            "passed": results.passed,
+            "failed": results.failed,
+            "skipped": results.skipped,
+            "total": results.total,
+            "pass_rate": f"{results.passed / results.total * 100:.1f}%"
+                         if results.total else "N/A",
+            "duration_s": round(duration_s, 1),
+            "tiers": {
+                f"tier_{k}": {"passed": v[0], "failed": v[1]}
+                for k, v in sorted(tier_counts.items())
+            },
+        }
+        try:
+            self._fh.write(json.dumps(record, default=str) + "\n")
+            self._fh.flush()
+        except Exception:
+            pass
+
+    def close(self):
+        if self._fh:
+            self._fh.close()
+            self._fh = None
+        # Deactivate pipeline debug logger
+        try:
+            os.remove(self._SENTINEL)
+        except OSError:
+            pass
+
+
+# Module-level debug logger instance (set in main if --save used)
+_unit_debug: UnitTestDebugLogger | None = None
 
 
 # ===========================================================================
@@ -1866,7 +2009,7 @@ def run_routing_test(case, components):
     try:
         r = router.route(case.input, in_conversation=case.in_conversation)
     except Exception as e:
-        return False, f"CRASH: {e}"
+        return False, f"CRASH: {e}", None
 
     match_info = r.match_info or {}
     skill_name = match_info.get("skill_name", "")
@@ -1930,9 +2073,9 @@ def run_routing_test(case, components):
     if failures:
         # Build detail string with routing context
         ctx = f"[skill={skill_name}, layer={layer}, intent={r.intent}, handled={r.handled}]"
-        return False, f"{'; '.join(failures)} {ctx}"
+        return False, f"{'; '.join(failures)} {ctx}", r
 
-    return True, f"skill={skill_name}, layer={layer}, intent={r.intent}"
+    return True, f"skill={skill_name}, layer={layer}, intent={r.intent}", r
 
 
 # ===========================================================================
@@ -1946,7 +2089,13 @@ def run_execution_test(case, components):
     try:
         response = skill_manager.execute_intent(case.input)
     except Exception as e:
-        return False, f"CRASH: {e}"
+        return False, f"CRASH: {e}", None
+
+    # Capture match_info from skill_manager for debug logging
+    extra = {
+        "response_preview": repr(response[:200]) if response else "None",
+        "match_info": getattr(skill_manager, '_last_match_info', None),
+    }
 
     failures = []
 
@@ -1966,8 +2115,8 @@ def run_execution_test(case, components):
     resp_preview = repr(response[:80]) if response else "None"
 
     if failures:
-        return False, f"{'; '.join(failures)} [response={resp_preview}]"
-    return True, f"response={resp_preview}"
+        return False, f"{'; '.join(failures)} [response={resp_preview}]", extra
+    return True, f"response={resp_preview}", extra
 
 
 # ===========================================================================
@@ -2098,9 +2247,9 @@ def run_llm_test(case):
         with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
     except urllib.error.URLError as e:
-        return False, f"HTTP error: {e}"
+        return False, f"HTTP error: {e}", None
     except Exception as e:
-        return False, f"Request failed: {e}"
+        return False, f"Request failed: {e}", None
 
     msg = result["choices"][0]["message"]
     content = msg.get("content", "") or ""
@@ -2167,9 +2316,18 @@ def run_llm_test(case):
     tool_str = ", ".join(tc["function"]["name"] for tc in tool_calls) if tool_calls else "none"
     detail = f"tokens={comp_tokens}, tools={tool_str}, response={preview!r}"
 
+    # Extra metadata for debug logger
+    extra = {
+        "response_preview": content[:200] if content else None,
+        "completion_tokens": comp_tokens,
+        "finish_reason": finish_reason,
+        "tool_calls": [tc["function"]["name"] for tc in tool_calls] if tool_calls else [],
+        "usage": tokens,
+    }
+
     if failures:
-        return False, f"{'; '.join(failures)} [{detail}]"
-    return True, detail
+        return False, f"{'; '.join(failures)} [{detail}]", extra
+    return True, detail, extra
 
 
 # ===========================================================================
@@ -2178,8 +2336,12 @@ def run_llm_test(case):
 
 def run_test(case, components, results):
     """Dispatch test to appropriate tier runner."""
+    global _unit_debug
+    t0 = time.time()
+    extra = None
+
     if case.tier == 1:
-        # Unit tests
+        # Unit tests — all return 2-tuples (no extra metadata)
         if case.expect_ambient is not None:
             passed, detail = run_ambient_filter_test(case)
         elif case.expect_noise is not None:
@@ -2202,19 +2364,29 @@ def run_test(case, components, results):
         if case.expect_intro_flow is not None:
             passed, detail = run_intro_flow_test(case, components)
         else:
-            passed, detail = run_routing_test(case, components)
+            passed, detail, extra = run_routing_test(case, components)
     elif case.tier == 3:
         if not components:
             results.skip(case.id, "Tier 3 components not loaded")
             return
-        passed, detail = run_execution_test(case, components)
+        passed, detail, extra = run_execution_test(case, components)
     elif case.tier == 4:
-        passed, detail = run_llm_test(case)
+        passed, detail, extra = run_llm_test(case)
     else:
         results.skip(case.id, f"Tier {case.tier} not implemented yet")
         return
 
+    duration_ms = (time.time() - t0) * 1000
     results.record(case.id, passed, detail)
+
+    # Log to debug JSONL if active
+    if _unit_debug:
+        # For Tier 2 routing tests, extra IS the RouteResult
+        route_result = extra if case.tier == 2 else None
+        _unit_debug.log_test(case, passed, detail, route_result, duration_ms)
+        # For Tier 3/4, log extra metadata as a separate field
+        if extra is not None and case.tier in (3, 4) and isinstance(extra, dict):
+            _unit_debug._log_extra(case.id, extra)
 
 
 # ===========================================================================
@@ -4121,6 +4293,11 @@ def parse_args():
     parser.add_argument("--all", action="store_true", help="Run all tiers (default: 1+2)")
     parser.add_argument("--json", action="store_true", help="Output JSON results")
     parser.add_argument("--verbose", action="store_true", help="Show all tests, not just failures")
+    parser.add_argument("--save", type=str,
+                        default="/tmp/unit_test_results.json",
+                        help="Save results JSON + debug JSONL (default: /tmp/unit_test_results.json)")
+    parser.add_argument("--no-save", action="store_true",
+                        help="Disable saving results and debug JSONL")
     return parser.parse_args()
 
 
@@ -4139,12 +4316,21 @@ def filter_tests(tests, args):
 
 
 def main():
+    global _unit_debug
     args = parse_args()
     selected = filter_tests(TESTS, args)
 
     if not selected:
         print("No tests match the given filters.")
         return 1
+
+    # Initialize debug logger (always on unless --no-save)
+    _debug_path = None
+    if not args.no_save and args.save:
+        _debug_path = args.save.replace('.json', '_debug.jsonl')
+        _unit_debug = UnitTestDebugLogger(_debug_path)
+        if not args.json:
+            print(f"Debug logger: {_debug_path}")
 
     if not args.json:
         print("=" * 65)
@@ -4190,6 +4376,7 @@ def main():
     results = TestResults()
     current_phase = None
     tier_counts = {}  # tier -> (passed, failed)
+    t_suite_start = time.time()
 
     for case in selected:
         if not args.json and case.phase != current_phase:
@@ -4228,6 +4415,36 @@ def main():
     # Cleanup artifacts created during testing
     cleaned = cleanup_artifacts(pre_state, components, process_tracker,
                                 verbose=args.verbose, json_mode=args.json)
+
+    # Finalize debug logger
+    if _unit_debug:
+        _unit_debug.log_summary(results, tier_counts, time.time() - t_suite_start)
+        _unit_debug.close()
+        if _debug_path and os.path.exists(_debug_path):
+            dest_dir = os.path.join(PROJECT_ROOT, "tests", "iterative_results")
+            dest_file = os.path.join(dest_dir, os.path.basename(_debug_path))
+            if os.path.isdir(dest_dir) and os.path.abspath(_debug_path) != os.path.abspath(dest_file):
+                shutil.copy2(_debug_path, dest_file)
+                if not args.json:
+                    print(f"  Debug JSONL copied to {dest_dir}")
+
+    # Save results JSON (always on unless --no-save)
+    if not args.no_save and args.save:
+        save_data = results.to_json()
+        save_data["tiers"] = {
+            f"tier_{k}": {"passed": v[0], "failed": v[1]}
+            for k, v in sorted(tier_counts.items())
+        }
+        if cleaned:
+            save_data["cleanup"] = cleaned
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(args.save)), exist_ok=True)
+            with open(args.save, 'w') as f:
+                json.dump(save_data, f, indent=2)
+            if not args.json:
+                print(f"  Results saved to {args.save}")
+        except Exception as e:
+            print(f"  Warning: Could not save results: {e}")
 
     # Summary
     if args.json:

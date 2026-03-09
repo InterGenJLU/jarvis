@@ -25,7 +25,7 @@ class ConversationDebugLogger:
 
     def __init__(self, output_path: str):
         self.output_path = output_path
-        self._fh = open(output_path, 'a')
+        self._fh = open(output_path, 'w')
         logger.info("Debug logger active: %s", output_path)
 
     def _write(self, event_type: str, data: dict):

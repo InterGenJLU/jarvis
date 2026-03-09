@@ -1362,12 +1362,18 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
     if tool_call_request:
         await ws.send_json({'type': 'stream_start'})
         synthesis = ""
+        # Track tools called this turn for anaphoric follow-up resolution
+        if conv_state is not None:
+            conv_state.last_tools_called = []
 
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
             tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
 
             logger.info(f"Tool call: {tool_call_request.name}({tool_call_request.arguments})")
+            # Record tool name for anaphoric context in next turn
+            if conv_state is not None and tool_call_request.name not in conv_state.last_tools_called:
+                conv_state.last_tools_called.append(tool_call_request.name)
             logger.debug("Tool chain #%d: %s, arg_keys=%s",
                          tool_chain_count, tool_call_request.name,
                          list(tool_call_request.arguments.keys()))

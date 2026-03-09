@@ -327,17 +327,14 @@ class WebNavigationSkill(BaseSkill):
                 "open the second result",
                 "click the third one",
                 "show me the fourth one",
-                "the second one",
-                "number three",
                 "open the fifth result",
                 "play number one",
                 "show me the first result",
                 "pull up the third one",
                 "open that one",
-                "the first video",
             ],
             handler=self.select_result,
-            threshold=0.50,
+            threshold=0.65,
         )
 
         # Resize active browser window
@@ -1031,9 +1028,9 @@ class WebNavigationSkill(BaseSkill):
             site_type = self._last_search_type
 
         if not results:
-            return self.respond(
-                f"I'm still loading the results, {self.honorific}. Give me just a moment."
-            )
+            # No active navigation results — decline so LLM handles the
+            # request with conversation context (e.g. news continuation).
+            return None
 
         if n < 1 or n > len(results):
             return self.respond(

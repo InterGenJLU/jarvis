@@ -815,7 +815,22 @@ async def run_suite(conversations, config, delay=2.0, verbose=True,
 
     try:
         print(f"Connecting to {config['url']}...")
-        await client.connect()
+        max_retries = 10
+        for attempt in range(1, max_retries + 1):
+            try:
+                await client.connect()
+                break
+            except (aiohttp.ClientError, OSError) as conn_err:
+                if attempt == max_retries:
+                    raise
+                wait = min(attempt * 2, 10)
+                print(f"  Connection attempt {attempt}/{max_retries} failed: {conn_err}")
+                print(f"  Retrying in {wait}s...")
+                await asyncio.sleep(wait)
+                client = JarvisWSClient(
+                    url=config['url'], token=config['token'],
+                    tls=config['tls_enabled'],
+                )
         print(f"Connected. Running {len(conversations)} conversations.\n")
 
         for i, conv in enumerate(conversations):

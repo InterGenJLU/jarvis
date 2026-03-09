@@ -25,6 +25,8 @@ Options:
     --all         Run all tiers (default: 1+2)
     --verbose     Show all tests, not just failures
     --json        Output results as JSON
+    --save PATH   Save results JSON + debug JSONL (default: /tmp/unit_test_results.json)
+    --no-save     Disable saving results and debug JSONL
     -h, --help    Show this help message
 EOF
 }
