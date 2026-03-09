@@ -720,7 +720,20 @@ class MemoryManager:
 
         # Single-value facts
         if category == "location":
-            return f"you live in {content}"
+            subject = fact.get("subject", "")
+            if "address" in subject:
+                # Strip "my address is" prefix — _fact_to_phrase adds its own
+                clean = content
+                for prefix in ("my address is ", "their address is "):
+                    if clean.lower().startswith(prefix):
+                        clean = clean[len(prefix):]
+                        break
+                return f"your address is {clean}"
+            elif "state" in subject or "country" in subject:
+                return f"you live in {content}"
+            elif "workspace" in subject or "current_setting" in subject or "desk" in subject:
+                return None  # Suppress transient per_turn observations
+            return f"you live in {content}"  # fallback
         elif category == "preference":
             return f"you prefer {content}"
         elif category == "work":

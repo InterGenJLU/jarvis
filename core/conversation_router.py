@@ -2326,7 +2326,10 @@ class ConversationRouter:
 
             # Mobile context: tell LLM not to suggest desktop actions
             if self._is_mobile:
+                current_loc = getattr(self.conversation, 'current_location', None)
+                loc_line = f"The user's current location is {current_loc}.\n" if current_loc else ""
                 mobile_note = (
+                    f"{loc_line}"
                     "MOBILE SESSION — the user is on their phone. Do NOT suggest opening "
                     "browsers, launching apps, editing files on the server, or any "
                     "desktop-only actions. Prefer concise answers. "

@@ -343,8 +343,13 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                     return response
 
         # --- Tool call phase (multi-tool loop) ---
-        _MAX_TOOL_CHAIN = 3
+        _MAX_TOOL_CHAIN = 5
         tool_chain_count = 0
+        _tool_call_counts = {}  # Per-turn dedup: {tool_name: count}
+        # Per-tool dedup limits: web_search gets 5 (multi-source queries
+        # like trip cost need gas + tolls + food + hotels + activities),
+        # other tools stay at 2.
+        _TOOL_DEDUP_LIMITS = {'web_search': 5}
         header_printed = False
         first_tool_name = tool_call_request.name if tool_call_request else None
         first_tool_args = tool_call_request.arguments.copy() if tool_call_request else {}
@@ -356,6 +361,19 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
             tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
+
+            # Deduplication: skip if tool exceeds its per-turn limit
+            _tc_name = tool_call_request.name
+            _tool_call_counts[_tc_name] = _tool_call_counts.get(_tc_name, 0) + 1
+            _dedup_limit = _TOOL_DEDUP_LIMITS.get(_tc_name, 2)
+            if _tool_call_counts[_tc_name] > _dedup_limit:
+                llm.logger.warning(
+                    "Dedup: %s called %d times this turn (limit %d) — "
+                    "skipping, synthesizing from prior results",
+                    _tc_name, _tool_call_counts[_tc_name], _dedup_limit,
+                )
+                break
+
             # Record tool name for anaphoric context in next turn
             if conv_state is not None and tool_call_request.name not in conv_state.last_tools_called:
                 conv_state.last_tools_called.append(tool_call_request.name)
@@ -363,10 +381,17 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
             if tool_call_request.name == "web_search":
                 query = tool_call_request.arguments.get("query", command)
                 console.print(f"\n[dim]Searching: {query}[/dim]")
-                results = web_researcher.search(query)
+                # Trim fetch volume on 2nd+ search — snippets alone
+                # provide sufficient factual density for sub-queries.
+                _is_followup = _tool_call_counts.get("web_search", 0) > 1
+                _max_res = 3 if _is_followup else 5
+                _max_chars = 2000 if _is_followup else 4000
+                results = web_researcher.search(query, max_results=_max_res)
                 search_results_cache = results
 
-                page_sections = web_researcher.fetch_pages_parallel(results)
+                page_sections = web_researcher.fetch_pages_parallel(
+                    results, max_results=_max_res, max_chars=_max_chars,
+                )
                 page_content = ""
                 if page_sections:
                     page_content = "\n\nFull article content:\n\n" + \
@@ -425,6 +450,28 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         image_path=image_path,
                     )
 
+            # Result compression: on 2nd+ tool call, compress ALL prior
+            # tool-role messages in _tool_call_messages before the next
+            # synthesis call builds its payload.
+            if tool_chain_count > 1 and hasattr(llm, '_tool_call_messages'):
+                _tcm = llm._tool_call_messages
+                for _i, _msg in enumerate(_tcm):
+                    if _msg.get('role') == 'tool':
+                        _raw_len = len(_msg.get('content', ''))
+                        if _raw_len > 600:
+                            _msg['content'] = (
+                                f"[Summary of prior search results]: "
+                                f"{_msg['content'][:500]}"
+                            )
+                            llm.logger.debug(
+                                "Compressed prior tool result [%d]: %d→%d chars",
+                                _i, _raw_len, len(_msg['content']),
+                            )
+
+            # Scale max_tokens with chain depth — multi-source answers
+            # (e.g. trip cost: gas + tolls + food) need more output budget.
+            _synth_max_tokens = 400 + (tool_chain_count * 100)
+
             # Stream synthesis — may yield text or another ToolCallRequest
             if not header_printed:
                 console.print("[bold cyan]J.A.R.V.I.S.:[/bold cyan] ", end="")
@@ -433,6 +480,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
             next_tool_call = None
             for item in llm.continue_after_tool_call(
                 tool_call_request, tool_result,
+                max_tokens=_synth_max_tokens,
                 tools=use_tools_list,
                 image_data=tool_image_data if tool_call_request.name != "web_search" else None,
             ):
@@ -444,6 +492,40 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 sys.stdout.flush()
 
             tool_call_request = next_tool_call
+
+        # Graceful partial results: if synthesis produced nothing but we
+        # executed tools successfully, collect compressed summaries from
+        # _tool_call_messages and ask the LLM to synthesize them directly.
+        if not full_response.strip() and tool_chain_count > 0:
+            llm.logger.warning(
+                "Synthesis empty after %d tool calls — attempting partial fallback",
+                tool_chain_count,
+            )
+            _tcm = getattr(llm, '_tool_call_messages', [])
+            _summaries = [
+                m['content'] for m in _tcm
+                if m.get('role') == 'tool' and m.get('content')
+            ]
+            if _summaries:
+                _fallback_prompt = (
+                    f"The user asked: {command}\n\n"
+                    "Here is the information gathered:\n\n"
+                    + "\n\n".join(_summaries)
+                    + "\n\nSynthesize a concise, complete answer."
+                )
+                try:
+                    full_response = llm.chat(
+                        _fallback_prompt, [], max_tokens=600,
+                    ) or ""
+                    if full_response.strip():
+                        llm.logger.info("Partial fallback succeeded: %d chars", len(full_response))
+                        if not header_printed:
+                            console.print("[bold cyan]J.A.R.V.I.S.:[/bold cyan] ", end="")
+                            header_printed = True
+                        sys.stdout.write(full_response)
+                        sys.stdout.flush()
+                except Exception as e:
+                    llm.logger.error("Partial fallback also failed: %s", e)
 
         if header_printed:
             sys.stdout.write("\n")

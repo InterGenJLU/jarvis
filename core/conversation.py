@@ -46,6 +46,7 @@ class ConversationManager:
         # Current conversation state
         self.current_user = None
         self.client_type = "desktop"  # "desktop" or "mobile" — set by web frontend
+        self.current_location = None  # Reverse-geocoded GPS location — set by mobile client
         self.conversation_active = False
         
         # Follow-up window state

@@ -61,6 +61,9 @@ class LLMRouter:
         self.config = config
         self.logger = get_logger(__name__, config)
 
+        # User location (injected into system prompt)
+        self.home_location = config.get("location.home_address")
+
         # Local LLM configuration (llama.cpp)
         self.local_model_path = config.get("llm.local.model_path")
         self.llama_completion = os.path.expanduser(config.get("llm.local.llama_completion"))
@@ -525,7 +528,7 @@ class LLMRouter:
     def _build_system_prompt(self) -> str:
         """Build the JARVIS system prompt (delegated to persona module)."""
         from core import persona
-        return persona.system_prompt()
+        return persona.system_prompt(home_location=self.home_location)
 
     @staticmethod
     def _estimate_max_tokens(query: str) -> int:
@@ -1246,6 +1249,12 @@ class LLMRouter:
             "content": tool_result,
         })
 
+        # Snapshot messages BEFORE the synthesis prompt so that chained
+        # tool calls don't carry forward duplicate intermediate prompts.
+        # The synthesis user-message is ephemeral — needed only for THIS
+        # LLM call, not for subsequent chain steps.
+        self._tool_call_messages = list(messages)
+
         # Synthesis instruction — tell Qwen to give a direct answer.
         # Don't lead with the honorific since the ack phrase already used it.
         # Anti-hallucination is safe HERE (synthesis) — it only suppresses
@@ -1264,28 +1273,20 @@ class LLMRouter:
         else:
             honorific_rule = f"YOU MUST address the user as '{h}' naturally in your response."
         if tools:
-            # Multi-tool mode: allow LLM to call remaining tools before answering
+            # Lightweight intermediate prompt: only the chaining rule matters
+            # here — readback, honorific, and presentation rules are saved for
+            # the final synthesis (the else branch) to reduce context bloat.
+            # Each intermediate prompt was ~800 chars of repeated rules; by
+            # tool 3 that's ~2400 chars of redundant instructions.
+            loc_hint = f"The user's home location is {self.home_location}.\n" if self.home_location else ""
             synthesis_text = (
                 f"Today's date is {today}. Current time: {current_time}.\n"
-                "RULES — follow these EXACTLY:\n"
-                "1. Check the user's ORIGINAL request. If they asked for multiple things "
-                "(e.g. 'time AND weather'), YOU MUST call the next tool NOW. "
-                "DO NOT give a final answer until you have ALL requested information.\n"
-                "2. READBACK DECISION — follow this in order:\n"
-                "(a) Check your response. Does it ALREADY list the specific items, steps, prices, names, "
-                "or details the user asked for? If YES — STOP. Do not offer a readthrough. "
-                "You already provided the information.\n"
-                "(b) Does the content require a WALKTHROUGH to be useful — step-by-step cooking instructions, "
-                "assembly procedures, installation guides? If YES — give a 1-2 sentence summary "
-                "(count of steps, source) and offer a readthrough. Do NOT list any items.\n"
-                "(c) For everything else — product comparisons, recommendations, rankings, factual answers, "
-                "code, travel, general knowledge — just answer completely and stop. Never offer a readthrough.\n"
-                "3. If you have searched the web 2+ times for the same topic and the results "
-                "do not contain a clear answer, answer from your training knowledge and note "
-                "that you could not find current data to confirm.\n"
-                f"4. {honorific_rule}\n"
-                "5. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
-                "YOU MUST jump straight into the answer."
+                f"{loc_hint}"
+                "Check the user's ORIGINAL request. If they asked for UNRELATED things "
+                "requiring DIFFERENT tools (e.g. weather AND a reminder), call the next tool NOW.\n"
+                "If the search results above contain the answer, give a direct answer — do NOT "
+                "search again with a rephrased query. Only search again if the results are "
+                "completely irrelevant to the question asked."
             )
         else:
             synthesis_text = (
@@ -1357,9 +1358,16 @@ class LLMRouter:
         tc_args = ""
         tc_id = None
 
+        # Payload-aware timeout: scale with message content length.
+        # Base 30s + 1s per 1000 estimated tokens, capped at 120s.
+        # Multi-source queries (3+ web searches) can accumulate 60KB+
+        # of context that needs more time to process.
+        _est_tokens = sum(len(str(m.get('content', ''))) for m in messages) // 4
+        _timeout = min(120, 30 + (_est_tokens // 1000))
         # Multimodal requests (image_data) need longer timeout —
         # mmproj processes the image on CPU before generating tokens.
-        _timeout = 90 if image_data else 30
+        if image_data:
+            _timeout = max(_timeout, 90)
 
         try:
             response = requests.post(
@@ -1405,8 +1413,7 @@ class LLMRouter:
                             args = {"query": tc_args}
                         self.logger.info(
                             f"Chained tool call: {tc_name}({args})")
-                        # Save messages for potential further chaining
-                        self._tool_call_messages = messages
+                        # _tool_call_messages already saved before synthesis prompt
                         yield ToolCallRequest(
                             name=tc_name, arguments=args, call_id=tc_id)
                         return
@@ -1428,7 +1435,7 @@ class LLMRouter:
                     args = {"query": tc_args}
                 self.logger.info(
                     f"Chained tool call (no finish): {tc_name}({args})")
-                self._tool_call_messages = messages
+                # _tool_call_messages already saved before synthesis prompt
                 yield ToolCallRequest(
                     name=tc_name, arguments=args, call_id=tc_id)
 

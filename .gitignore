@@ -63,6 +63,9 @@ google_sync_token.json
 # Experiments / scratch
 experiments/
 
+# Research artifacts (session research, not code)
+research/
+
 # Local backups & archives
 .backup/
 .archive/

@@ -61,6 +61,42 @@ from core.interaction_cache import get_interaction_cache, Artifact
 from core.readback_session import ReadbackSession
 from core.webcam_manager import get_webcam_manager, WebcamManager, get_mobile_relay
 import hmac
+import aiohttp as _aiohttp_lib  # for outbound HTTP (Nominatim reverse geocoding)
+
+logger = logging.getLogger("jarvis.web")
+
+# --- Reverse geocoding (Nominatim / OpenStreetMap) ---
+_geo_cache: dict[tuple[float, float], str] = {}
+
+
+async def _reverse_geocode(lat: float, lon: float) -> str | None:
+    """Reverse geocode via Nominatim. Returns 'Neighborhood, City, State' or None."""
+    cache_key = (round(lat, 3), round(lon, 3))  # ~100m grid
+    if cache_key in _geo_cache:
+        return _geo_cache[cache_key]
+    try:
+        url = (f"https://nominatim.openstreetmap.org/reverse"
+               f"?lat={lat}&lon={lon}&format=json&zoom=14")
+        headers = {"User-Agent": "JARVIS-Assistant/1.0",
+                   "Accept-Encoding": "gzip, deflate"}
+        async with _aiohttp_lib.ClientSession() as session:
+            async with session.get(url, headers=headers,
+                                   timeout=_aiohttp_lib.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    addr = data.get("address", {})
+                    parts = [
+                        addr.get("suburb") or addr.get("neighbourhood") or addr.get("town"),
+                        addr.get("city") or addr.get("county"),
+                        addr.get("state"),
+                    ]
+                    resolved = ", ".join(p for p in parts if p)
+                    if resolved:
+                        _geo_cache[cache_key] = resolved
+                        return resolved
+    except Exception:
+        logger.warning("Reverse geocode failed for %.4f, %.4f", lat, lon, exc_info=True)
+    return None
 
 
 def _check_auth_token(request) -> bool:
@@ -99,8 +135,6 @@ def _make_artifact_id() -> str:
     """Generate a short unique artifact ID."""
     import uuid
     return uuid.uuid4().hex[:16]
-
-logger = logging.getLogger("jarvis.web")
 
 
 # ---------------------------------------------------------------------------
@@ -1355,8 +1389,13 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 await ws.send_json({'type': 'stream_token', 'token': token})
 
     # --- Handle tool call (multi-tool loop) ---
-    _MAX_TOOL_CHAIN = 3
+    _MAX_TOOL_CHAIN = 5
     tool_chain_count = 0
+    _tool_call_counts = {}  # Per-turn dedup: {tool_name: count}
+    # Per-tool dedup limits: web_search gets 5 (multi-source queries
+    # like trip cost need gas + tolls + food + hotels + activities),
+    # other tools stay at 2.
+    _TOOL_DEDUP_LIMITS = {'web_search': 5}
 
     _tool_image_path = None  # Persists across tool chain for stream_end
     if tool_call_request:
@@ -1369,6 +1408,18 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
         while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
             tool_chain_count += 1
             tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
+
+            # Deduplication: skip if tool exceeds its per-turn limit
+            _tc_name = tool_call_request.name
+            _tool_call_counts[_tc_name] = _tool_call_counts.get(_tc_name, 0) + 1
+            _dedup_limit = _TOOL_DEDUP_LIMITS.get(_tc_name, 2)
+            if _tool_call_counts[_tc_name] > _dedup_limit:
+                logger.warning(
+                    "Dedup: %s called %d times this turn (limit %d) — "
+                    "skipping, synthesizing from prior results",
+                    _tc_name, _tool_call_counts[_tc_name], _dedup_limit,
+                )
+                break
 
             logger.info(f"Tool call: {tool_call_request.name}({tool_call_request.arguments})")
             # Record tool name for anaphoric context in next turn
@@ -1387,9 +1438,17 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     'type': 'info',
                     'content': f'Searching: {query}',
                 })
-                results = await asyncio.to_thread(web_researcher.search, query)
+                # Trim fetch volume on 2nd+ search — snippets alone
+                # provide sufficient factual density for sub-queries.
+                _is_followup = _tool_call_counts.get("web_search", 0) > 1
+                _max_res = 3 if _is_followup else 5
+                _max_chars = 2000 if _is_followup else 4000
+                results = await asyncio.to_thread(
+                    web_researcher.search, query, max_results=_max_res,
+                )
                 page_sections = await asyncio.to_thread(
-                    web_researcher.fetch_pages_parallel, results
+                    web_researcher.fetch_pages_parallel, results,
+                    max_results=_max_res, max_chars=_max_chars,
                 )
                 page_content = ""
                 if page_sections:
@@ -1479,16 +1538,40 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                         image_path=_tool_image_path,
                     )
 
+            # Result compression: on 2nd+ tool call, compress ALL prior
+            # tool-role messages in _tool_call_messages before the next
+            # synthesis call builds its payload.
+            if tool_chain_count > 1 and hasattr(llm, '_tool_call_messages'):
+                _tcm = llm._tool_call_messages
+                for _i, _msg in enumerate(_tcm):
+                    if _msg.get('role') == 'tool':
+                        _raw_len = len(_msg.get('content', ''))
+                        if _raw_len > 600:
+                            _msg['content'] = (
+                                f"[Summary of prior search results]: "
+                                f"{_msg['content'][:500]}"
+                            )
+                            logger.debug(
+                                "Compressed prior tool result [%d]: %d→%d chars",
+                                _i, _raw_len, len(_msg['content']),
+                            )
+
+            # Scale max_tokens with chain depth — multi-source answers
+            # (e.g. trip cost: gas + tolls + food) need more output budget.
+            _synth_max_tokens = 400 + (tool_chain_count * 100)
+
             # Stream synthesis — may yield text tokens or another ToolCallRequest
             synthesis_queue = asyncio.Queue()
             _current_tcr = tool_call_request
             _current_tr = tool_result
             _current_img = tool_image_data
+            _current_max_tokens = _synth_max_tokens
 
-            def _synthesis_producer(tcr=_current_tcr, tr=_current_tr, img=_current_img):
-                logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s",
+            def _synthesis_producer(tcr=_current_tcr, tr=_current_tr, img=_current_img,
+                                    mt=_current_max_tokens):
+                logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s max_tokens=%d",
                              tcr.name, len(tr) if tr else 0,
-                             f"yes ({len(img)//1024}KB)" if img else "no")
+                             f"yes ({len(img)//1024}KB)" if img else "no", mt)
                 from core.debug_logger import get_debug_logger
                 _dbg = get_debug_logger()
                 _dbg.log_tool_result(tcr.name, tr, len(tr) if tr else 0)
@@ -1496,6 +1579,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     _token_count = 0
                     for token in llm.continue_after_tool_call(
                         tcr, tr,
+                        max_tokens=mt,
                         tools=use_tools_list,
                         image_data=img,
                     ):
@@ -1541,6 +1625,38 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     })
 
             tool_call_request = next_tool_call
+
+        # Graceful partial results: if synthesis produced nothing but we
+        # executed tools successfully, collect compressed summaries from
+        # _tool_call_messages and ask the LLM to synthesize them directly.
+        if not synthesis.strip() and tool_chain_count > 0:
+            logger.warning(
+                "Synthesis empty after %d tool calls — attempting partial fallback",
+                tool_chain_count,
+            )
+            _tcm = getattr(llm, '_tool_call_messages', [])
+            _summaries = [
+                m['content'] for m in _tcm
+                if m.get('role') == 'tool' and m.get('content')
+            ]
+            if _summaries:
+                _fallback_prompt = (
+                    f"The user asked: {command}\n\n"
+                    "Here is the information gathered:\n\n"
+                    + "\n\n".join(_summaries)
+                    + "\n\nSynthesize a concise, complete answer."
+                )
+                try:
+                    synthesis = await asyncio.to_thread(
+                        llm.chat, _fallback_prompt, [], max_tokens=600,
+                    ) or ""
+                    if synthesis.strip():
+                        logger.info("Partial fallback succeeded: %d chars", len(synthesis))
+                        await ws.send_json({
+                            'type': 'stream_token', 'token': synthesis,
+                        })
+                except Exception as e:
+                    logger.error("Partial fallback also failed: %s", e)
 
         cleaned = llm.strip_filler(synthesis) if synthesis else ""
         logger.debug("stream_end: synthesis_len=%d cleaned_len=%d has_image=%s",
@@ -2130,6 +2246,21 @@ async def websocket_handler(request):
                         if relay:
                             relay.set_ws(ws, asyncio.get_event_loop())
                             logger.info("Mobile camera relay attached to this WS")
+
+                elif msg_type == 'client_location':
+                    # Mobile browser sending GPS coordinates
+                    lat = data.get('lat')
+                    lon = data.get('lon')
+                    if lat is not None and lon is not None:
+                        prev = getattr(conversation, '_last_geo', None)
+                        if prev and abs(lat - prev[0]) < 0.008 and abs(lon - prev[1]) < 0.008:
+                            pass  # Hasn't moved significantly (~0.5 miles)
+                        else:
+                            conversation._last_geo = (lat, lon)
+                            resolved = await _reverse_geocode(lat, lon)
+                            conversation.current_location = resolved or f"{lat:.4f}\u00b0N, {lon:.4f}\u00b0W"
+                            logger.info("Mobile location: %s (%.4f, %.4f)",
+                                        conversation.current_location, lat, lon)
 
                 elif msg_type == 'frame_response':
                     # Mobile browser sending a captured camera frame

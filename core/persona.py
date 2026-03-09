@@ -452,7 +452,7 @@ def speaker_switch_retort(honorific: str) -> str:
 # System prompts
 # ---------------------------------------------------------------------------
 
-def system_prompt() -> str:
+def system_prompt(home_location: str = None) -> str:
     """Primary system prompt for LLM chat (streaming, tool calling, etc.)."""
     h = get_honorific()
     formal = get_formal_address()
@@ -469,10 +469,12 @@ def system_prompt() -> str:
         )
     else:
         rule1 = f"1. YOU MUST address the user as '{h}' — work it naturally into your responses.\n"
+    location_line = f"The user's home location is {home_location}.\n" if home_location else ""
     return (
         f"You are JARVIS, a personal AI assistant running locally on the user's computer. "
         f"You are NOT the fictional JARVIS from Marvel movies. "
         f"Today is {today}. The current local time is {current_time}.\n"
+        f"{location_line}"
         f"RULES — follow these EXACTLY:\n"
         f"{rule1}"
         f"2. DO NOT end a response with 'feel free to ask', 'let me know', 'if you have any questions', or similar filler. YOU MUST answer and stop.\n"

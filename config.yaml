@@ -2,6 +2,10 @@ system:
   wake_word: jarvis
   language: en-US
   storage_path: /mnt/storage/jarvis
+location:
+  home_address: "5801 Ashley Dr, Gardendale, Alabama 35071"
+  home_lat: 33.6662
+  home_lon: -86.8128
 audio:
   mic_device: USB PnP Audio Device
   sample_rate: 16000

@@ -1,12 +1,13 @@
 """
 Web Research Module
 
-Provides web search (DuckDuckGo) and page content extraction (trafilatura)
-for LLM-driven web research via tool calling.
+Provides web search (Serper/Google primary, DuckDuckGo fallback) and page
+content extraction (trafilatura) for LLM-driven web research via tool calling.
 
 Thread-safe, error-resilient — never crashes the pipeline.
 """
 
+import os
 import re
 import time
 import threading
@@ -51,7 +52,12 @@ class WebResearcher:
         self._page_cache = _TTLCache(ttl_seconds=600)      # 10 min
         self._last_search_time = 0.0
         self._rate_limit_gap = 1.0  # seconds between searches
-        self.logger.info("WebResearcher initialized")
+        self._serper_key = os.environ.get("SERPER_API_KEY")
+        self.last_backend = None  # "serper" or "ddg" — set by search()
+        if self._serper_key:
+            self.logger.info("WebResearcher initialized (serper primary, ddg fallback)")
+        else:
+            self.logger.info("WebResearcher initialized (ddg only — no SERPER_API_KEY)")
 
     # Local filesystem path patterns — web search is never useful for these
     _LOCAL_PATH_RE = re.compile(
@@ -59,8 +65,53 @@ class WebResearcher:
         r'[A-Z]:\\)',
     )
 
+    def _search_serper(self, query: str, max_results: int = 5) -> list[dict]:
+        """Search via Serper.dev (Google SERP). Returns same contract as search()."""
+        import requests as _req
+
+        resp = _req.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": self._serper_key},
+            json={"q": query, "num": max_results},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        results = []
+
+        # Prepend answer box if present (instant answer)
+        ab = data.get("answerBox")
+        if ab:
+            answer = ab.get("answer") or ab.get("snippet") or ab.get("title", "")
+            if answer:
+                results.append({
+                    "title": "Quick Answer",
+                    "url": "",
+                    "snippet": answer,
+                })
+
+        # Prepend knowledge graph if present
+        kg = data.get("knowledgeGraph")
+        if kg and kg.get("description"):
+            results.append({
+                "title": kg.get("title", "Knowledge Graph"),
+                "url": kg.get("website", ""),
+                "snippet": kg["description"],
+            })
+
+        # Map organic results
+        for r in data.get("organic", [])[:max_results]:
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("link", ""),
+                "snippet": r.get("snippet", ""),
+            })
+
+        return results
+
     def search(self, query: str, max_results: int = 5) -> list[dict]:
-        """Search the web via DuckDuckGo.
+        """Search the web. Serper (Google) primary, DuckDuckGo fallback.
 
         Args:
             query: Search query string
@@ -96,10 +147,24 @@ class WebResearcher:
         if elapsed < self._rate_limit_gap:
             time.sleep(self._rate_limit_gap - elapsed)
 
+        # Try Serper (Google) first
+        if self._serper_key:
+            try:
+                results = self._search_serper(query, max_results)
+                if results:
+                    self._last_search_time = time.time()
+                    self._search_cache.put(cache_key, results)
+                    self.last_backend = "serper"
+                    self.logger.info(f"Web search (serper): {query!r} → {len(results)} results")
+                    return results
+            except Exception as e:
+                self.logger.warning(f"Serper search failed, falling back to DDG: {e}")
+
+        # Fallback: DuckDuckGo
         try:
             from ddgs import DDGS
 
-            self.logger.debug("Search exec: query=%r max_results=%d", query, max_results)
+            self.logger.debug("Search exec (ddg): query=%r max_results=%d", query, max_results)
             results = []
             with DDGS() as ddgs:
                 for r in ddgs.text(query, max_results=max_results):
@@ -111,7 +176,8 @@ class WebResearcher:
 
             self._last_search_time = time.time()
             self._search_cache.put(cache_key, results)
-            self.logger.info(f"Web search: {query!r} → {len(results)} results")
+            self.last_backend = "ddg"
+            self.logger.info(f"Web search (ddg): {query!r} → {len(results)} results")
             return results
 
         except Exception as e:

@@ -1150,21 +1150,26 @@ class Coordinator:
             # Multi-tool loop: execute tool, synthesize, repeat if LLM
             # requests another tool (e.g. "time and weather" → get_time then get_weather).
             # Cap at 3 to prevent runaway loops.
-            _MAX_TOOL_CHAIN = 3
+            _MAX_TOOL_CHAIN = 5
             tool_chain_count = 0
             _tool_call_counts = {}  # Per-turn dedup: {tool_name: count}
+            # Per-tool dedup limits: web_search gets 5 (multi-source queries
+            # like trip cost need gas + tolls + food + hotels + activities),
+            # other tools stay at 2.
+            _TOOL_DEDUP_LIMITS = {'web_search': 3}
 
             while tool_call_request and tool_chain_count < _MAX_TOOL_CHAIN:
                 tool_chain_count += 1
 
-                # Deduplication: skip if same tool called 2+ times this turn
+                # Deduplication: skip if tool exceeds its per-turn limit
                 _tc_name = tool_call_request.name
                 _tool_call_counts[_tc_name] = _tool_call_counts.get(_tc_name, 0) + 1
-                if _tool_call_counts[_tc_name] > 2:
+                _dedup_limit = _TOOL_DEDUP_LIMITS.get(_tc_name, 2)
+                if _tool_call_counts[_tc_name] > _dedup_limit:
                     self.logger.warning(
-                        "⚠️ Dedup: %s called %d times this turn — "
+                        "⚠️ Dedup: %s called %d times this turn (limit %d) — "
                         "skipping, synthesizing from prior results",
-                        _tc_name, _tool_call_counts[_tc_name],
+                        _tc_name, _tool_call_counts[_tc_name], _dedup_limit,
                     )
                     break
 
@@ -1177,17 +1182,26 @@ class Coordinator:
                 if tool_call_request.name == "web_search":
                     query = tool_call_request.arguments.get("query", command)
                     print(f"🔍 Searching: {query}")
-                    results = self.web_researcher.search(query)
+                    # Trim fetch volume on 2nd+ search — snippets alone
+                    # provide sufficient factual density for sub-queries.
+                    _is_followup = _tool_call_counts.get("web_search", 0) > 1
+                    _max_res = 3 if _is_followup else 5
+                    _max_chars = 2000 if _is_followup else 4000
+                    results = self.web_researcher.search(query, max_results=_max_res)
                     self.conv_state.research_results = results
+                    _backend = getattr(self.web_researcher, 'last_backend', None) or "unknown"
 
-                    page_sections = self.web_researcher.fetch_pages_parallel(results)
+                    page_sections = self.web_researcher.fetch_pages_parallel(
+                        results, max_results=_max_res, max_chars=_max_chars,
+                    )
                     page_content = ""
                     if page_sections:
                         page_content = "\n\nFull article content:\n\n" + \
                             "\n\n---\n\n".join(page_sections)
 
                     tool_result = format_search_results(results) + page_content
-                    print(f"📋 Found {len(results)} results")
+                    self.logger.info(f"Web search ({_backend}): {len(results)} results for {query!r}")
+                    print(f"📋 Found {len(results)} results ({_backend})")
 
                     # Artifact cache (dual-write alongside conv_state)
                     if self.interaction_cache:
@@ -1292,8 +1306,33 @@ class Coordinator:
                                   [t["function"]["name"] for t in use_tools] if use_tools else "none")
                 next_tool_call = None
                 _synth_token_count = 0
+
+                # Result compression: on 2nd+ tool call, compress ALL prior
+                # tool-role messages in _tool_call_messages before the next
+                # synthesis call builds its payload. This must happen BEFORE
+                # continue_after_tool_call, which appends the new tool result
+                # and sends the full message list to the LLM.
+                if tool_chain_count > 1 and hasattr(self.llm, '_tool_call_messages'):
+                    _tcm = self.llm._tool_call_messages
+                    for _i, _msg in enumerate(_tcm):
+                        if _msg.get('role') == 'tool':
+                            _raw_len = len(_msg.get('content', ''))
+                            if _raw_len > 600:
+                                _msg['content'] = (
+                                    f"[Summary of prior search results]: "
+                                    f"{_msg['content'][:500]}"
+                                )
+                                self.logger.debug(
+                                    "Compressed prior tool result [%d]: %d→%d chars",
+                                    _i, _raw_len, len(_msg['content']),
+                                )
+
+                # Scale max_tokens with chain depth — multi-source answers
+                # (e.g. trip cost: gas + tolls + food) need more output budget.
+                _synth_max_tokens = 400 + (tool_chain_count * 100)
                 for item in self.llm.continue_after_tool_call(
                     tool_call_request, tool_result,
+                    max_tokens=_synth_max_tokens,
                     tools=use_tools,
                     image_data=_synth_img,
                 ):
@@ -1323,7 +1362,37 @@ class Coordinator:
 
                 self.logger.debug("Synthesis complete: %d tokens, response_len=%d",
                                   _synth_token_count, len(full_response))
+
                 tool_call_request = next_tool_call
+
+            # Graceful partial results: if synthesis produced nothing but we
+            # executed tools successfully, collect compressed summaries from
+            # _tool_call_messages and ask the LLM to synthesize them directly.
+            if not full_response.strip() and tool_chain_count > 0:
+                self.logger.warning(
+                    "Synthesis empty after %d tool calls — attempting partial fallback",
+                    tool_chain_count,
+                )
+                _tcm = getattr(self.llm, '_tool_call_messages', [])
+                _summaries = [
+                    m['content'] for m in _tcm
+                    if m.get('role') == 'tool' and m.get('content')
+                ]
+                if _summaries:
+                    _fallback_prompt = (
+                        f"The user asked: {command}\n\n"
+                        "Here is the information gathered:\n\n"
+                        + "\n\n".join(_summaries)
+                        + "\n\nSynthesize a concise, complete answer."
+                    )
+                    try:
+                        full_response = self.llm.chat(
+                            _fallback_prompt, [], max_tokens=600,
+                        ) or ""
+                        if full_response.strip():
+                            self.logger.info("Partial fallback succeeded: %d chars", len(full_response))
+                    except Exception as e:
+                        self.logger.error("Partial fallback also failed: %s", e)
 
             # Combine buffered last chunk + flush remnant, strip filler, then speak
             remaining = chunker.flush()

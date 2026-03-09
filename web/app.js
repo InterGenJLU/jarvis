@@ -144,6 +144,34 @@
     let mobileStream = null;
     let mobileFacing = localStorage.getItem('jarvis-camera-facing') || 'environment';
 
+    // Mobile geolocation state
+    let _geoWatchId = null;
+    let _lastLocationSent = 0;
+
+    function sendLocation(pos) {
+        const now = Date.now();
+        if (now - _lastLocationSent < 300000 && _lastLocationSent > 0) return;
+        _lastLocationSent = now;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'client_location',
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+                accuracy: pos.coords.accuracy
+            }));
+        }
+    }
+
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden && isMobileClient && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function (pos) { _lastLocationSent = 0; sendLocation(pos); },
+                function () {},
+                { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+            );
+        }
+    });
+
     function loadCommandHistory() {
         const uid = userSelect.value || 'default';
         try {
@@ -191,6 +219,19 @@
                 screen_width: screen.width,
                 screen_height: screen.height,
             }));
+            // Request geolocation on mobile sessions
+            if (isMobileClient && navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function (pos) { sendLocation(pos); },
+                    function (err) { console.warn('Geolocation denied:', err.message); },
+                    { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+                );
+                _geoWatchId = navigator.geolocation.watchPosition(
+                    function (pos) { sendLocation(pos); },
+                    function () {},
+                    { enableHighAccuracy: false, maximumAge: 300000 }
+                );
+            }
         };
 
         ws.onmessage = function (event) {
@@ -204,6 +245,10 @@
         };
 
         ws.onclose = function () {
+            if (_geoWatchId !== null) {
+                navigator.geolocation.clearWatch(_geoWatchId);
+                _geoWatchId = null;
+            }
             ws = null;
             reconnectAttempt++;
             var delay = reconnectDelay;
