@@ -2111,32 +2111,46 @@ class ConversationRouter:
 
         return result_tools
 
-    # Tools eligible for anaphoric carryover from prior turn.
-    _ANAPHORIC_CARRYOVER_TOOLS = {"find_files", "developer_tools", "get_system_info"}
+    # Tool families for anaphoric carryover.  If any member of a family
+    # was used in the prior turn, ALL members are injected so the LLM
+    # can chain related operations (e.g. find → delete, list → modify).
+    _ANAPHORIC_TOOL_FAMILIES = [
+        {"find_files", "developer_tools", "get_system_info"},
+    ]
 
     def _apply_anaphoric_carryover(self, tools: list) -> list:
         """Add prior-turn domain tools for anaphoric follow-ups.
 
-        When the prior turn called filesystem/developer tools, keep them
-        in the toolset for follow-up references like 'list them',
-        'what's in there now', 'delete the largest one'.
+        When the prior turn called a tool in a defined family, inject the
+        entire family so the LLM can chain related operations like
+        'list them', 'what's in there now', 'delete the largest one'.
         """
         prior = getattr(self.conv_state, 'last_tools_called', None)
         if not prior:
             return tools
 
+        # Collect all tools to inject: for each prior tool that belongs
+        # to a family, add every member of that family.
+        inject = set()
+        for tool_name in prior:
+            for family in self._ANAPHORIC_TOOL_FAMILIES:
+                if tool_name in family:
+                    inject |= family
+
+        if not inject:
+            return tools
+
         current_names = {t["function"]["name"] for t in tools}
         from core.tool_registry import SKILL_TOOLS
         added = []
-        for tool_name in prior:
-            if (tool_name in self._ANAPHORIC_CARRYOVER_TOOLS
-                    and tool_name not in current_names):
+        for tool_name in inject:
+            if tool_name not in current_names:
                 schema = SKILL_TOOLS.get(tool_name)
                 if schema:
                     tools.append(schema)
                     added.append(tool_name)
         if added:
-            logger.info("Anaphoric carryover: added %s from prior turn", added)
+            logger.info("Anaphoric carryover: added %s (family) from prior turn", added)
         return tools
 
     # Global confidence floor for skill routing.  Matches below this
