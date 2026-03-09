@@ -17,7 +17,7 @@ All previous conversation test runs (001–014) left artifacts in JARVIS's memor
 - Removes FAISS index files (rebuilt on next startup)
 - Deletes interaction_cache artifacts/links created after `run_start_ts`
 - Deletes web_queries created after `run_start_ts`
-- **This is an uncommitted change** in `scripts/test_conversations.py`
+- Committed as `6f1d19d`, published to public repo
 
 ### 3. Archived Stale Auto-Memory Files
 Moved 161 files from Claude Code auto-memory to `archive/` subdirectory:
@@ -38,7 +38,7 @@ Removed 4 stale files: `conversation_test_readback.json`, `*_debug.jsonl`, `run_
 
 ## Current State
 
-- **Working tree DIRTY** — `scripts/test_conversations.py` has uncommitted memory cleanup changes
+- **Working tree CLEAN** — all changes committed (`6f1d19d`)
 - **JARVIS memory CLEAN** — 26 real facts, 0 interaction_log, 0 topic_segments, no FAISS index, 0 cache artifacts
 - **FAISS index deleted** — will rebuild automatically on next JARVIS startup
 - **Unit tests:** 314/314 PASS as of unit_run_001. Code changes require unit_run_002.

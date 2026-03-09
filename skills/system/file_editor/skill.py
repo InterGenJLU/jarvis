@@ -178,7 +178,7 @@ class FileEditorSkill(BaseSkill):
                 "look into security frameworks and create a document",
             ],
             handler=self.create_document,
-            threshold=0.50,
+            threshold=0.55,
         )
 
         self.register_semantic_intent(
