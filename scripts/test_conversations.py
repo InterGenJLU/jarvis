@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-Multi-turn conversational test suite for JARVIS.
+Multi-turn conversational test suite for JARVIS (v2).
 
 Sends realistic multi-turn conversations through the live WebSocket endpoint
 and captures routing decisions + LLM responses for analysis.
 
+v2: 62 conversations, 26 categories, all 17 domains, 3 secondary user multi-user tests,
+    domain classification + synthesis debug events.
+
 Observe first, assert later — initial runs generate data for human review.
 
 Usage:
-    python3 scripts/test_conversations.py --verbose              # All conversations
-    python3 scripts/test_conversations.py --id C17               # Single conversation
-    python3 scripts/test_conversations.py --ids C02,C05,C17      # Multiple conversations
-    python3 scripts/test_conversations.py --category road-trip   # By category
-    python3 scripts/test_conversations.py --core-only            # C01-C10 only
+    python3 scripts/test_conversations.py --verbose              # All v2 conversations
+    python3 scripts/test_conversations.py --id V17               # Single conversation
+    python3 scripts/test_conversations.py --ids V02,V05,V17      # Multiple conversations
+    python3 scripts/test_conversations.py --category routing     # By category
+    python3 scripts/test_conversations.py --core-only            # V01-V10 only
+    python3 scripts/test_conversations.py --v1                   # Run archived v1 suite
     python3 scripts/test_conversations.py --list                 # List all conversations
     python3 scripts/test_conversations.py --analyze              # Analyze last run
 """
@@ -47,6 +51,7 @@ class Turn:
     """A single user turn in a conversation."""
     user: str
     notes: str = ""
+    user_id: str | None = None  # None = current user (default christopher)
 
 
 @dataclass
@@ -66,6 +71,8 @@ class TurnResult:
     word_count: int = 0
     notes: str = ""
     raw_stats: dict = field(default_factory=dict)
+    synthesis_category: str = ""
+    synthesis_temperature: float = 0.0
 
 
 @dataclass
@@ -152,6 +159,11 @@ class JarvisWSClient:
             except asyncio.TimeoutError:
                 break
 
+    async def set_user(self, user_id: str):
+        """Switch active user (sends set_user WS message, consumes handshake)."""
+        await self.ws.send_json({"type": "set_user", "user_id": user_id})
+        await self._consume_handshake()
+
     async def send_turn(self, content: str) -> TurnResult:
         """Send user message, collect full response + metadata."""
         await self.ws.send_json({"type": "message", "content": content})
@@ -215,6 +227,8 @@ class JarvisWSClient:
             info_messages=info_messages,
             word_count=word_count,
             raw_stats=stats_data,
+            synthesis_category=stats_data.get('synthesis_category', ''),
+            synthesis_temperature=stats_data.get('synthesis_temperature', 0.0),
         )
 
     async def close(self):
@@ -226,16 +240,16 @@ class JarvisWSClient:
 
 # ── Conversation Definitions ──────────────────────────────────────────────
 
-def _t(user, notes=""):
-    return Turn(user=user, notes=notes)
+def _t(user, notes="", user_id=None):
+    return Turn(user=user, notes=notes, user_id=user_id)
 
 
 def _c(id, name, category, turns):
     return Conversation(id=id, name=name, category=category, turns=turns)
 
 
-def get_all_conversations():
-    """Return all 40 test conversations."""
+def get_v1_conversations():
+    """Return all 40 v1 test conversations (archived)."""
     return [
 
         # ── Core Routing Patterns (C01-C10) ──────────────────────────
@@ -555,6 +569,469 @@ def get_all_conversations():
     ]
 
 
+def get_v2_conversations():
+    """Return all 62 v2 test conversations."""
+    return [
+
+        # ── Routing Core (V01-V10) ──────────────────────────────────
+
+        _c("V01", "Rapid Topic Shift", "routing", [
+            _t("what's the weather"),
+            _t("check git status"),
+            _t("was it supposed to rain today?", "callback to turn 1 weather"),
+        ]),
+
+        _c("V02", "Anaphoric Chain", "routing", [
+            _t("how many files are in my documents folder"),
+            _t("list them for me", "anaphoric reference"),
+            _t("which ones are the biggest", "continuation"),
+            _t("how old is the oldest one", "implied context"),
+        ]),
+
+        _c("V03", "Mid-Conversation Correction", "routing", [
+            _t("set a reminder for 3pm to call the dentist"),
+            _t("actually make it 4pm", "time correction"),
+            _t("and change dentist to doctor", "subject correction"),
+        ]),
+
+        _c("V04", "Cross-Topic Callback", "routing", [
+            _t("any cybersecurity news"),
+            _t("tell me more about the first one", "news continuation"),
+            _t("what's the weather this weekend"),
+            _t("going back to that news story, search the web for more details", "callback to news"),
+        ]),
+
+        _c("V05", "Short Ambiguous Follow-ups", "routing", [
+            _t("how much disk space do I have"),
+            _t("what about memory", "implied: system memory"),
+            _t("and CPU"),
+            _t("is that normal?", "contextual follow-up"),
+        ]),
+
+        _c("V06", "Greeting to Task to Dismiss", "routing", [
+            _t("hey jarvis"),
+            _t("what time is it"),
+            _t("thanks, that's all", "dismissal detection"),
+        ]),
+
+        _c("V07", "Knowledge then Tool Mix", "routing", [
+            _t("what's a buffer overflow"),
+            _t("search for recent buffer overflow CVEs", "tool: web_search"),
+            _t("which one is the most critical", "follow-up on search results"),
+        ]),
+
+        _c("V08", "Bare Ack Filtering", "routing", [
+            _t("what's the capital of France"),
+            _t("yeah", "bare ack — should NOT trigger new response"),
+            _t("what about Germany", "new question after bare ack"),
+        ]),
+
+        _c("V09", "Compound Detection Edge Case", "routing", [
+            _t("what's the weather and whether I should bring a jacket", "NOT compound — single intent"),
+        ]),
+
+        _c("V10", "Five-Turn Deep Dive", "routing", [
+            _t("explain how TLS handshake works"),
+            _t("what changed between TLS 1.2 and 1.3"),
+            _t("why was RSA key exchange removed"),
+            _t("what's the performance difference"),
+            _t("summarize everything in 3 bullet points"),
+        ]),
+
+        # ── Hallucination-Prone Domains (V11-V15) ────────────────────
+
+        _c("V11", "Medical Symptom Research", "domain-medical", [
+            _t("what are the common symptoms of Type 2 diabetes"),
+            _t("what medications are typically prescribed for it"),
+            _t("are there any interactions between metformin and ibuprofen"),
+            _t("what lifestyle changes help manage blood sugar"),
+        ]),
+
+        _c("V12", "Veterinary Health Question", "domain-medical", [
+            _t("my dog has been limping on his front left leg for two days, what could it be"),
+            _t("he's a 7 year old lab mix, about 80 pounds"),
+            _t("is there anything I can give him for the pain at home"),
+            _t("when should I take him to the vet versus just waiting it out"),
+        ]),
+
+        _c("V13", "Legal Rights Question", "domain-legal-finance", [
+            _t("if my landlord wants to enter my apartment, how much notice do they have to give me in Alabama"),
+            _t("what if they come in without notice, what are my options"),
+            _t("can I withhold rent if they refuse to fix something"),
+        ]),
+
+        _c("V14", "Stock Market Research", "domain-legal-finance", [
+            _t("how has NVIDIA stock performed this year"),
+            _t("what's driving the price right now"),
+            _t("is it a good time to buy"),
+            _t("what about AMD compared to NVIDIA for a long-term hold"),
+        ]),
+
+        _c("V15", "Nutrition and Macros", "domain-nutrition", [
+            _t("how many calories are in a chicken breast"),
+            _t("what about the protein and fat breakdown"),
+            _t("if I eat 4 chicken breasts a day is that too much protein"),
+            _t("what's a good daily protein target for someone who lifts weights, about 200 pounds"),
+        ]),
+
+        # ── Knowledge Domains (V16-V23) ──────────────────────────────
+
+        _c("V16", "Sports Scores and Standings", "domain-sports-gaming", [
+            _t("how did Alabama do in their last football game"),
+            _t("who are they playing next"),
+            _t("what are the current SEC standings"),
+            _t("who's favored to win the SEC championship this year"),
+        ]),
+
+        _c("V17", "Gaming Release Research", "domain-sports-gaming", [
+            _t("what big games have come out recently for PlayStation 5"),
+            _t("which one has the best reviews"),
+            _t("is there a new Grand Theft Auto coming out"),
+            _t("what's the price and where can I get the best deal"),
+        ]),
+
+        _c("V18", "Home Value Research", "domain-real-estate", [
+            _t("what's the average home price in Huntsville Alabama right now"),
+            _t("how does that compare to five years ago"),
+            _t("what neighborhoods are appreciating the fastest"),
+            _t("what would my monthly payment be on a $350,000 house with 20 percent down at current rates"),
+        ]),
+
+        _c("V19", "Historical Deep Dive", "domain-history-factual", [
+            _t("what caused the fall of the Roman Empire"),
+            _t("how long did the decline actually take"),
+            _t("were there any parallels to modern civilizations"),
+            _t("what are the best books on this topic"),
+        ]),
+
+        _c("V20", "Factual Quick-Fire", "domain-history-factual", [
+            _t("who invented the telephone"),
+            _t("what year was the first transatlantic flight"),
+            _t("how tall is the Empire State Building"),
+            _t("what's the population of Tokyo"),
+        ]),
+
+        _c("V21", "Science Research Query", "domain-science-tech", [
+            _t("what's the current scientific consensus on dark matter"),
+            _t("what experiments are being done to detect it"),
+            _t("has anyone proposed alternatives to dark matter"),
+            _t("explain it like I understand physics but not cosmology"),
+        ]),
+
+        _c("V22", "Python API Research", "domain-programming", [
+            _t("what's the latest stable version of Python right now"),
+            _t("what new features did it add"),
+            _t("show me an example of the new pattern matching syntax"),
+            _t("how does Python's performance compare to Rust for CPU-bound work"),
+        ]),
+
+        _c("V23", "Security Code Analysis", "domain-programming", [
+            _t("if I have a Flask endpoint that takes user input and puts it directly in a SQL query, what could go wrong"),
+            _t("show me the vulnerable version versus the fixed version"),
+            _t("what other OWASP top 10 issues should I watch for in Flask"),
+        ]),
+
+        # ── Entertainment & Automotive (V24-V27) ─────────────────────
+
+        _c("V24", "Current Movies Research", "entertainment", [
+            _t("what movies are playing in theaters right now"),
+            _t("who's the lead in that first one", "anaphoric to search results"),
+            _t("what else have they been in"),
+            _t("anything good on streaming this month"),
+        ]),
+
+        _c("V25", "Music and Concert Research", "entertainment", [
+            _t("is Tool touring this year"),
+            _t("are they playing anywhere near North Carolina"),
+            _t("how much are tickets going for"),
+            _t("what other rock or metal shows are happening this summer in the southeast"),
+        ]),
+
+        _c("V26", "Jeep Specs and Research", "automotive", [
+            _t("what's the towing capacity on a 2026 Jeep Wrangler JL"),
+            _t("look that up online to make sure"),
+            _t("how does the Wrangler compare to the Bronco for off-road capability"),
+            _t("if I'm doing mostly weekend trail rides, which one makes more sense"),
+        ]),
+
+        _c("V27", "Car Maintenance Questions", "automotive", [
+            _t("what's the recommended oil change interval for a 2026 Wrangler JL"),
+            _t("are there any recalls or common problems I should know about"),
+            _t("what does the 60,000 mile service typically cost"),
+        ]),
+
+        # ── Travel & Geo (V28-V29) ──────────────────────────────────
+
+        _c("V28", "Road Trip Planning", "travel-geo", [
+            _t("how far is it from here to Gatlinburg Tennessee"),
+            _t("with my Wrangler getting about 22 mpg and gas at $3.50, what's the fuel cost round trip"),
+            _t("what's worth seeing along the way"),
+            _t("recommend a good cabin rental in Gatlinburg for a weekend"),
+        ]),
+
+        _c("V29", "International Travel", "travel-geo", [
+            _t("I'm thinking about driving to Cancun from here, how far is that"),
+            _t("what paperwork do I need for the border crossing"),
+            _t("what's the best route and where should I stop for gas"),
+            _t("how much should I budget for a week down there"),
+        ]),
+
+        # ── Self-Awareness (V30-V31) ─────────────────────────────────
+
+        _c("V30", "Hardware Identity", "self-awareness", [
+            _t("what CPU are you running on"),
+            _t("how much RAM do you have"),
+            _t("what GPU are you using"),
+            _t("what LLM model are you running right now"),
+        ]),
+
+        _c("V31", "Capability Self-Knowledge", "self-awareness", [
+            _t("what can you do"),
+            _t("can you control my desktop"),
+            _t("do you have access to my calendar"),
+            _t("what skills do you have loaded right now"),
+        ]),
+
+        # ── Memory (V32-V33) ─────────────────────────────────────────
+
+        _c("V32", "Store and Recall", "memory", [
+            _t("remember that my favorite barbecue restaurant is Jim N Nick's"),
+            _t("what's my favorite barbecue place", "recall_memory should find it"),
+            _t("forget that", "memory forget confirm"),
+            _t("yes, delete it"),
+        ]),
+
+        _c("V33", "Memory Transparency", "memory", [
+            _t("what do you remember about me"),
+            _t("how many facts do you have stored"),
+            _t("do you remember what I asked you about last time"),
+        ]),
+
+        # ── Task Planner (V34-V35) ───────────────────────────────────
+
+        _c("V34", "Compound Execution", "task-planner", [
+            _t("search for the weather this weekend and then create a packing list document", "compound detection"),
+            _t("how many steps is that", "plan should have been announced"),
+        ]),
+
+        _c("V35", "Compound with Cancel", "task-planner", [
+            _t("check my git status and then search for the latest Python security patches and create a summary", "3-step compound"),
+            _t("cancel", "task planner interrupt"),
+        ]),
+
+        # ── Document Generation (V36-V37) ────────────────────────────
+
+        _c("V36", "Presentation", "document-gen", [
+            _t("create a presentation about cybersecurity best practices for small businesses"),
+            _t("add a slide about password management"),
+            _t("open it"),
+        ]),
+
+        _c("V37", "Document with Readback", "document-gen", [
+            _t("create a document comparing the top 3 BBQ rub recipes"),
+            _t("read it to me", "delivery mode triggers readback"),
+        ]),
+
+        # ── Desktop & Apps (V38-V39) ─────────────────────────────────
+
+        _c("V38", "App Launch and Control", "desktop-apps", [
+            _t("open Chrome"),
+            _t("make it fullscreen"),
+            _t("now open the calculator"),
+            _t("close Chrome"),
+        ]),
+
+        _c("V39", "Volume and Screenshot", "desktop-apps", [
+            _t("turn the volume up"),
+            _t("set it to 50 percent"),
+            _t("mute"),
+            _t("take a screenshot"),
+        ]),
+
+        # ── Web Navigation (V40-V41) ─────────────────────────────────
+
+        _c("V40", "Site-Specific Searches", "web-navigation", [
+            _t("search YouTube for how to smoke a brisket"),
+            _t("now search Amazon for a Thermapen thermometer"),
+            _t("look up brisket on Wikipedia"),
+        ]),
+
+        _c("V41", "Browser Control", "web-navigation", [
+            _t("open google.com"),
+            _t("make the browser half screen"),
+            _t("open a new tab to reddit"),
+            _t("minimize the browser"),
+        ]),
+
+        # ── File Operations (V42-V43) ────────────────────────────────
+
+        _c("V42", "File System Exploration", "file-ops", [
+            _t("how many files are in my downloads folder"),
+            _t("show me the 5 most recent ones"),
+            _t("how much disk space am I using"),
+            _t("what are the biggest files on my system"),
+        ]),
+
+        _c("V43", "Code Directory Analysis", "file-ops", [
+            _t("how many lines of code are in the jarvis project"),
+            _t("show me the directory tree for the core folder"),
+            _t("how big is the models directory"),
+        ]),
+
+        # ── System Admin (V44-V45) ───────────────────────────────────
+
+        _c("V44", "Git and Dev Tools", "system-admin", [
+            _t("what's my git status"),
+            _t("show me the last 5 commits"),
+            _t("are there any uncommitted changes"),
+            _t("search the codebase for domain_disclaimer"),
+        ]),
+
+        _c("V45", "System Health", "system-admin", [
+            _t("is the jarvis web service running"),
+            _t("what processes are using the most CPU right now"),
+            _t("run a full system health check"),
+            _t("show me the last 10 minutes of jarvis logs"),
+        ]),
+
+        # ── Multi-User / Secondary User (V46-V48) ─────────────────────────────
+
+        _c("V46", "Secondary User Basic Interaction", "multi-user", [
+            _t("good morning", "formal: Ms. Guest greeting", user_id="secondary_user"),
+            _t("what's the weather today", "mum honorific mid-convo", user_id="secondary_user"),
+            _t("do I have any reminders", "secondary user's reminders", user_id="secondary_user"),
+            _t("thank you, that's all", "formal: Ms. Guest farewell", user_id="secondary_user"),
+        ]),
+
+        _c("V47", "Secondary User Task Request", "multi-user", [
+            _t("set a reminder for tomorrow at 9am to call the pharmacy", user_id="secondary_user"),
+            _t("what's for dinner tonight", "general question, mum honorific", user_id="secondary_user"),
+            _t("how do I send a picture on my iPhone", "tech help, clear and patient", user_id="secondary_user"),
+        ]),
+
+        _c("V48", "User Switch Mid-Conversation", "multi-user", [
+            _t("what's the weather this weekend", "the user, sir"),
+            _t("what's a good recipe for chicken soup", "switches to secondary user, mum", user_id="secondary_user"),
+            _t("can you search for that on YouTube", "still secondary user", user_id="secondary_user"),
+            _t("check my git status", "switches back to the user, sir", user_id="user"),
+        ]),
+
+        # ── Long-Form Knowledge (V49-V51) ────────────────────────────
+
+        _c("V49", "Cybersecurity Deep Dive", "long-form", [
+            _t("tell me about lateral movement in cybersecurity"),
+            _t("what tools do attackers typically use for that"),
+            _t("how do you detect it in a network"),
+            _t("what about in a cloud environment"),
+            _t("summarize in 3 bullet points"),
+        ]),
+
+        _c("V50", "DNS and Networking", "long-form", [
+            _t("explain how DNS works end to end"),
+            _t("what happens when DNS resolution fails"),
+            _t("what's the difference between DNS over HTTPS and standard DNS"),
+            _t("how would I set up a Pi-hole at home"),
+        ]),
+
+        _c("V51", "AI and ML Breakdown", "long-form", [
+            _t("what's the difference between machine learning, deep learning, and AI"),
+            _t("where does a large language model fit in"),
+            _t("what are the biggest limitations of current LLMs"),
+            _t("what's the most promising research direction right now"),
+        ]),
+
+        # ── Math (V52-V53) ───────────────────────────────────────────
+
+        _c("V52", "Recipe Scaling", "math", [
+            _t("I need to triple 3/4 cup of flour"),
+            _t("I only have a 1/3 cup scoop, how many scoops"),
+            _t("recipe serves 4, I need to feed 7, what's my multiplier"),
+            _t("scale the whole thing for me — 3/4 cup flour, 2 tbsp butter, 1.5 cups milk, 3 eggs"),
+        ]),
+
+        _c("V53", "Home Project Calculations", "math", [
+            _t("room is 14 by 12 feet with 9 foot ceilings, what's the wall area"),
+            _t("subtract two 3x4 windows and a 3x7 door"),
+            _t("a gallon covers 350 square feet, how many gallons for two coats"),
+            _t("at $75 a gallon, total paint cost"),
+        ]),
+
+        # ── Weather & News (V54-V55) ─────────────────────────────────
+
+        _c("V54", "Weather Multi-Turn", "weather-news", [
+            _t("what's the weather right now"),
+            _t("what about this weekend"),
+            _t("is it supposed to rain tomorrow"),
+            _t("should I wash my car this week or wait"),
+        ]),
+
+        _c("V55", "News Deep Dive", "weather-news", [
+            _t("any tech news today"),
+            _t("tell me more about the first one"),
+            _t("pull that article up"),
+            _t("any cybersecurity news"),
+        ]),
+
+        # ── Reminders (V56-V57) ──────────────────────────────────────
+
+        _c("V56", "Reminder Lifecycle", "reminders", [
+            _t("set a reminder for tomorrow at 10am to check the oil change schedule"),
+            _t("what reminders do I have set"),
+            _t("cancel the one about oil changes"),
+            _t("set a reminder for Friday at 3pm to leave early for the weekend"),
+        ]),
+
+        _c("V57", "Reminder Correction Chain", "reminders", [
+            _t("remind me at 2pm to call mom"),
+            _t("actually make that 3pm"),
+            _t("and change call to text"),
+            _t("cancel all my reminders"),
+        ]),
+
+        # ── Readback (V58) ───────────────────────────────────────────
+
+        _c("V58", "Readback Decision Testing", "readback", [
+            _t("search for a pulled pork recipe", "should NOT auto-readback"),
+            _t("read that to me", "delivery mode triggers readback"),
+            _t("next", "readback navigation"),
+            _t("go back to the ingredients", "section navigation"),
+        ]),
+
+        # ── Mixed-Capability (V59-V62) ───────────────────────────────
+
+        _c("V59", "Morning Routine", "mixed-capability", [
+            _t("good morning"),
+            _t("what's the weather today"),
+            _t("any important news"),
+            _t("what reminders do I have set"),
+            _t("check my git status"),
+            _t("how's the system health"),
+        ]),
+
+        _c("V60", "Research to Document", "mixed-capability", [
+            _t("search for the top 5 budget smokers for brisket"),
+            _t("compare them in a document"),
+            _t("add price data to each entry"),
+            _t("email that to me", "should explain email not yet available"),
+        ]),
+
+        _c("V61", "Personal Context Chain", "mixed-capability", [
+            _t("remember that I have a dentist appointment next Tuesday"),
+            _t("set a reminder for Monday night to not eat after 10pm"),
+            _t("what do I have going on this week", "should surface dentist appointment"),
+            _t("search for tips on preparing for a dental cleaning"),
+        ]),
+
+        _c("V62", "Cross-Domain Rapid Fire", "mixed-capability", [
+            _t("what's 15 percent of $87.50"),
+            _t("who won the Super Bowl last year"),
+            _t("open YouTube"),
+            _t("what's the weather tomorrow"),
+            _t("how much disk space do I have left"),
+        ]),
+    ]
+
+
 # ── Output Formatting ─────────────────────────────────────────────────────
 
 def format_routing(result):
@@ -728,6 +1205,16 @@ def print_analysis(results):
         for tool, count in sorted(tool_counts.items(), key=lambda x: -x[1]):
             print(f"    {tool}: {count}")
 
+    # Domain classification distribution
+    domain_counts = {}
+    for t in all_turns:
+        cat = t.synthesis_category or "(none)"
+        domain_counts[cat] = domain_counts.get(cat, 0) + 1
+    if any(k != "(none)" for k in domain_counts):
+        print(f"\n  Domain classification:")
+        for domain, count in sorted(domain_counts.items(), key=lambda x: -x[1]):
+            print(f"    {domain:20s} {count:3d}  ({100*count//total_turns}%)")
+
     print(f"\n  By category:")
     for cat, stats in sorted(cat_stats.items()):
         avg_cat_ms = stats["total_ms"] // stats["turns"] if stats["turns"] else 0
@@ -758,11 +1245,19 @@ async def run_conversation(client, conv, delay=2.0, verbose=True):
     """Run a single conversation through the WebSocket."""
     turn_results = []
     conv_start = time.time()
+    current_user = "user"  # default
 
     try:
         for i, turn in enumerate(conv.turns):
             if i > 0:
                 await asyncio.sleep(delay)
+
+            # Switch user if this turn specifies a different one
+            if turn.user_id and turn.user_id != current_user:
+                if verbose:
+                    print(f"    [{conv.id}] Switching user → {turn.user_id}")
+                await client.set_user(turn.user_id)
+                current_user = turn.user_id
 
             if verbose:
                 sys.stdout.write(
@@ -785,6 +1280,13 @@ async def run_conversation(client, conv, delay=2.0, verbose=True):
             total_time_ms=int((time.time() - conv_start) * 1000),
             error=str(e),
         )
+
+    # Reset to christopher if we switched during this conversation
+    if current_user != "primary_user":
+        try:
+            await client.set_user("primary_user")
+        except Exception:
+            pass
 
     return ConversationResult(
         id=conv.id, name=conv.name, category=conv.category,
@@ -878,8 +1380,17 @@ async def run_suite(conversations, config, delay=2.0, verbose=True,
 #   Others: LLM may spontaneously generate documents
 
 CLEANUP_COMMANDS = [
+    # v1 reminders
     "cancel any reminders about calling the dentist",
     "cancel any reminders about calling the doctor",
+    # v2 reminders
+    "cancel any reminders about the pharmacy",
+    "cancel any reminders about oil change",
+    "cancel any reminders about leave early",
+    "cancel any reminders about mom",
+    "cancel any reminders about eating",
+    "cancel any reminders about dentist",
+    "cancel any reminders about packing",
 ]
 
 
@@ -1017,6 +1528,8 @@ def save_results(results, path):
                     'word_count': tr.word_count,
                     'notes': tr.notes,
                     'raw_stats': tr.raw_stats,
+                    'synthesis_category': tr.synthesis_category,
+                    'synthesis_temperature': tr.synthesis_temperature,
                 }
                 for tr in cr.turn_results
             ],
@@ -1050,6 +1563,8 @@ def load_results(path):
                 word_count=t.get('word_count', 0),
                 notes=t.get('notes', ''),
                 raw_stats=t.get('raw_stats', {}),
+                synthesis_category=t.get('synthesis_category', ''),
+                synthesis_temperature=t.get('synthesis_temperature', 0.0),
             )
             for t in item['turns']
         ]
@@ -1091,12 +1606,14 @@ def main():
                         default='/tmp/conversation_test_results.json',
                         help="Path to save results JSON")
     parser.add_argument('--core-only', action='store_true',
-                        help="Run only C01-C10 core routing conversations")
+                        help="Run only core routing conversations (V01-V10 or C01-C10)")
+    parser.add_argument('--v1', action='store_true',
+                        help="Run archived v1 suite (C01-C40) instead of v2")
 
     args = parser.parse_args()
     verbose = not args.brief
 
-    all_convs = get_all_conversations()
+    all_convs = get_v1_conversations() if args.v1 else get_v2_conversations()
 
     # --list
     if args.list:
@@ -1156,7 +1673,7 @@ def main():
             print(f"Valid categories: {', '.join(cats)}")
             return
     elif args.core_only:
-        convs = [c for c in all_convs if int(c.id[1:]) <= 10]
+        convs = [c for c in all_convs if c.id[1:].isdigit() and int(c.id[1:]) <= 10]
     else:
         convs = all_convs
 

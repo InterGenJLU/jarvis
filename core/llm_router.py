@@ -1661,8 +1661,16 @@ class LLMRouter:
 
         from core.debug_logger import get_debug_logger
         _dbg = get_debug_logger()
+        _dbg._write("synthesis_rules", {
+            "category": synthesis_category,
+            "temperature": synthesis_temperature,
+            "rules_len": len(domain_rules) if domain_rules else 0,
+            "has_disclaimer": has_disclaimer,
+            "synthesis_text_len": len(synthesis_text),
+        })
         _dbg.log_llm_messages(messages, tool_count=len(tools) if tools else 0,
-                               label="continue_after_tool_call")
+                               label="continue_after_tool_call",
+                               synthesis_category=synthesis_category)
 
         model_name = Path(self.local_model_path).stem if self.local_model_path else "unknown"
         start = time.time()

@@ -1249,7 +1249,9 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             logger.error("Metrics recording failed: %s", e)
 
     # Build stats
-    stats = _build_stats(match_info, llm, used_llm, t_start, t_match, t_end)
+    stats = _build_stats(match_info, llm, used_llm, t_start, t_match, t_end,
+                          synthesis_category=getattr(result, 'synthesis_category', None),
+                          synthesis_temperature=getattr(result, 'synthesis_temperature', None))
 
     _info = llm.last_call_info or {}
     _dbg.log_response(
@@ -1935,7 +1937,8 @@ def _extract_health_data(skill_manager) -> dict | None:
     return None
 
 
-def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end) -> dict:
+def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end,
+                  synthesis_category=None, synthesis_temperature=None) -> dict:
     """Build stats dict for WebSocket delivery."""
     stats = {}
     total_ms = int((t_end - t_start) * 1000)
@@ -1955,6 +1958,10 @@ def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end) -> dict:
         tokens = info.get('tokens_used')
         if tokens:
             stats['llm_tokens'] = tokens
+
+    if synthesis_category:
+        stats['synthesis_category'] = synthesis_category
+        stats['synthesis_temperature'] = synthesis_temperature
 
     return stats
 
@@ -2212,6 +2219,14 @@ async def websocket_handler(request):
                         formal = "Ms. Guest" if uid == "secondary_user" else None
                         set_honorific("ma'am" if uid == "secondary_user" else "sir", formal)
                     logger.info(f"User switched to: {uid}")
+                    # Emit debug event for test suite diagnostics
+                    from core.debug_logger import get_debug_logger as _get_dbg2
+                    from core.honorific import get_honorific, get_formal_address
+                    _get_dbg2()._write("user_switch", {
+                        "user_id": uid,
+                        "honorific": get_honorific(),
+                        "formal_address": get_formal_address(),
+                    })
                     await ws.send_json({'type': 'user_changed', 'user_id': uid})
 
                     # Reload sessions + history filtered for this user

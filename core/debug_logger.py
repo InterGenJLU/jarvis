@@ -75,6 +75,10 @@ class ConversationDebugLogger:
             }
         if getattr(result, 'use_tools', None):
             data["use_tools"] = [t["function"]["name"] for t in result.use_tools]
+        synth_cat = getattr(result, 'synthesis_category', None)
+        if synth_cat:
+            data["synthesis_category"] = synth_cat
+            data["synthesis_temperature"] = getattr(result, 'synthesis_temperature', None)
         self._write("route_decision", data)
 
     def log_llm_context(self, system_prompt: str = None,
@@ -116,9 +120,10 @@ class ConversationDebugLogger:
     def log_llm_messages(self, messages: list, tool_count: int = 0,
                           temperature: float = None,
                           presence_penalty: float = None,
-                          label: str = "stream_with_tools"):
+                          label: str = "stream_with_tools",
+                          synthesis_category: str = None):
         """Log the full messages array sent to the LLM."""
-        self._write("llm_messages", {
+        data = {
             "label": label,
             "message_count": len(messages),
             "messages": [
@@ -137,7 +142,10 @@ class ConversationDebugLogger:
             "tool_count": tool_count,
             "temperature": temperature,
             "presence_penalty": presence_penalty,
-        })
+        }
+        if synthesis_category:
+            data["synthesis_category"] = synthesis_category
+        self._write("llm_messages", data)
 
     def log_response(self, response_text: str, total_ms: float = 0,
                       llm_model: str = None, tokens: int = 0,

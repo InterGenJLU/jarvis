@@ -358,6 +358,13 @@ class ConversationRouter:
                 if category:
                     logger.debug("Fallback: domain=%s synth_temp=%s",
                                  category, result.synthesis_temperature)
+                # Emit domain classification debug event
+                from core.debug_logger import get_debug_logger as _get_dbg
+                _get_dbg()._write("domain_classification", {
+                    "command": command[:200],
+                    "category": category,
+                    "temperature": result.synthesis_temperature,
+                })
                 if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
                     result.force_web_search = True
                     logger.debug("Fallback: force_web_search=True (entertainment listing)")
@@ -2270,6 +2277,12 @@ class ConversationRouter:
         if category:
             logger.debug("P4-LLM: domain=%s synth_temp=%s",
                          category, result.synthesis_temperature)
+        # Emit domain classification debug event
+        _dbg._write("domain_classification", {
+            "command": command[:200],
+            "category": category,
+            "temperature": result.synthesis_temperature,
+        })
         if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
             result.force_web_search = True
             logger.debug("P4-LLM: force_web_search=True (entertainment listing)")
