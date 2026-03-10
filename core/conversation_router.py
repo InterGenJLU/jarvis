@@ -1852,7 +1852,7 @@ class ConversationRouter:
         r'\b(calculat|convert|how many|how much|square feet|square meter|'
         r'gallons?|liters?|grams?|ounces?|pounds?|kilograms?|miles?|'
         r'kilometers?|fahrenheit|celsius|cost estimate|total|subtract|'
-        r'multiply|divide|percentage|ratio|mph|km/h)\b', re.IGNORECASE)
+        r'multiply|divide\b|divid(ed|ing)|percentage|ratio|mph|km/h)', re.IGNORECASE)
 
     _DOMAIN_ENTERTAINMENT = re.compile(
         r'\b(movies?|films?|shows?|TV\b|television|series|sitcoms?|'
@@ -1871,7 +1871,7 @@ class ConversationRouter:
         # factual entertainment queries (from old _SYNTH_TEMP_FACTUAL)
         r'who directed|who wrote|who starred|filmography|'
         r'cast of|directed by|'
-        r'rank.{1,40}(movies?|films?|shows?|albums?|songs?|books?|games?)|'
+        r'rank.{1,40}(movies?|films?|shows?|albums?|songs?|books?)|'
         r'best.{1,30}(movies?|films?|shows?)|worst.{1,30}(movies?|films?|shows?)|'
         r'release date|came out|opening weekend|'
         r'still (putting out|making|releasing))\b', re.IGNORECASE)
@@ -1886,6 +1886,151 @@ class ConversationRouter:
         r'list .{1,20}(movies?|films?|shows?)|'
         r'every .{0,20}(movies?|films?|shows?|episodes?|seasons?))\b', re.IGNORECASE)
 
+    # NOTE: New domain regexes omit trailing \b so stem-matches work
+    # (e.g. "vaccin" matches "vaccination", "nanotechnol" matches "nanotechnology").
+    # Leading \b still ensures matches start at a word boundary.
+
+    _DOMAIN_VETERINARY = re.compile(
+        r'\b('
+        # Clinical / facility terms
+        r'veterinar|vet (clinic|visit|appointment|bill|checkup|emergency)|'
+        r'pet (health|medication|insurance|surgery|emergency|food|diet|poison)|'
+        r'animal (hospital|clinic|health|welfare)|Banfield|'
+        r'spay(ed|ing)?|neuter(ed|ing)?|microchip(ped)?|'
+        r'heartworm|flea (treat|medic|prevent)|tick (treat|prevent)|'
+        r'parvo(virus)?|distemper|bordetella|leptospirosis|kennel cough|'
+        r'(toxic|poison).{1,15}(dog|cat|pet|animal)|'
+        # Canines — .{1,16} gap allows "dog is vomiting", "puppy won't eat his food"
+        r'canine|dog.{1,12}(breed|food|health|sick|allerg|weight|vaccin|ate |vomit|diarrhea)|'
+        r'puppy.{1,16}(food|vaccin|train|health|worm)|'
+        # Felines
+        r'feline|cat.{1,12}(breed|food|health|sick|allerg|weight|vaccin|vomit|diarrhea)|'
+        r'kitten.{1,8}(food|vaccin|health|worm)|'
+        # Equine
+        r'equine|horse.{1,10}(health|vet|colic|lame|lamin|hoof|feed|vaccin|deworm|breed)|'
+        r'foal|mare|stallion|gelding|'
+        # Bovidae / Bovine
+        r'bovid(ae|e)?|bovine|cattle.{1,10}(health|vet|vaccin|disease|feed)|'
+        r'calf.{1,8}(health|vaccin|scour)|heifer|'
+        # Avian
+        r'avian|bird.{1,10}(health|vet|sick|feather|beak)|'
+        r'parrot.{1,8}(health|diet|feather)|parakeet|cockatiel|cockatoo|'
+        r'chicken.{1,10}(health|vet|disease|egg)|poultry.{1,8}(health|disease)|'
+        # Rodentia
+        r'rodent(ia)?|hamster.{1,8}(health|vet|sick|diet)|'
+        r'guinea pig.{1,8}(health|vet|sick|diet)|gerbil|chinchilla|'
+        r'rabbit.{1,8}(health|vet|sick|diet|vaccin)|bunny.{1,8}(health|sick)|'
+        # Piscine / Ichthyic
+        r'piscine|ichthy(ic|olog)|fish.{1,10}(health|disease|tank|sick|parasite|fungus)|'
+        r'aquarium.{1,10}(health|disease|medic)|'
+        # Serpentes
+        r'serpentes|snake.{1,10}(health|vet|sick|shed|feed|habitat)|'
+        r'reptile.{1,10}(health|vet|sick|habitat)|lizard.{1,8}(health|vet)|gecko.{1,8}(health|vet)|'
+        r'turtle.{1,8}(health|vet|shell)|tortoise.{1,8}(health|vet)|'
+        # Primates
+        r'primate.{1,10}(health|vet|diet|behavior|enrich)|'
+        r'monkey.{1,8}(health|vet|diet)|ape.{1,8}(health|vet)|'
+        # Cross-cutting pet health terms
+        r'pet.{1,6}(vaccin|deworm|dental|groom|nutrition|obesity|anxiety|behavior)|'
+        r'animal.{1,6}(vaccin|welfare|rescue|shelter)'
+        r')', re.IGNORECASE)
+
+    _DOMAIN_MEDICAL = re.compile(
+        r'\b(symptom|diagnosis|medication|prescription|dosage|'
+        r'side effects?|treatment|therapy|disease|disorder|'
+        r'surgery|blood pressure|cholesterol|diabetes|'
+        r'antibiotic|vaccine|infection|allerg(y|ic|ies)|'
+        r'FDA|CDC|NIH|'
+        r'cancer|tumor|oncolog|'
+        r'vitamin|supplement|deficiency|'
+        r'(drug|medicine).{1,15}(interact|effect|safe)|'
+        r'medical|prognosis|'
+        r'pregnant|pregnancy|prenatal|'
+        r'CPR|first aid|emergency room|urgent care)', re.IGNORECASE)
+
+    _DOMAIN_FINANCE = re.compile(
+        r'\b(stock|stocks|S&P|nasdaq|dow jones|NYSE|'
+        r'invest(ing|ment|or)|portfolio|dividend|'
+        r'crypto(currency)?|bitcoin|ethereum|'
+        r'interest rate|mortgage rate|APR|APY|'
+        r'401k|IRA|Roth|mutual fund|ETF|index fund|'
+        r'market (cap|crash|correction|rally|bear|bull)|bull market|bear market|'
+        r'earnings (report|call|per share)|EPS|P/E ratio|'
+        r'inflation|recession|GDP|'
+        r'forex|treasury|bond yield|'
+        r'financial (advi|plan)|'
+        r'tax (bracket|deduction|credit|return))', re.IGNORECASE)
+
+    _DOMAIN_GAMING = re.compile(
+        r'\b(video game|game (release|review|score|trailer|DLC|expansion|patch|update)|'
+        r'PlayStation|PS[45]|Xbox|Nintendo|Switch|Steam|Epic Games|'
+        r'PC gaming|gaming PC|'
+        r'Metacritic|IGN|GameSpot|'
+        r'RPG|FPS|MMO|MOBA|battle royale|'
+        r'DLC|downloadable content|season pass|microtransaction|'
+        r'E3|Game Awards|Gamescom|'
+        r'esports?|competitive gaming|'
+        r'(game|gam(er|ing)).{1,20}(recommend|suggest|similar|like)|'
+        r'speedrun|achievement|trophy|platinum|'
+        r'gameplay|multiplayer|co.op|single.player|'
+        r'rank.{1,40}(games?|video games?)|'
+        r'best.{1,30}(games?|video games?)|worst.{1,30}(games?|video games?)|'
+        r'(indie|AAA) (game|title|studio))', re.IGNORECASE)
+
+    _DOMAIN_SPORTS = re.compile(
+        r'\b(NFL|NBA|MLB|NHL|MLS|NCAA|FIFA|UEFA|'
+        r'Super Bowl|World Series|World Cup|Stanley Cup|'
+        r'playoffs?|championship|tournament|'
+        r'quarterback|touchdown|home run|three.pointer|'
+        r'batting average|ERA\b|yards|assists|rebounds|'
+        r'(team|player) (stats?|record|roster|draft)|'
+        r'free agent|trade deadline|'
+        r'(season|game|match) (score|result|recap|highlight)|'
+        r'standings|rankings|seedings?|bracket|'
+        r'Olympics|medal count|'
+        r'soccer|football|basketball|baseball|hockey|tennis|golf)', re.IGNORECASE)
+
+    _DOMAIN_AUTOMOTIVE = re.compile(
+        r'\b(car (review|price|spec|recall|safety|insurance|loan|lease|comparison)|'
+        r'truck (review|price|spec|recall|towing)|'
+        r'SUV|sedan|coupe|hatchback|minivan|'
+        r'MSRP|invoice price|sticker price|'
+        r'NHTSA|IIHS|crash test|safety rating|'
+        r'oil change|tire (rotat|replac|pressure)|'
+        r'check engine|transmission|brake (pad|rotor)|'
+        r'miles per gallon|MPG|fuel economy|'
+        r'car (buy|shop|deal|financ)|'
+        r'horsepower|torque|cylind|turbo(charg)?|'
+        r'electric vehicle|EV (range|charg|battery)|hybrid|'
+        r'(vehicle|auto) (recall|warranty|maintenance)|'
+        r'test drive|trade.in value|KBB|Kelley Blue Book|'
+        r'CarFax|car history|VIN)', re.IGNORECASE)
+
+    _DOMAIN_PROGRAMMING = re.compile(
+        r'\b(API (endpoint|key|rate limit|documentation|version)|'
+        r'(Python|JavaScript|TypeScript|Rust|Go|Java|C\+\+|Ruby|Swift|Kotlin)'
+        r'.{1,20}(library|package|framework|version|syntax|error)|'
+        r'npm|pip install|cargo|gem install|maven|gradle|'
+        r'stack overflow|github|gitlab|'
+        r'debug(ging)?|error (message|code|handling)|'
+        r'framework (comparison|recommend|vs)|'
+        r'database (schema|query|migration|index)|'
+        r'REST(ful)?|GraphQL|WebSocket|gRPC|'
+        r'docker|kubernetes|CI/CD|deployment|'
+        r'git (command|branch|merge|rebase|cherry))', re.IGNORECASE)
+
+    _DOMAIN_SCIENCE_TECH = re.compile(
+        r'\b(research (paper|study|finding|journal)|peer.review|'
+        r'clinical trial|scientific (consensus|evidence|method|study)|'
+        r'quantum (comput|mechanic|physic)|nanotechnol|biotechnol|'
+        r'gene (edit|therap)|CRISPR|genome|genomic|'
+        r'artificial intelligence|machine learning|deep learning|neural network|'
+        r'SpaceX|NASA|ESA|rocket launch|'
+        r'renewable energy|solar (panel|energy)|wind (turbine|energy)|'
+        r'semiconductor|microchip|'
+        r'climate (change|science|model)|global warming|'
+        r'fusion (reactor|energy)|particle (accelerat|collid))', re.IGNORECASE)
+
     _DOMAIN_FACTUAL = re.compile(
         r'\b(when did|what year|who won|who invented|capital of|'
         r'population of|founded in|born in|died in|height of|'
@@ -1899,7 +2044,15 @@ class ConversationRouter:
     # Category → synthesis temperature mapping
     _DOMAIN_TEMPERATURES = {
         "math": 0.2,
+        "veterinary": 0.2,
+        "medical": 0.2,
+        "finance": 0.2,
         "entertainment": 0.3,
+        "gaming": 0.3,
+        "sports": 0.3,
+        "automotive": 0.3,
+        "programming": 0.3,
+        "science_tech": 0.3,
         "factual": 0.3,
         "geo": 0.4,
     }
@@ -1908,15 +2061,36 @@ class ConversationRouter:
         """Classify query into a domain category for synthesis grounding.
 
         Returns a category string that maps to both a synthesis temperature
-        and a domain-specific synthesis prompt. Math checked first (highest
-        precision need), then domain vocabulary nets, then fallback.
+        and a domain-specific synthesis prompt in llm_router.py.
+
+        Priority order: math (highest precision) → high-stakes domains
+        (vet before medical to catch pet-specific queries) → gaming/sports
+        before entertainment (entertainment's broad "series"/"trailer"/
+        "release date" terms would otherwise swallow gaming/sports queries)
+        → lower-frequency domains → catch-all factual/geo.
 
         Returns None for general/conversational queries.
         """
         if self._DOMAIN_MATH.search(command):
             return "math"
+        if self._DOMAIN_VETERINARY.search(command):
+            return "veterinary"
+        if self._DOMAIN_MEDICAL.search(command):
+            return "medical"
+        if self._DOMAIN_FINANCE.search(command):
+            return "finance"
+        if self._DOMAIN_SPORTS.search(command):
+            return "sports"
+        if self._DOMAIN_GAMING.search(command):
+            return "gaming"
         if self._DOMAIN_ENTERTAINMENT.search(command):
             return "entertainment"
+        if self._DOMAIN_AUTOMOTIVE.search(command):
+            return "automotive"
+        if self._DOMAIN_PROGRAMMING.search(command):
+            return "programming"
+        if self._DOMAIN_SCIENCE_TECH.search(command):
+            return "science_tech"
         if self._DOMAIN_FACTUAL.search(command):
             return "factual"
         if self._DOMAIN_GEO.search(command):
