@@ -1849,7 +1849,10 @@ class ConversationRouter:
     # ── Domain classification for synthesis grounding ──────────────
 
     _DOMAIN_MATH = re.compile(
-        r'\b(calculat|convert|how many|how much|square feet|square meter|'
+        r'\b(calculat|convert|'
+        r'how many(?! (calorie|protein|carb|fat|sodium|sugar))|'
+        r'how much(?! (calorie|protein|carb|fat|sodium|sugar))|'
+        r'square feet|square meter|'
         r'gallons?|liters?|grams?|ounces?|pounds?|kilograms?|miles?|'
         r'kilometers?|fahrenheit|celsius|cost estimate|total|subtract|'
         r'multiply|divide\b|divid(ed|ing)|percentage|ratio|mph|km/h)', re.IGNORECASE)
@@ -1995,7 +1998,7 @@ class ConversationRouter:
         r'truck (review|price|spec|recall|towing)|'
         r'SUV|sedan|coupe|hatchback|minivan|'
         r'MSRP|invoice price|sticker price|'
-        r'NHTSA|IIHS|crash test|safety rating|'
+        r'NHTSA|IIHS|crash test|(vehicle|car|auto|truck) safety rating|'
         r'oil change|tire (rotat|replac|pressure)|'
         r'check engine|transmission|brake (pad|rotor)|'
         r'miles per gallon|MPG|fuel economy|'
@@ -2015,7 +2018,7 @@ class ConversationRouter:
         r'debug(ging)?|error (message|code|handling)|'
         r'framework (comparison|recommend|vs)|'
         r'database (schema|query|migration|index)|'
-        r'REST(ful)?|GraphQL|WebSocket|gRPC|'
+        r'REST(ful)?\b|GraphQL|WebSocket|gRPC|'
         r'docker|kubernetes|CI/CD|deployment|'
         r'git (command|branch|merge|rebase|cherry))', re.IGNORECASE)
 
@@ -2030,6 +2033,93 @@ class ConversationRouter:
         r'semiconductor|microchip|'
         r'climate (change|science|model)|global warming|'
         r'fusion (reactor|energy)|particle (accelerat|collid))', re.IGNORECASE)
+
+    _DOMAIN_NUTRITION = re.compile(
+        r'\b(calorie|caloric|macro(nutrient)?s?\b|'
+        r'protein (content|per|in|daily|intake)|carb(ohydrate)?s? (content|per|in|daily)|'
+        r'fat (content|per|in|daily|saturated|trans|unsaturated)|'
+        r'fiber (content|per|in|daily|intake)|'
+        r'(daily|recommended) (intake|allowance|value)|RDA\b|'
+        r'nutrition (fact|label|info|data|value)|'
+        r'(food|meal) (calorie|nutrition|macro)|'
+        r'(keto|paleo|vegan|vegetarian|carnivore|mediterranean|DASH|whole30) diet|'
+        r'intermittent fasting|'
+        r'glycemic (index|load)|'
+        r'sodium (content|per|in|daily|intake)|cholesterol (content|per|in)|'
+        r'(how many|how much) (calorie|protein|carb|fat|sodium|sugar).{1,20}(in|per|does)|'
+        r'weight (loss|gain) (diet|food|plan|meal)|'
+        r'body mass index|BMI\b|'
+        r'nutritionist|dietitian|dietician)', re.IGNORECASE)
+
+    _DOMAIN_LEGAL = re.compile(
+        r'\b(lawsuit|litigation|class action|'
+        r'statute|ordinance|regulation.{1,10}(law|legal|comply|violat)|'
+        r'felony|misdemeanor|indictment|arraign|'
+        r'legal (advi|right|counsel|precedent|represent|obligat|liabilit|remedy|standard|limit)|'
+        r'attorney|lawyer|paralegal|law firm|'
+        r'plaintiff|defendant|prosecutor|'
+        r'court (ruling|order|case|hearing|filing)|'
+        r'supreme court|circuit court|appeals court|'
+        r'contract (law|breach|clause|term|negotiat)|'
+        r'tort\b|negligence|malpractice|'
+        r'intellectual property|trademark|patent (law|filing|infring)|copyright (law|infring)|'
+        r'custody|divorce (law|filing|proceed)|child support|alimony|'
+        r'estate (plan|law|probate)|will and testament|trust (fund|law)|'
+        r'criminal (charge|record|defense|law)|'
+        r'immigration (law|visa|status|petition)|deportat|asylum|'
+        r'(is it|am I) (legal|illegal|allowed|liable)|'
+        r'(can I|can they) (sue|be sued|file)|'
+        r'eviction (notice|process|law)|tenant (right|law)|landlord (right|law))', re.IGNORECASE)
+
+    _DOMAIN_HISTORY = re.compile(
+        r'\b(ancient (rome|greece|egypt|civilization|world)|'
+        r'medieval|renaissance|enlightenment era|'
+        r'(world war|civil war|revolutionary war|cold war)|'
+        r'(roman|ottoman|british|persian|byzantine|mongol) empire|'
+        r'industrial revolution|french revolution|american revolution|'
+        r'(19th|18th|17th|16th|15th|14th|13th|20th) century|'
+        r'historical (event|figure|period|significance|context)|'
+        r'founding father|declaration of independence|constitution.{1,10}(amendment|ratif|sign)|'
+        r'(king|queen|emperor|pharaoh|czar|tsar).{1,15}(of|ruled|reign)|'
+        r'colonialis|imperialis|abolitio|emancipat|'
+        r'(battle of|siege of|treaty of|fall of)\b)', re.IGNORECASE)
+
+    _DOMAIN_REAL_ESTATE = re.compile(
+        r'\b(home (value|price|apprais|inspect|buy|sell|list|worth)|'
+        r'house (value|price|apprais|inspect|buy|sell|list|worth|hunt)|'
+        r'property (value|tax|assess|zoning|line|boundar)|'
+        r'real estate (agent|market|invest|price|trend|listing)|'
+        r'realtor|MLS\b|Zillow|Redfin|Trulia|'
+        r'(median|average) home price|'
+        r'(buy|sell|flip)(ing)? (a |)(house|home|property|condo|townhouse)|'
+        r'mortgage (pre.approv|lender|broker|payment|calculat|qualify)|'
+        r'down payment|closing cost|escrow|title (insurance|company|search)|'
+        r'home (equity|loan|refinanc|warranty)|HELOC|'
+        r'(HOA|homeowner.{1,4}association) (fee|rule|dues)|'
+        r'condo (fee|association|board)|'
+        r'(residential|commercial) (property|zoning|real estate)|'
+        r'property management|rental (property|income|market|rate)|'
+        r'(housing|real estate) market|housing bubble|'
+        r'square (foot|feet) (cost|price|value)|cost per square (foot|feet)|'
+        r'(neighborhood|area) (safe|school|rating|walkab))', re.IGNORECASE)
+
+    _DOMAIN_TRAVEL = re.compile(
+        r'\b(hotel|motel|hostel|airbnb|vrbo|booking\.com|'
+        r'(flights?|airline|airfare) (to|from|price|cost|deal|book|cancel)|'
+        r'airport (code|terminal|lounge|shuttle)|TSA|'
+        r'(tourist|travel) (attract|destin|guide|adviso|visa|insurance)|'
+        r'(best|top|popular|cheap) (restaurant|hotel|bar|cafe|attraction|thing).{1,15}(in|near|around)|'
+        r'(restaurant|hotel|bar|cafe|attraction) (recommend|suggest|review|rating).{1,15}(in|near|for)|'
+        r'itinerary|travel (plan|budget|tip|hack|safe)|'
+        r'(cruise|resort|all.inclusive|vacation (package|rental|spot))|'
+        r'passport (renew|expir|applicat)|visa (requir|applicat|process)|'
+        r'(things to do|places to visit|where to eat|where to stay|must.see).{0,15}(in|near|around)|'
+        r'best time to (visit|travel to|go to)|'
+        r'travel (to|from|between).{1,30}(cost|time|best|cheap|fast)|'
+        r'layover|connecting flight|stopover|'
+        r'jet lag|travel (vaccin|immuniz)|'
+        r'(carry.on|checked bag|luggage) (size|weight|allow|restrict)|'
+        r'currency exchange|local (currency|money)|exchange rate)', re.IGNORECASE)
 
     _DOMAIN_FACTUAL = re.compile(
         r'\b(when did|what year|who won|who invented|capital of|'
@@ -2046,14 +2136,19 @@ class ConversationRouter:
         "math": 0.2,
         "veterinary": 0.2,
         "medical": 0.2,
+        "nutrition": 0.2,
         "finance": 0.2,
+        "legal": 0.2,
         "entertainment": 0.3,
         "gaming": 0.3,
         "sports": 0.3,
         "automotive": 0.3,
+        "real_estate": 0.3,
         "programming": 0.3,
         "science_tech": 0.3,
+        "history": 0.3,
         "factual": 0.3,
+        "travel": 0.4,
         "geo": 0.4,
     }
 
@@ -2063,11 +2158,16 @@ class ConversationRouter:
         Returns a category string that maps to both a synthesis temperature
         and a domain-specific synthesis prompt in llm_router.py.
 
-        Priority order: math (highest precision) → high-stakes domains
-        (vet before medical to catch pet-specific queries) → gaming/sports
-        before entertainment (entertainment's broad "series"/"trailer"/
-        "release date" terms would otherwise swallow gaming/sports queries)
-        → lower-frequency domains → catch-all factual/geo.
+        Priority order (17 domains):
+        math → vet → medical → nutrition → finance → legal → sports →
+        gaming → entertainment → automotive → real_estate → programming →
+        science_tech → history → factual → travel → geo.
+
+        Rationale: math highest precision; vet before medical (pet-specific);
+        nutrition after medical (vitamin/supplement stay medical); legal after
+        finance (mortgage rate stays finance); gaming/sports before entertainment
+        (broad terms); history before factual (specific eras vs generic "when did");
+        travel before geo (planning vs navigation).
 
         Returns None for general/conversational queries.
         """
@@ -2077,8 +2177,12 @@ class ConversationRouter:
             return "veterinary"
         if self._DOMAIN_MEDICAL.search(command):
             return "medical"
+        if self._DOMAIN_NUTRITION.search(command):
+            return "nutrition"
         if self._DOMAIN_FINANCE.search(command):
             return "finance"
+        if self._DOMAIN_LEGAL.search(command):
+            return "legal"
         if self._DOMAIN_SPORTS.search(command):
             return "sports"
         if self._DOMAIN_GAMING.search(command):
@@ -2087,12 +2191,18 @@ class ConversationRouter:
             return "entertainment"
         if self._DOMAIN_AUTOMOTIVE.search(command):
             return "automotive"
+        if self._DOMAIN_REAL_ESTATE.search(command):
+            return "real_estate"
         if self._DOMAIN_PROGRAMMING.search(command):
             return "programming"
         if self._DOMAIN_SCIENCE_TECH.search(command):
             return "science_tech"
+        if self._DOMAIN_HISTORY.search(command):
+            return "history"
         if self._DOMAIN_FACTUAL.search(command):
             return "factual"
+        if self._DOMAIN_TRAVEL.search(command):
+            return "travel"
         if self._DOMAIN_GEO.search(command):
             return "geo"
         return None

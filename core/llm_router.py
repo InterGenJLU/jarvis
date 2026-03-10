@@ -1285,6 +1285,8 @@ class LLMRouter:
                 "consult your veterinarian for advice specific to your pet.'\n"
             )
         if category == "medical":
+            from core import persona
+            disclaimer = persona.domain_disclaimer("medical")
             return (
                 "DOMAIN: MEDICAL / HEALTH\n"
                 "RULES — follow these EXACTLY:\n"
@@ -1303,8 +1305,26 @@ class LLMRouter:
                 "interactions.'\n"
                 "5. Present information naturally — DO NOT reference 'search results' or "
                 "'based on my search'.\n"
-                "6. ALWAYS end your response with: 'This is general information only — "
-                "please consult a healthcare professional for medical advice.'\n"
+                f"6. ALWAYS end your response with: '{disclaimer}'\n"
+            )
+        if category == "nutrition":
+            return (
+                "DOMAIN: NUTRITION / DIETARY INFORMATION\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. NEVER fabricate calorie counts, macronutrient breakdowns, serving sizes, "
+                "or daily recommended values. Only state nutritional data that appears in the "
+                "search results above.\n"
+                "2. Nutritional values vary by brand, preparation method, and serving size. "
+                "If the search results specify a source (USDA, a specific brand), note it. "
+                "If not, state that values are approximate.\n"
+                "3. NEVER claim a food 'cures', 'prevents', or 'treats' any disease or condition "
+                "unless the search results cite established medical consensus or FDA-approved claims.\n"
+                "4. For diet plans (keto, paleo, etc.): present factual descriptions of the diet. "
+                "Do NOT make health outcome claims beyond what the search results support.\n"
+                "5. Present information naturally — DO NOT reference 'search results' or "
+                "'based on my search'.\n"
+                "6. ALWAYS end your response with: 'Nutritional values are approximate and may "
+                "vary. For personalized dietary advice, consider consulting a registered dietitian.'\n"
             )
         if category == "finance":
             return (
@@ -1325,6 +1345,27 @@ class LLMRouter:
                 "'based on my search'.\n"
                 "6. ALWAYS end your response with: 'This is general information, not "
                 "financial advice. Consider consulting a financial advisor.'\n"
+            )
+        if category == "legal":
+            from core import persona
+            disclaimer = persona.domain_disclaimer("legal")
+            return (
+                "DOMAIN: LEGAL\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. NEVER fabricate case names, case citations, statute numbers, legal standards, "
+                "or court rulings. Legal hallucinations are the MOST dangerous — lawyers have been "
+                "sanctioned for citing fabricated cases. Only state legal information that appears "
+                "in the search results above.\n"
+                "2. Laws vary dramatically by jurisdiction (federal, state, local, international). "
+                "ALWAYS note the jurisdiction if available in search results. If the search results "
+                "do not specify jurisdiction, say so explicitly.\n"
+                "3. Distinguish between current law and proposed legislation. If a bill has been "
+                "introduced but not passed, say so. Do NOT present pending legislation as current law.\n"
+                "4. For legal rights questions: provide general information about the legal concept "
+                "but explicitly state that specific rights depend on jurisdiction and circumstances.\n"
+                "5. Present information naturally — DO NOT reference 'search results' or "
+                "'based on my search'.\n"
+                f"6. ALWAYS end your response with: '{disclaimer}'\n"
             )
         if category == "gaming":
             return (
@@ -1380,6 +1421,25 @@ class LLMRouter:
                 "5. Present information naturally — DO NOT reference 'search results' or "
                 "'based on my search'.\n"
             )
+        if category == "real_estate":
+            return (
+                "DOMAIN: REAL ESTATE / HOUSING\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. NEVER fabricate property values, median home prices, zoning classifications, "
+                "HOA fees, or tax assessments. Real estate data is hyper-local and changes "
+                "frequently — only state what appears in the search results above.\n"
+                "2. For home values: always note that values are estimates and vary by condition, "
+                "lot size, improvements, and market timing. Never present an online estimate as "
+                "a definitive appraisal.\n"
+                "3. For mortgage calculations: note that actual rates depend on credit score, "
+                "down payment, loan type, and lender. Provide search-result figures as examples, "
+                "not guarantees.\n"
+                "4. For zoning or legal questions: note the jurisdiction and that zoning laws "
+                "vary by municipality. Recommend checking with the local planning office for "
+                "definitive answers.\n"
+                "5. Present information naturally — DO NOT reference 'search results' or "
+                "'based on my search'.\n"
+            )
         if category == "programming":
             return (
                 "DOMAIN: PROGRAMMING / CODING\n"
@@ -1413,6 +1473,44 @@ class LLMRouter:
                 "4. Avoid overstating implications — 'a study found X' is better than "
                 "'science proves X'. Single studies do not prove anything; use appropriate "
                 "framing.\n"
+                "5. Present information naturally — DO NOT reference 'search results' or "
+                "'based on my search'.\n"
+            )
+        if category == "history":
+            return (
+                "DOMAIN: HISTORY\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. NEVER fabricate dates, battle casualties, treaty terms, or direct quotes "
+                "attributed to historical figures. Only state historical facts that appear in "
+                "the search results above or that you are confident about from well-established "
+                "historical record.\n"
+                "2. For well-known historical facts (major wars, independence dates, famous leaders): "
+                "you may state them confidently even without search results. For obscure or disputed "
+                "facts, rely on search results and hedge if uncertain.\n"
+                "3. Distinguish between historical consensus and contested interpretations. "
+                "If historians disagree on causes, motivations, or significance, present multiple "
+                "perspectives rather than one as definitive.\n"
+                "4. NEVER fabricate direct quotes. If a quote is famous and well-established "
+                "('I came, I saw, I conquered'), you may use it. For anything less certain, "
+                "either cite the search results or omit it.\n"
+                "5. Present information naturally — DO NOT reference 'search results' or "
+                "'based on my search'.\n"
+            )
+        if category == "travel":
+            return (
+                "DOMAIN: TRAVEL / DESTINATIONS\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. NEVER fabricate specific business names, addresses, phone numbers, hours of "
+                "operation, or prices for hotels, restaurants, or attractions. These change "
+                "constantly — only state what appears in the search results above.\n"
+                "2. For 'best restaurant/hotel in X' queries: ONLY recommend places that appear "
+                "in the search results. If the results list 3 options and the user asked for 5, "
+                "give the 3 you have and say you'd need to search further for more.\n"
+                "3. For visa and entry requirements: note that these change frequently and vary "
+                "by nationality. Always recommend checking the official government or embassy "
+                "website for current requirements.\n"
+                "4. For flight and hotel pricing: note that prices are as of the search results "
+                "and fluctuate. Do NOT present a price as guaranteed.\n"
                 "5. Present information naturally — DO NOT reference 'search results' or "
                 "'based on my search'.\n"
             )

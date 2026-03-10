@@ -328,6 +328,36 @@ _POOLS = {
         ("Let me see what I can find.", "research"),
         ("Let me pull that up.", "research"),
     ],
+
+    # Domain-specific disclaimers — mix of standard + dry humor (used sparingly)
+    # No honorific — these are self-contained closing sentences.
+
+    "disclaimer_medical": [
+        # Standard
+        "This is general information only — please consult a healthcare professional for medical advice.",
+        "This is general health information, not a substitute for professional medical advice.",
+        "Please consult your doctor or healthcare provider for advice specific to your situation.",
+        "This is for informational purposes only — always verify with a healthcare professional.",
+        # Humorous
+        "This is generalized information, not sound medical advice — please don't treat it as such. "
+        "You should contact an actual doctor for specific medical questions, and unfortunately I am "
+        "NOT a doctor. I don't even play one on TV.",
+        "None of this should replace a conversation with your actual doctor — and for the record, "
+        "my bedside manner is purely theoretical.",
+    ],
+
+    "disclaimer_legal": [
+        # Standard
+        "This is general legal information, not legal advice. Please consult a qualified attorney.",
+        "This is for informational purposes only — it does not constitute legal advice.",
+        "Please consult a licensed attorney for advice specific to your situation.",
+        "This is general information, not a substitute for professional legal counsel.",
+        # Humorous
+        "None of this constitutes legal advice — I may be artificially intelligent, "
+        "but I am definitely not a lawyer. If I were, I'd charge by the token.",
+        "This is general information, not legal advice. I lack both a law degree "
+        "and the ability to look disappointed over reading glasses.",
+    ],
 }
 
 
@@ -355,6 +385,14 @@ def pool_tagged(category: str) -> list[tuple[str, str]]:
     Used by TTS ack cache to build style-aware pre-synthesized audio.
     """
     return list(_POOLS[category])
+
+
+def domain_disclaimer(domain: str) -> str | None:
+    """Pick a random domain disclaimer closing line, or None if no pool exists."""
+    pool_key = f"disclaimer_{domain}"
+    if pool_key not in _POOLS:
+        return None
+    return random.choice(_POOLS[pool_key])
 
 
 # ---------------------------------------------------------------------------
