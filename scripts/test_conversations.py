@@ -1175,7 +1175,7 @@ def main():
     # Snapshot memory state before test run (auto-restore after)
     _snapshot_tag = f"pre_test_{int(time.time())}"
     try:
-        from scripts.memory_snapshot import snapshot as mem_snapshot, restore as mem_restore
+        from memory_snapshot import snapshot as mem_snapshot, restore as mem_restore
         mem_snapshot(_snapshot_tag)
         print(f"Memory snapshot: {_snapshot_tag}")
     except Exception as e:
@@ -1230,11 +1230,12 @@ def main():
             import shutil
             _dest = os.path.join(_results_dir,
                                   os.path.basename(_debug_log_path))
-            try:
-                shutil.copy2(_debug_log_path, _dest)
-                print(f"Debug log copied to {_dest}")
-            except OSError as e:
-                print(f"Warning: could not copy debug log: {e}")
+            if os.path.abspath(_debug_log_path) != os.path.abspath(_dest):
+                try:
+                    shutil.copy2(_debug_log_path, _dest)
+                    print(f"Debug log copied to {_dest}")
+                except OSError as e:
+                    print(f"Warning: could not copy debug log: {e}")
 
 
 if __name__ == '__main__':

@@ -273,6 +273,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                         max_tokens=None, web_researcher=None,
                         use_tools_list=None, tool_temperature=None,
                         tool_presence_penalty=None,
+                        synthesis_temperature=None,
                         memory_manager=None, raw_command=None,
                         user_id=None, conv_state=None,
                         image_data=None):
@@ -483,6 +484,7 @@ def _stream_llm_console(llm, command, history, console, mode, real_tts,
                 max_tokens=_synth_max_tokens,
                 tools=use_tools_list,
                 image_data=tool_image_data if tool_call_request.name != "web_search" else None,
+                synthesis_temperature=synthesis_temperature,
             ):
                 if isinstance(item, ToolCallRequest):
                     next_tool_call = item
@@ -1383,6 +1385,7 @@ def run_console(config, mode, user_id="user"):
                     use_tools_list=result.use_tools,
                     tool_temperature=result.tool_temperature,
                     tool_presence_penalty=result.tool_presence_penalty,
+                    synthesis_temperature=result.synthesis_temperature,
                     memory_manager=memory_manager,
                     raw_command=command,
                     user_id=conversation.current_user,

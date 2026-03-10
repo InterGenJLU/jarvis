@@ -1205,7 +1205,8 @@ class LLMRouter:
                                   tool_result: str,
                                   max_tokens: int = 400,
                                   tools: list | None = None,
-                                  image_data: str | None = None) -> Iterator[str]:
+                                  image_data: str | None = None,
+                                  synthesis_temperature: float | None = None) -> Iterator[str]:
         """Continue LLM generation after a tool call completes.
 
         Sends the tool result back to the LLM and streams its synthesized answer.
@@ -1217,6 +1218,7 @@ class LLMRouter:
             tool_result: Formatted string of tool results
             max_tokens: Max tokens for the synthesized response
             tools: Optional tool schemas — if provided, LLM can call another tool
+            synthesis_temperature: Override temperature for synthesis (lower = more factual)
 
         Yields:
             Text tokens of the synthesized answer, or a ToolCallRequest
@@ -1336,9 +1338,10 @@ class LLMRouter:
         total_chars = 0
         stream_error = None
 
+        _synth_temp = synthesis_temperature if synthesis_temperature is not None else self.temperature
         payload = {
             "messages": messages,
-            "temperature": self.temperature,
+            "temperature": _synth_temp,
             "top_p": self.top_p,
             "top_k": self.top_k,
             "max_tokens": max_tokens,
@@ -1350,7 +1353,8 @@ class LLMRouter:
 
         import json as _json
         _payload_size = len(_json.dumps(payload, default=str))
-        self.logger.debug("continue_after_tool_call: payload %d bytes", _payload_size)
+        self.logger.debug("continue_after_tool_call: payload %d bytes, synth_temp=%.1f",
+                          _payload_size, _synth_temp)
 
         # Track tool call fragments (same logic as stream_with_tools)
         is_tool_call = False

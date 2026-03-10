@@ -61,6 +61,7 @@ class RouteResult:
     use_tools: list | None = None           # List of tool schema dicts
     tool_temperature: float | None = None   # Override temp for tool selection
     tool_presence_penalty: float | None = None  # Qwen3.5 recommends 1.5
+    synthesis_temperature: float | None = None  # Override temp for post-tool synthesis
 
     # Vision (multimodal image input)
     image_data: str | None = None           # Base64-encoded image for LLM
@@ -349,6 +350,7 @@ class ConversationRouter:
                 result.use_tools = always_on
                 result.tool_temperature = 0.0
                 result.tool_presence_penalty = 0.0
+                result.synthesis_temperature = self._estimate_synthesis_temperature(command)
                 result.intent = "tool_calling"
         result.image_data = image_data
         return result
@@ -1838,6 +1840,40 @@ class ConversationRouter:
     _MOBILE_EXCLUDED_SKILLS = {"web_navigation", "app_launcher", "file_editor"}
     _MOBILE_EXCLUDED_TOOLS = {"developer_tools", "take_screenshot"}
 
+    # ── Context-aware synthesis temperature ──────────────────────────
+
+    _SYNTH_TEMP_MATH = re.compile(
+        r'\b(calculat|convert|how many|how much|square feet|square meter|'
+        r'gallons?|liters?|grams?|ounces?|pounds?|kilograms?|miles?|'
+        r'kilometers?|fahrenheit|celsius|cost estimate|total|subtract|'
+        r'multiply|divide|percentage|ratio|mph|km/h)\b', re.IGNORECASE)
+
+    _SYNTH_TEMP_FACTUAL = re.compile(
+        r'\b(who directed|who wrote|who starred|filmography|box office|'
+        r'cast of|when did|what year|who won|who invented|capital of|'
+        r'population of|founded in|born in|died in|height of|'
+        r'who is the|who was the)\b', re.IGNORECASE)
+
+    _SYNTH_TEMP_GEO = re.compile(
+        r'\b(drive from|driving|route to|road trip|directions to|'
+        r'border crossing|gas stops?|how far is|distance from|'
+        r'navigate to|get to .+ from)\b', re.IGNORECASE)
+
+    def _estimate_synthesis_temperature(self, command: str) -> float | None:
+        """Classify query type and return an appropriate synthesis temperature.
+
+        Returns None for general/conversational queries (use default temp).
+        Lower temps for factual/math to reduce hallucination and digit errors.
+        """
+        text = command.lower()
+        if self._SYNTH_TEMP_MATH.search(text):
+            return 0.2
+        if self._SYNTH_TEMP_FACTUAL.search(text):
+            return 0.3
+        if self._SYNTH_TEMP_GEO.search(text):
+            return 0.4
+        return None  # default — use global temperature
+
     def _handle_tool_calling(self, command: str,
                              in_conversation: bool = False) -> RouteResult | None:
         """P4-LLM: Route through LLM with dynamically selected tools.
@@ -1891,6 +1927,7 @@ class ConversationRouter:
         result.use_tools = tools
         result.tool_temperature = 0.0    # Deterministic — sweep showed 0.0 is fastest, same accuracy
         result.tool_presence_penalty = 0.0  # Sweep: pp=1.5 doubled latency with zero accuracy gain
+        result.synthesis_temperature = self._estimate_synthesis_temperature(command)
         result.intent = "tool_calling"
 
         tool_names = [t["function"]["name"] for t in tools]

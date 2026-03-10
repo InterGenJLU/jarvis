@@ -912,6 +912,7 @@ class Coordinator:
                 use_tools=result.use_tools,
                 tool_temperature=result.tool_temperature,
                 tool_presence_penalty=result.tool_presence_penalty,
+                synthesis_temperature=result.synthesis_temperature,
             )
             if not response:
                 response = "I'm sorry, I'm having trouble processing that right now."
@@ -1036,7 +1037,8 @@ class Coordinator:
                               in_conversation: bool = False,
                               use_tools: list = None,
                               tool_temperature: float = None,
-                              tool_presence_penalty: float = None) -> str:
+                              tool_presence_penalty: float = None,
+                              synthesis_temperature: float = None) -> str:
         """Stream LLM response with first-chunk quality gating and tool calling.
 
         Streams tokens from Qwen, accumulates into sentence chunks,
@@ -1335,6 +1337,7 @@ class Coordinator:
                     max_tokens=_synth_max_tokens,
                     tools=use_tools,
                     image_data=_synth_img,
+                    synthesis_temperature=synthesis_temperature,
                 ):
                     if isinstance(item, ToolCallRequest):
                         self.logger.debug("Chained tool call from synthesis: %s", item.name)

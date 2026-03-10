@@ -1183,6 +1183,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 use_tools_list=result.use_tools,
                 tool_temperature=result.tool_temperature,
                 tool_presence_penalty=result.tool_presence_penalty,
+                synthesis_temperature=result.synthesis_temperature,
                 memory_manager=components.get('memory_manager'),
                 raw_command=command,
                 user_id=conversation.current_user,
@@ -1269,6 +1270,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           max_tokens=None, use_tools_list=None,
                           tool_temperature=None,
                           tool_presence_penalty=None,
+                          synthesis_temperature=None,
                           memory_manager=None, raw_command=None,
                           user_id=None, conv_state=None,
                           image_data=None, client_type=None) -> tuple:
@@ -1568,10 +1570,11 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             _current_max_tokens = _synth_max_tokens
 
             def _synthesis_producer(tcr=_current_tcr, tr=_current_tr, img=_current_img,
-                                    mt=_current_max_tokens):
-                logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s max_tokens=%d",
+                                    mt=_current_max_tokens,
+                                    st=synthesis_temperature):
+                logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s max_tokens=%d synth_temp=%s",
                              tcr.name, len(tr) if tr else 0,
-                             f"yes ({len(img)//1024}KB)" if img else "no", mt)
+                             f"yes ({len(img)//1024}KB)" if img else "no", mt, st)
                 from core.debug_logger import get_debug_logger
                 _dbg = get_debug_logger()
                 _dbg.log_tool_result(tcr.name, tr, len(tr) if tr else 0)
@@ -1582,6 +1585,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                         max_tokens=mt,
                         tools=use_tools_list,
                         image_data=img,
+                        synthesis_temperature=st,
                     ):
                         _token_count += 1
                         asyncio.run_coroutine_threadsafe(
@@ -1832,6 +1836,7 @@ async def _llm_fallback(llm, command, history, web_researcher,
                 for token in llm.continue_after_tool_call(
                     tool_call_request, tool_result,
                     tools=None,  # fallback path — web search only, no chaining
+                    synthesis_temperature=synthesis_temperature,
                 ):
                     if isinstance(token, ToolCallRequest):
                         break
