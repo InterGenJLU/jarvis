@@ -1184,6 +1184,8 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 tool_temperature=result.tool_temperature,
                 tool_presence_penalty=result.tool_presence_penalty,
                 synthesis_temperature=result.synthesis_temperature,
+                synthesis_category=result.synthesis_category,
+                force_web_search=result.force_web_search,
                 memory_manager=components.get('memory_manager'),
                 raw_command=command,
                 user_id=conversation.current_user,
@@ -1271,6 +1273,8 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                           tool_temperature=None,
                           tool_presence_penalty=None,
                           synthesis_temperature=None,
+                          synthesis_category=None,
+                          force_web_search=False,
                           memory_manager=None, raw_command=None,
                           user_id=None, conv_state=None,
                           image_data=None, client_type=None) -> tuple:
@@ -1314,6 +1318,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     tool_temperature=tool_temperature,
                     tool_presence_penalty=tool_presence_penalty,
                     image_data=image_data,
+                    force_web_search=force_web_search,
                 ) if _enable_tools else
                 llm.stream(
                     user_message=command,
@@ -1571,10 +1576,10 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
 
             def _synthesis_producer(tcr=_current_tcr, tr=_current_tr, img=_current_img,
                                     mt=_current_max_tokens,
-                                    st=synthesis_temperature):
-                logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s max_tokens=%d synth_temp=%s",
+                                    st=synthesis_temperature, sc=synthesis_category):
+                logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s max_tokens=%d synth_temp=%s cat=%s",
                              tcr.name, len(tr) if tr else 0,
-                             f"yes ({len(img)//1024}KB)" if img else "no", mt, st)
+                             f"yes ({len(img)//1024}KB)" if img else "no", mt, st, sc)
                 from core.debug_logger import get_debug_logger
                 _dbg = get_debug_logger()
                 _dbg.log_tool_result(tcr.name, tr, len(tr) if tr else 0)
@@ -1586,6 +1591,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                         tools=use_tools_list,
                         image_data=img,
                         synthesis_temperature=st,
+                        synthesis_category=sc,
                     ):
                         _token_count += 1
                         asyncio.run_coroutine_threadsafe(
@@ -1837,6 +1843,7 @@ async def _llm_fallback(llm, command, history, web_researcher,
                     tool_call_request, tool_result,
                     tools=None,  # fallback path — web search only, no chaining
                     synthesis_temperature=synthesis_temperature,
+                    synthesis_category=synthesis_category,
                 ):
                     if isinstance(token, ToolCallRequest):
                         break

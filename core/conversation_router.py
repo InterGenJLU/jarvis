@@ -62,6 +62,8 @@ class RouteResult:
     tool_temperature: float | None = None   # Override temp for tool selection
     tool_presence_penalty: float | None = None  # Qwen3.5 recommends 1.5
     synthesis_temperature: float | None = None  # Override temp for post-tool synthesis
+    synthesis_category: str | None = None        # Domain category for prompt selection
+    force_web_search: bool = False               # Force web_search (skip LLM tool decision)
 
     # Vision (multimodal image input)
     image_data: str | None = None           # Base64-encoded image for LLM
@@ -350,7 +352,11 @@ class ConversationRouter:
                 result.use_tools = always_on
                 result.tool_temperature = 0.0
                 result.tool_presence_penalty = 0.0
-                result.synthesis_temperature = self._estimate_synthesis_temperature(command)
+                category = self._classify_query_domain(command)
+                result.synthesis_category = category
+                result.synthesis_temperature = self._DOMAIN_TEMPERATURES.get(category) if category else None
+                if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
+                    result.force_web_search = True
                 result.intent = "tool_calling"
         result.image_data = image_data
         return result
@@ -1840,46 +1846,82 @@ class ConversationRouter:
     _MOBILE_EXCLUDED_SKILLS = {"web_navigation", "app_launcher", "file_editor"}
     _MOBILE_EXCLUDED_TOOLS = {"developer_tools", "take_screenshot"}
 
-    # ── Context-aware synthesis temperature ──────────────────────────
+    # ── Domain classification for synthesis grounding ──────────────
 
-    _SYNTH_TEMP_MATH = re.compile(
+    _DOMAIN_MATH = re.compile(
         r'\b(calculat|convert|how many|how much|square feet|square meter|'
         r'gallons?|liters?|grams?|ounces?|pounds?|kilograms?|miles?|'
         r'kilometers?|fahrenheit|celsius|cost estimate|total|subtract|'
         r'multiply|divide|percentage|ratio|mph|km/h)\b', re.IGNORECASE)
 
-    _SYNTH_TEMP_FACTUAL = re.compile(
-        r'\b(who directed|who wrote|who starred|filmography|box office|'
-        r'cast of|when did|what year|who won|who invented|capital of|'
-        r'population of|founded in|born in|died in|height of|'
-        r'who is the|who was the|'
-        # entertainment / media — high hallucination surface
+    _DOMAIN_ENTERTAINMENT = re.compile(
+        r'\b(movies?|films?|shows?|TV\b|television|series|sitcoms?|'
+        r'streaming|netflix|hulu|disney\+?|HBO|prime video|'
+        r'oscars?|emmy|golden globe|box office|'
+        r'actor|actress|director|screenwriter|'
+        r'franchise|sequel|prequel|trilogy|'
+        r'season \d|episode|pilot|finale|'
+        r'cinema|theater|theatrical|'
+        r'rated R|rated PG|rotten tomatoes|imdb|'
+        r'starring|cast|cameo|'
+        r'horror|comedy|thriller|documentary|anime|'
+        r'watch.{1,15}(tonight|next|good)|'
+        r'binge|spoiler|trailer|'
+        r'grossed|blockbuster|flop|'
+        # factual entertainment queries (from old _SYNTH_TEMP_FACTUAL)
+        r'who directed|who wrote|who starred|filmography|'
+        r'cast of|directed by|'
         r'rank.{1,40}(movies?|films?|shows?|albums?|songs?|books?|games?)|'
         r'best.{1,30}(movies?|films?|shows?)|worst.{1,30}(movies?|films?|shows?)|'
-        r'franchise|sequel|prequel|season \d|'
         r'release date|came out|opening weekend|'
-        r'directed by|starring|grossed|rated|'
         r'still (putting out|making|releasing))\b', re.IGNORECASE)
 
-    _SYNTH_TEMP_GEO = re.compile(
+    # Entertainment listing/ranking pattern — forces web_search when
+    # combined with entertainment domain to prevent LLM from skipping
+    # search on follow-up ranking queries it thinks it can answer from context.
+    _ENTERTAINMENT_LISTING = re.compile(
+        r'\b(rank|top \d+|best .{1,30}(movies?|films?|shows?)|'
+        r'worst .{1,30}(movies?|films?|shows?)|'
+        r'all the .{1,30}(movies?|films?)|'
+        r'list .{1,20}(movies?|films?|shows?)|'
+        r'every .{0,20}(movies?|films?|shows?|episodes?|seasons?))\b', re.IGNORECASE)
+
+    _DOMAIN_FACTUAL = re.compile(
+        r'\b(when did|what year|who won|who invented|capital of|'
+        r'population of|founded in|born in|died in|height of|'
+        r'who is the|who was the)\b', re.IGNORECASE)
+
+    _DOMAIN_GEO = re.compile(
         r'\b(drive from|driving|route to|road trip|directions to|'
         r'border crossing|gas stops?|how far is|distance from|'
         r'navigate to|get to .+ from)\b', re.IGNORECASE)
 
-    def _estimate_synthesis_temperature(self, command: str) -> float | None:
-        """Classify query type and return an appropriate synthesis temperature.
+    # Category → synthesis temperature mapping
+    _DOMAIN_TEMPERATURES = {
+        "math": 0.2,
+        "entertainment": 0.3,
+        "factual": 0.3,
+        "geo": 0.4,
+    }
 
-        Returns None for general/conversational queries (use default temp).
-        Lower temps for factual/math to reduce hallucination and digit errors.
+    def _classify_query_domain(self, command: str) -> str | None:
+        """Classify query into a domain category for synthesis grounding.
+
+        Returns a category string that maps to both a synthesis temperature
+        and a domain-specific synthesis prompt. Math checked first (highest
+        precision need), then domain vocabulary nets, then fallback.
+
+        Returns None for general/conversational queries.
         """
-        text = command.lower()
-        if self._SYNTH_TEMP_MATH.search(text):
-            return 0.2
-        if self._SYNTH_TEMP_FACTUAL.search(text):
-            return 0.3
-        if self._SYNTH_TEMP_GEO.search(text):
-            return 0.4
-        return None  # default — use global temperature
+        if self._DOMAIN_MATH.search(command):
+            return "math"
+        if self._DOMAIN_ENTERTAINMENT.search(command):
+            return "entertainment"
+        if self._DOMAIN_FACTUAL.search(command):
+            return "factual"
+        if self._DOMAIN_GEO.search(command):
+            return "geo"
+        return None
 
     def _handle_tool_calling(self, command: str,
                              in_conversation: bool = False) -> RouteResult | None:
@@ -1934,7 +1976,11 @@ class ConversationRouter:
         result.use_tools = tools
         result.tool_temperature = 0.0    # Deterministic — sweep showed 0.0 is fastest, same accuracy
         result.tool_presence_penalty = 0.0  # Sweep: pp=1.5 doubled latency with zero accuracy gain
-        result.synthesis_temperature = self._estimate_synthesis_temperature(command)
+        category = self._classify_query_domain(command)
+        result.synthesis_category = category
+        result.synthesis_temperature = self._DOMAIN_TEMPERATURES.get(category) if category else None
+        if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
+            result.force_web_search = True
         result.intent = "tool_calling"
 
         tool_names = [t["function"]["name"] for t in tools]

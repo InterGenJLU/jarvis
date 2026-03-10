@@ -913,6 +913,8 @@ class Coordinator:
                 tool_temperature=result.tool_temperature,
                 tool_presence_penalty=result.tool_presence_penalty,
                 synthesis_temperature=result.synthesis_temperature,
+                synthesis_category=result.synthesis_category,
+                force_web_search=result.force_web_search,
             )
             if not response:
                 response = "I'm sorry, I'm having trouble processing that right now."
@@ -1038,7 +1040,9 @@ class Coordinator:
                               use_tools: list = None,
                               tool_temperature: float = None,
                               tool_presence_penalty: float = None,
-                              synthesis_temperature: float = None) -> str:
+                              synthesis_temperature: float = None,
+                              synthesis_category: str = None,
+                              force_web_search: bool = False) -> str:
         """Stream LLM response with first-chunk quality gating and tool calling.
 
         Streams tokens from Qwen, accumulates into sentence chunks,
@@ -1058,6 +1062,7 @@ class Coordinator:
                        schema dicts to pass to stream_with_tools().
             tool_temperature: Override temperature for tool selection phase.
             tool_presence_penalty: Presence penalty for tool-calling requests.
+            force_web_search: Force a web_search call without LLM tool selection.
         """
         if raw_command is None:
             raw_command = command
@@ -1108,6 +1113,7 @@ class Coordinator:
                     tools=use_tools,
                     tool_temperature=tool_temperature,
                     tool_presence_penalty=tool_presence_penalty,
+                    force_web_search=force_web_search,
                 ) if _enable_tools else
                 self.llm.stream(
                     user_message=command,
@@ -1338,6 +1344,7 @@ class Coordinator:
                     tools=use_tools,
                     image_data=_synth_img,
                     synthesis_temperature=synthesis_temperature,
+                    synthesis_category=synthesis_category,
                 ):
                     if isinstance(item, ToolCallRequest):
                         self.logger.debug("Chained tool call from synthesis: %s", item.name)

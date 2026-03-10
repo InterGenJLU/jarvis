@@ -560,6 +560,8 @@ class LLMRouter:
             "what would happen", "going back to", "elaborate",
             "more about", "in detail", "walk me through",
             "what's the history", "pros and cons",
+            "rank ", "rank the", "list ", "list the", "top ",
+            "best ", "worst ", "all the",
         ]
         for signal in long_signals:
             if signal in q:
@@ -913,6 +915,7 @@ class LLMRouter:
                           tool_temperature: float = None,
                           tool_presence_penalty: float = None,
                           image_data: str = None,
+                          force_web_search: bool = False,
                           ) -> Iterator[Union[str, ToolCallRequest]]:
         """Stream tokens from the local LLM with tool calling support.
 
@@ -978,7 +981,9 @@ class LLMRouter:
                 "- Breaking news, live scores, stock prices, current events\n"
                 "- Recent product releases, event dates, ticket prices\n"
                 "- Travel times, local businesses, recent statistics\n"
-                "- Anything that changes frequently or happened recently\n\n"
+                "- Anything that changes frequently or happened recently\n"
+                "- Rankings, ratings, reviews, or detailed lists of specific "
+                "movies, shows, people, or franchises\n\n"
                 "ANSWER DIRECTLY (no search) for:\n"
                 "- General knowledge (definitions, how things work, history, "
                 "science, concepts)\n"
@@ -1036,6 +1041,25 @@ class LLMRouter:
         self._tool_call_messages = messages
         # Also store tools for continue_after_tool_call() context overflow retry
         self._tool_call_tools = tools
+
+        # Forced web_search: for entertainment listing/ranking queries, skip
+        # LLM tool selection and yield a ToolCallRequest directly.  The LLM
+        # tends to answer ranking follow-ups from context rather than searching,
+        # producing truncated or hallucinated lists.
+        if force_web_search and "web_search" in tool_names:
+            import re as _re
+            # Strip <prior_context>...</prior_context> and "Now the user asks:"
+            # to get the clean query for web search.
+            _clean = _re.sub(
+                r'<prior_context>.*?</prior_context>\s*(?:Now the user asks:\s*)?',
+                '', user_message, flags=_re.DOTALL).strip()
+            self.logger.info("force_web_search: bypassing LLM tool selection, query='%s'", _clean)
+            yield ToolCallRequest(
+                name="web_search",
+                arguments={"query": _clean},
+                call_id="forced_search_0",
+            )
+            return
 
         # Let Qwen decide when to use tools via the prescriptive system prompt.
         # tool_choice=auto always — never "required" (causes infinite loops).
@@ -1208,7 +1232,8 @@ class LLMRouter:
                                   max_tokens: int = 400,
                                   tools: list | None = None,
                                   image_data: str | None = None,
-                                  synthesis_temperature: float | None = None) -> Iterator[str]:
+                                  synthesis_temperature: float | None = None,
+                                  synthesis_category: str | None = None) -> Iterator[str]:
         """Continue LLM generation after a tool call completes.
 
         Sends the tool result back to the LLM and streams its synthesized answer.
@@ -1276,25 +1301,59 @@ class LLMRouter:
             )
         else:
             honorific_rule = f"YOU MUST address the user as '{h}' naturally in your response."
+        # When tools are available, prepend a chaining instruction so the
+        # LLM can call the next tool if the user's request needs multiple.
+        # This is combined with the domain-specific prompt (not instead of).
+        loc_hint = f"The user's home location is {self.home_location}.\n" if self.home_location else ""
+        chaining_prefix = ""
         if tools:
-            # Lightweight intermediate prompt: only the chaining rule matters
-            # here — readback, honorific, and presentation rules are saved for
-            # the final synthesis (the else branch) to reduce context bloat.
-            # Each intermediate prompt was ~800 chars of repeated rules; by
-            # tool 3 that's ~2400 chars of redundant instructions.
-            loc_hint = f"The user's home location is {self.home_location}.\n" if self.home_location else ""
-            synthesis_text = (
-                f"Today's date is {today}. Current time: {current_time}.\n"
-                f"{loc_hint}"
+            chaining_prefix = (
                 "Check the user's ORIGINAL request. If they asked for UNRELATED things "
                 "requiring DIFFERENT tools (e.g. weather AND a reminder), call the next tool NOW.\n"
                 "If the search results above contain the answer, give a direct answer — do NOT "
                 "search again with a rephrased query. Only search again if the results are "
-                "completely irrelevant to the question asked."
+                "completely irrelevant to the question asked.\n"
+            )
+        if synthesis_category == "entertainment":
+            synthesis_text = (
+                f"Today's date is {today}. Current time: {current_time}.\n"
+                f"{loc_hint}"
+                f"{chaining_prefix}"
+                "DOMAIN: ENTERTAINMENT — Movies, TV, streaming, actors, directors.\n"
+                "RULES — follow these EXACTLY:\n"
+                "1. ONLY state facts that appear in the search results above. "
+                "For each movie, show, or person you mention, it MUST be named in the search results. "
+                "If the search results list 4 items and the user asked for 5, give the 4 you have "
+                "and say you'd need to search further for the rest.\n"
+                "2. NEVER FABRICATE any of the following — if the search results do not contain it, DO NOT STATE IT:\n"
+                "- Movie or show titles\n"
+                "- Release years or dates\n"
+                "- Box office numbers or budget figures\n"
+                "- Cast or crew names\n"
+                "- Ratings, scores, or review counts\n"
+                "- Plot details, character names, or franchise timelines\n"
+                "- Award wins or nominations\n"
+                "3. When listing movies/shows, include ONLY entries grounded in the search results. "
+                "A shorter, accurate list is ALWAYS better than a padded list with invented entries. "
+                "If a title sounds familiar from training data but is NOT in the search results, "
+                "you MAY include it with an explicit hedge: 'I believe' or 'if I recall correctly'. "
+                "Limit hedged entries to at most 2.\n"
+                "4. For franchise/sequel questions: state only what is confirmed in the search results. "
+                "Do NOT speculate about upcoming releases, rumored projects, or unconfirmed sequels "
+                "unless the search results explicitly mention them.\n"
+                "5. Present information naturally — DO NOT reference 'search results' or 'based on my search'. "
+                "Just state the facts as if you know them.\n"
+                f"6. {honorific_rule}\n"
+                "7. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
+                "Jump straight into the answer. "
+                "DO NOT tell the user to check IMDb or another website. "
+                "You ARE their source of information."
             )
         else:
             synthesis_text = (
                 f"Today's date is {today}. Current time: {current_time}.\n"
+                f"{loc_hint}"
+                f"{chaining_prefix}"
                 "RULES — follow these EXACTLY:\n"
                 "1. READBACK DECISION — follow this in order:\n"
                 "(a) Check your response. Does it ALREADY list the specific items, steps, prices, names, "
@@ -1331,8 +1390,8 @@ class LLMRouter:
                 "You ARE their source of information."
             )
         messages.append(self._build_user_message(synthesis_text, image_data))
-        self.logger.debug("continue_after_tool_call: %d messages, synthesis_text_len=%d",
-                          len(messages), len(synthesis_text))
+        self.logger.debug("continue_after_tool_call: %d messages, synthesis_text_len=%d, category=%s",
+                          len(messages), len(synthesis_text), synthesis_category)
 
         from core.debug_logger import get_debug_logger
         _dbg = get_debug_logger()
