@@ -644,7 +644,14 @@ class ReminderManager:
             try:
                 event_dt = datetime.strptime(event_time_str, "%Y-%m-%d %H:%M:%S")
                 minutes_until = max(1, int((event_dt - datetime.now()).total_seconds() / 60))
-                if minutes_until >= 60:
+                if minutes_until >= 1440:  # 24 hours+
+                    days = minutes_until // 1440
+                    remaining_hours = (minutes_until % 1440) // 60
+                    if remaining_hours:
+                        time_phrase = f"in {days} day{'s' if days != 1 else ''} and {remaining_hours} hour{'s' if remaining_hours != 1 else ''}"
+                    else:
+                        time_phrase = f"in {days} day{'s' if days != 1 else ''}"
+                elif minutes_until >= 60:
                     hours = minutes_until // 60
                     remaining = minutes_until % 60
                     if remaining:
