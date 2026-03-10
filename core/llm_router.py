@@ -1650,6 +1650,10 @@ class LLMRouter:
 
         # ── Domain-specific rules ─────────────────────────────────
         domain_rules = self._get_domain_rules(synthesis_category)
+        has_disclaimer = synthesis_category in ("medical", "legal") if synthesis_category else False
+        if has_disclaimer:
+            self.logger.debug("continue_after_tool_call: domain_disclaimer injected for %s",
+                              synthesis_category)
         synthesis_text = f"{synth_header}{domain_rules}\n{synth_footer}"
         messages.append(self._build_user_message(synthesis_text, image_data))
         self.logger.debug("continue_after_tool_call: %d messages, synthesis_text_len=%d, category=%s",

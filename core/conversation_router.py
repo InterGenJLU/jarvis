@@ -355,8 +355,12 @@ class ConversationRouter:
                 category = self._classify_query_domain(command)
                 result.synthesis_category = category
                 result.synthesis_temperature = self._DOMAIN_TEMPERATURES.get(category) if category else None
+                if category:
+                    logger.debug("Fallback: domain=%s synth_temp=%s",
+                                 category, result.synthesis_temperature)
                 if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
                     result.force_web_search = True
+                    logger.debug("Fallback: force_web_search=True (entertainment listing)")
                 result.intent = "tool_calling"
         result.image_data = image_data
         return result
@@ -2263,8 +2267,12 @@ class ConversationRouter:
         category = self._classify_query_domain(command)
         result.synthesis_category = category
         result.synthesis_temperature = self._DOMAIN_TEMPERATURES.get(category) if category else None
+        if category:
+            logger.debug("P4-LLM: domain=%s synth_temp=%s",
+                         category, result.synthesis_temperature)
         if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
             result.force_web_search = True
+            logger.debug("P4-LLM: force_web_search=True (entertainment listing)")
         result.intent = "tool_calling"
 
         tool_names = [t["function"]["name"] for t in tools]
