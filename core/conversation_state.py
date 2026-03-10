@@ -62,6 +62,10 @@ class ConversationState:
     # --- Structured readback ---
     readback_session: Optional[ReadbackSession] = None
 
+    # --- Progressive context compression ---
+    conversation_topic: str = ""                    # LLM-generated topic anchor (set after turn 1)
+    exchange_summaries: list = field(default_factory=list)  # [{"turn": N, "summary": "..."}, ...]
+
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
     window_opened_at: float = 0.0        # When the conversation window opened
@@ -115,6 +119,8 @@ class ConversationState:
         self.nav_cursor = 0
         self.nav_total = 0
         self.readback_session = None
+        self.conversation_topic = ""
+        self.exchange_summaries = []
 
     def set_research_context(self, results: list, exchange: dict):
         """Store research results for follow-up queries."""

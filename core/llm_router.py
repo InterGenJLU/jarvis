@@ -206,7 +206,8 @@ class LLMRouter:
             }
         return {"role": "user", "content": text}
 
-    def generate(self, prompt: str, use_api: bool = False, max_tokens: int = 512) -> str:
+    def generate(self, prompt: str, use_api: bool = False, max_tokens: int = 512,
+                 temperature: float | None = None) -> str:
         """
         Generate response from LLM.
 
@@ -224,9 +225,10 @@ class LLMRouter:
         if use_api:
             return self._generate_api(prompt, max_tokens)
         else:
-            return self._generate_local(prompt, max_tokens)
+            return self._generate_local(prompt, max_tokens, temperature=temperature)
     
-    def _generate_local(self, user_message: str, max_tokens: int = 512) -> str:
+    def _generate_local(self, user_message: str, max_tokens: int = 512,
+                        temperature: float | None = None) -> str:
         """Generate using llama-server REST API"""
         from core import persona
         system_prompt = persona.system_prompt_brief()
@@ -241,7 +243,7 @@ class LLMRouter:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_message}
                     ],
-                    "temperature": self.temperature,
+                    "temperature": temperature if temperature is not None else self.temperature,
                     "top_p": self.top_p,
                     "top_k": self.top_k,
                     "max_tokens": max_tokens
@@ -1312,11 +1314,16 @@ class LLMRouter:
                 "4. YOU MUST compare any event dates in the results against today's date. "
                 "If an event is scheduled for a FUTURE date, YOU MUST clearly state it hasn't "
                 "happened yet. DO NOT report predictions, odds, or speculation as fact.\n"
-                "5. If you have searched the web 2+ times for the same topic and the results "
-                "do not contain a clear answer, answer from your training knowledge and note "
-                "that you could not find current data to confirm. "
-                "If results DO NOT contain a clear answer and you have no training knowledge, "
-                "say so honestly. DO NOT fabricate.\n"
+                "5. GROUNDING — For ANY claim involving a specific title, date, name, or number:\n"
+                "(a) If the search results above contain it — state it confidently.\n"
+                "(b) If the search results do NOT contain it but you have strong training knowledge "
+                "— use hedging like 'I believe' or 'from what I recall' to signal uncertainty.\n"
+                "(c) If you cannot verify it from search results AND you are unsure — OMIT it entirely. "
+                "List only what you can ground. It is ALWAYS better to give a shorter, accurate answer "
+                "than a longer one padded with fabricated details.\n"
+                "NEVER invent movie titles, release dates, cast members, scores, or statistics. "
+                "If you only know some items in a list, give those and say the rest would need "
+                "a dedicated search.\n"
                 f"6. {honorific_rule}\n"
                 "7. DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
                 "YOU MUST jump straight into the answer. "

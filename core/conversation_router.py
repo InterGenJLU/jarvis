@@ -1852,7 +1852,14 @@ class ConversationRouter:
         r'\b(who directed|who wrote|who starred|filmography|box office|'
         r'cast of|when did|what year|who won|who invented|capital of|'
         r'population of|founded in|born in|died in|height of|'
-        r'who is the|who was the)\b', re.IGNORECASE)
+        r'who is the|who was the|'
+        # entertainment / media — high hallucination surface
+        r'rank.{1,40}(movies?|films?|shows?|albums?|songs?|books?|games?)|'
+        r'best.{1,30}(movies?|films?|shows?)|worst.{1,30}(movies?|films?|shows?)|'
+        r'franchise|sequel|prequel|season \d|'
+        r'release date|came out|opening weekend|'
+        r'directed by|starring|grossed|rated|'
+        r'still (putting out|making|releasing))\b', re.IGNORECASE)
 
     _SYNTH_TEMP_GEO = re.compile(
         r'\b(drive from|driving|route to|road trip|directions to|'
@@ -2277,6 +2284,64 @@ class ConversationRouter:
         )
 
     # -------------------------------------------------------------------
+    # Progressive context compression
+    # -------------------------------------------------------------------
+
+    def _extract_topic(self, command: str, response: str) -> None:
+        """Extract a one-line topic anchor from the first exchange.
+
+        Called lazily at the start of turn 2 when the topic is still empty.
+        Stores the result in conv_state.conversation_topic.
+        """
+        prompt = (
+            "Summarize the topic of this conversation in one short phrase "
+            "(under 15 words). Include key specifics (names, places, "
+            "destinations, numbers).\n"
+            f'User: "{command[:200]}"\n'
+            f'Assistant: "{response[:400]}"\n'
+            "Topic:"
+        )
+        try:
+            topic = self.llm.generate(
+                prompt, max_tokens=30, temperature=0.0
+            ).strip().strip('"').strip()
+            if topic:
+                self.conv_state.conversation_topic = topic
+                logger.debug("Topic anchor extracted: %s", topic)
+        except Exception as e:
+            logger.warning("Topic extraction failed: %s", e)
+
+    def _summarize_exchange(self, question: str, answer: str) -> str:
+        """Compress a Q&A exchange into 1-2 sentences for context retention."""
+        prompt = (
+            "Compress this Q&A exchange into 1-2 sentences. "
+            "Keep all key facts, numbers, and specifics.\n"
+            f'Q: "{question[:200]}"\n'
+            f'A: "{answer[:800]}"\n'
+            "Summary:"
+        )
+        try:
+            summary = self.llm.generate(
+                prompt, max_tokens=60, temperature=0.0
+            ).strip()
+            return summary or f"{question[:100]} → {answer[:100]}"
+        except Exception as e:
+            logger.warning("Exchange summarization failed: %s", e)
+            return f"{question[:100]} → {answer[:100]}"
+
+    def _get_or_create_summary(self, turn_num: int, question: str,
+                                answer: str) -> str:
+        """Return cached summary for a turn, or generate and cache one."""
+        for entry in self.conv_state.exchange_summaries:
+            if entry["turn"] == turn_num:
+                return entry["summary"]
+        summary = self._summarize_exchange(question, answer)
+        self.conv_state.exchange_summaries.append(
+            {"turn": turn_num, "summary": summary}
+        )
+        return summary
+
+    # -------------------------------------------------------------------
     # LLM context preparation
     # -------------------------------------------------------------------
 
@@ -2398,40 +2463,80 @@ class ConversationRouter:
                 f"message: {subjects}. Briefly acknowledge you'll remember this.]"
             )
 
-        # Conversation-window context preservation: when we're in a
-        # conversation window, ALWAYS inject the prior exchange so the LLM
-        # has context for implicit follow-ups ("What about in London?" after
-        # a date query).  The conversation window IS the relatedness signal —
-        # false positive cost is zero (LLM ignores irrelevant context).
-        # _is_followup_request() is kept for skip-search in web research only.
+        # Progressive context compression with topic anchoring.
+        # Replaces fixed 3-exchange window with: topic anchor + compressed
+        # older exchanges + last 2 exchanges in full.  Covers ~5 exchanges
+        # at equal or lower token cost vs the old 3-exchange window.
         if in_conversation:
-            # Build compact prior context from last 3 exchanges
             prior_lines = []
-            history = self.conversation.get_recent_history(max_turns=3)
-            # history is [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}, ...]
-            exchange_num = 0
-            i = 0
             multi_speaker = self.conversation.is_multi_speaker
+
+            # Fetch up to 5 exchanges worth of history
+            history = self.conversation.get_recent_history(max_turns=5)
+
+            # Parse history into exchange tuples: (turn_num, question, answer, user_id)
+            exchanges = []
+            i = 0
+            turn_num = 0
             while i < len(history) - 1:
-                if history[i].get("role") == "user" and history[i+1].get("role") == "assistant":
-                    exchange_num += 1
-                    q = history[i]["content"][:200]
-                    a = history[i+1]["content"][:800]
-                    if multi_speaker:
-                        speaker = self.conversation._get_speaker_label(
-                            history[i].get("user_id"))
-                        prior_lines.append(
-                            f"[{exchange_num}] {speaker}: \"{q}\" → You: \"{a}\"")
-                    else:
-                        prior_lines.append(
-                            f"[{exchange_num}] User: \"{q}\" → You: \"{a}\"")
+                if (history[i].get("role") == "user"
+                        and history[i + 1].get("role") == "assistant"):
+                    turn_num += 1
+                    exchanges.append((
+                        turn_num,
+                        history[i]["content"],
+                        history[i + 1]["content"],
+                        history[i].get("user_id"),
+                    ))
                     i += 2
                 else:
                     i += 1
 
+            # Lazy topic extraction: at turn 2+, if no topic yet, extract
+            # from the first exchange in history (the conversation opener).
+            if (not self.conv_state.conversation_topic
+                    and self.conv_state.turn_count >= 1
+                    and exchanges):
+                first_q, first_a = exchanges[0][1], exchanges[0][2]
+                self._extract_topic(first_q, first_a)
+
+            # Topic anchor line
+            if self.conv_state.conversation_topic:
+                prior_lines.append(
+                    f"[topic] {self.conv_state.conversation_topic}")
+
+            if len(exchanges) > 2:
+                # Older exchanges → compressed summaries (cached)
+                for ex_turn, ex_q, ex_a, ex_uid in exchanges[:-2]:
+                    summary = self._get_or_create_summary(
+                        ex_turn, ex_q, ex_a)
+                    prior_lines.append(f"[{ex_turn}] {summary}")
+
+                # Last 2 exchanges → full fidelity
+                for ex_turn, ex_q, ex_a, ex_uid in exchanges[-2:]:
+                    q = ex_q[:200]
+                    a = ex_a[:800]
+                    if multi_speaker:
+                        speaker = self.conversation._get_speaker_label(ex_uid)
+                        prior_lines.append(
+                            f"[{ex_turn}] {speaker}: \"{q}\" → You: \"{a}\"")
+                    else:
+                        prior_lines.append(
+                            f"[{ex_turn}] User: \"{q}\" → You: \"{a}\"")
+            else:
+                # Short conversation — all exchanges in full (same as before)
+                for ex_turn, ex_q, ex_a, ex_uid in exchanges:
+                    q = ex_q[:200]
+                    a = ex_a[:800]
+                    if multi_speaker:
+                        speaker = self.conversation._get_speaker_label(ex_uid)
+                        prior_lines.append(
+                            f"[{ex_turn}] {speaker}: \"{q}\" → You: \"{a}\"")
+                    else:
+                        prior_lines.append(
+                            f"[{ex_turn}] User: \"{q}\" → You: \"{a}\"")
+
             # Inject tool result data for anaphoric follow-ups.
-            # If the last turn used a tool, include the raw result so the
-            # LLM can answer "list them", "which ones?", etc. from context.
             if self.conv_state.last_tool_result_text:
                 prior_lines.append(
                     f"[tool_data] {self.conv_state.last_tool_result_text[:800]}"
