@@ -268,25 +268,30 @@ class TaskPlanner:
     # Compound detection (microseconds, no LLM call)
     # ------------------------------------------------------------------
 
-    def needs_planning(self, command: str) -> bool:
+    def needs_planning(self, command: str) -> str | None:
         """Check if command contains conjunctive phrases suggesting multi-step.
 
         Uses word-boundary whitelist — fast, no false positives from substrings.
+        Returns the matched signal phrase, or None if no compound detected.
         """
-        for pattern in _COMPOUND_PATTERNS:
+        for pattern, signal in zip(_COMPOUND_PATTERNS, COMPOUND_SIGNALS):
             if pattern.search(command):
                 logger.info(f"Compound signal detected: {pattern.pattern}")
-                return True
-        return False
+                return signal
+        return None
 
     # ------------------------------------------------------------------
     # Plan generation (single LLM call)
     # ------------------------------------------------------------------
 
-    def generate_plan(self, command: str) -> Optional[TaskPlan]:
+    def generate_plan(self, command: str, *,
+                      signal: str | None = None) -> Optional[TaskPlan]:
         """Ask the LLM to decompose a compound command into steps.
 
         Returns TaskPlan if multi-step, None if LLM decides single-step.
+        signal: the conjunctive phrase that triggered compound detection
+                (e.g. "and then"). Passed as a hint to bias the LLM toward
+                multi-step decomposition.
         """
         manifest = self._self_awareness.get_capability_manifest()
         if not manifest:
@@ -294,6 +299,14 @@ class TaskPlanner:
             return None
 
         prompt = _PLAN_PROMPT.format(manifest=manifest, command=command)
+
+        # Bias toward multi-step when a strong conjunctive signal was detected
+        if signal:
+            prompt += (
+                f'\n\nNote: The user explicitly said "{signal}", '
+                "indicating they expect separate sequential steps. "
+                "Do NOT respond SINGLE for this request."
+            )
 
         # Error-aware planning: warn about unreliable skills
         if self._self_awareness:
@@ -372,6 +385,23 @@ class TaskPlanner:
 
         plan = TaskPlan(original_request=command, steps=steps)
         logger.info(f"Generated plan: {len(steps)} steps for '{command[:60]}'")
+
+        # Debug logging — capture full plan details
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_plan_generated(
+            command=command,
+            plan_json=json_str,
+            step_count=len(steps),
+            step_details=[
+                {"step_id": s.step_id, "skill": s.skill_name,
+                 "input": s.input_text, "description": s.description}
+                for s in steps
+            ],
+            signal=signal,
+            llm_response=response,
+        )
+
         return plan
 
     # ------------------------------------------------------------------
@@ -593,6 +623,10 @@ class TaskPlanner:
         self._skip_requested = False
         plan.status = PlanStatus.RUNNING
 
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _plan_start = time.time()
+
         results = []
         prior_context = ""
 
@@ -638,14 +672,23 @@ class TaskPlanner:
             if progress_callback and step.step_id > 1:
                 progress_callback(step.description)
 
+            _step_start = time.time()
             try:
                 result = self._execute_step(step, prior_context)
                 step.result = result or ""
+                _step_ms = (time.time() - _step_start) * 1000
 
                 if result:
                     step.status = StepStatus.COMPLETED
                     results.append(f"[{step.description}]: {result}")
                     prior_context = result
+
+                    _dbg.log_plan_step_result(
+                        step_id=step.step_id, skill_name=step.skill_name,
+                        status="completed", result_text=result,
+                        elapsed_ms=_step_ms,
+                        routing_method=step._routing_method if hasattr(step, '_routing_method') else None,
+                    )
 
                     # LLM decision evaluation (Phase 4D)
                     decision, reason = self._evaluate_step_result(step, plan)
@@ -664,12 +707,24 @@ class TaskPlanner:
                     # Failure: break loop, remaining steps depend on this one
                     step.status = StepStatus.FAILED
                     logger.warning(f"Step {step.step_id} returned empty result — breaking plan")
+                    _dbg.log_plan_step_result(
+                        step_id=step.step_id, skill_name=step.skill_name,
+                        status="failed_empty", result_text=None,
+                        elapsed_ms=_step_ms,
+                        routing_method=step._routing_method if hasattr(step, '_routing_method') else None,
+                    )
                     self._mark_remaining_skipped(plan, step.step_id + 1)
                     break
             except Exception as e:
                 step.status = StepStatus.FAILED
                 step.result = f"Error: {e}"
+                _step_ms = (time.time() - _step_start) * 1000
                 logger.error(f"Step {step.step_id} failed: {e} — breaking plan")
+                _dbg.log_plan_step_result(
+                    step_id=step.step_id, skill_name=step.skill_name,
+                    status="exception", result_text=str(e),
+                    elapsed_ms=_step_ms,
+                )
                 self._mark_remaining_skipped(plan, step.step_id + 1)
                 break
 
@@ -681,6 +736,18 @@ class TaskPlanner:
         # Synthesize final response
         final = self._synthesize_results(plan, results)
         self.active_plan = None
+
+        _plan_ms = (time.time() - _plan_start) * 1000
+        _completed = sum(1 for s in plan.steps if s.status == StepStatus.COMPLETED)
+        _failed = sum(1 for s in plan.steps if s.status == StepStatus.FAILED)
+        _skipped = sum(1 for s in plan.steps if s.status == StepStatus.SKIPPED)
+        _dbg.log_plan_complete(
+            step_count=len(plan.steps), completed=_completed,
+            failed=_failed, skipped=_skipped,
+            status=plan.status.value if hasattr(plan.status, 'value') else str(plan.status),
+            total_ms=_plan_ms, final_response=final,
+        )
+
         return final
 
     def _mark_remaining_skipped(self, plan: TaskPlan, from_step_id: int):
@@ -693,31 +760,173 @@ class TaskPlanner:
         """Execute a single plan step.
 
         Routes through skill_manager for real skills, LLM for synthesis.
+        Prior context from earlier steps is passed to the handler but kept
+        out of skill matching to avoid polluting semantic similarity scores.
         """
-        input_text = step.input_text
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
 
-        # Inject prior step context if available
+        input_text = step.input_text
+        # Build enriched input for handlers (includes prior step context)
+        enriched_text = input_text
         if prior_context:
-            input_text = f"{input_text}\n\nContext from previous step: {prior_context}"
+            enriched_text = f"{input_text}\n\nContext from previous step: {prior_context}"
+
+        _dbg.log_plan_step_start(
+            step_id=step.step_id, total_steps=0,  # filled by caller
+            skill_name=step.skill_name, description=step.description,
+            input_text=input_text, enriched_text=enriched_text,
+        )
 
         # Handle pseudo-skills
         if step.skill_name == "llm_synthesis":
-            return self._llm_synthesis(input_text)
+            step._routing_method = "pseudo_llm_synthesis"
+            _dbg.log_plan_step_routing(step.step_id, step.skill_name, "pseudo_llm_synthesis")
+            return self._llm_synthesis(enriched_text)
 
         if step.skill_name == "web_research":
-            return self._web_research(input_text, step)
+            step._routing_method = "pseudo_web_research"
+            _dbg.log_plan_step_routing(step.step_id, step.skill_name, "pseudo_web_research")
+            return self._web_research(enriched_text, step)
 
-        # Real skill — route through skill_manager using step input.
-        # Don't prepend the original request — it causes re-matching
-        # (e.g. "open the file" re-matches to "create presentation" if
-        # the original request says "create a presentation").
+        # --- Direct skill routing by step.skill_name ---
+        # The plan LLM already identified the correct skill. Get it by name
+        # and find the best handler via within-skill semantic matching.
+        # This avoids global match_intent() which often misroutes LLM-generated
+        # plan step descriptions.
+        skill = self._skill_manager.get_skill(step.skill_name)
+        if skill and hasattr(skill, 'semantic_intents') and skill.semantic_intents:
+            result = self._direct_skill_route(
+                step, skill, input_text, enriched_text, _dbg,
+            )
+            if result is not None:
+                return result
+
+        # Fallback 1: global match_intent (for skills without semantic intents
+        # or if direct routing found no handler)
+        match = self._skill_manager.match_intent(input_text)
+        if match:
+            skill_name, intent_id, entities = match
+            match_score = entities.get('similarity')
+            match_layer = entities.get('layer', 'unknown')
+            _dbg.log_plan_step_routing(
+                step.step_id, step.skill_name, "match_intent",
+                matched_skill=skill_name, matched_intent=intent_id,
+                match_score=match_score, match_layer=match_layer,
+            )
+            fallback_skill = self._skill_manager.get_skill(skill_name)
+            if fallback_skill:
+                entities['original_text'] = enriched_text
+                logger.info(f"Plan step routing: {skill_name}.{intent_id}")
+                try:
+                    response = fallback_skill.handle_intent(intent_id, entities)
+                    if response:
+                        step._routing_method = f"match_intent:{skill_name}.{intent_id}"
+                        return response
+                except Exception as e:
+                    logger.warning(f"Plan step handler failed: {e}")
+
+        # Fallback 2: full execute_intent on clean input
         response = self._skill_manager.execute_intent(input_text)
         if response:
+            step._routing_method = "execute_intent"
+            _dbg.log_plan_step_routing(step.step_id, step.skill_name, "execute_intent")
             return response
 
-        # Skill didn't match — try LLM as fallback for this step
+        # Last resort: LLM synthesis with full context
         logger.info(f"Skill '{step.skill_name}' didn't match input — using LLM fallback")
-        return self._llm_synthesis(input_text)
+        step._routing_method = "llm_fallback"
+        _dbg.log_plan_step_routing(step.step_id, step.skill_name, "llm_fallback")
+        return self._llm_synthesis(enriched_text)
+
+    def _direct_skill_route(self, step: 'PlanStep', skill, input_text: str,
+                             enriched_text: str, _dbg) -> Optional[str]:
+        """Route a plan step directly to the named skill's best handler.
+
+        Uses within-skill semantic matching with a relaxed threshold (0.20)
+        since the plan LLM already confirmed the skill — we just need to
+        pick the best handler within it.
+
+        Returns the handler response, or None if no handler matched.
+        """
+        import inspect
+        try:
+            from sentence_transformers import util as st_util
+        except ImportError:
+            return None
+
+        sm = self._skill_manager
+        if not hasattr(sm, '_embedding_model') or not sm._embedding_model:
+            return None
+
+        # Embed both input_text and step.description — the plan LLM generates
+        # a technical command (input_text) and a natural description.  One of
+        # the two will match the skill's example phrases better depending on
+        # how the examples are written.
+        candidates = [input_text]
+        if step.description and step.description != input_text:
+            candidates.append(step.description)
+
+        try:
+            candidate_embs = sm._embedding_model.encode(
+                candidates, convert_to_tensor=True, show_progress_bar=False,
+            )
+        except Exception as e:
+            logger.warning(f"Direct skill route embedding failed: {e}")
+            return None
+
+        best_handler = None
+        best_score = 0.0
+        best_intent = None
+
+        for intent_id, intent_data in skill.semantic_intents.items():
+            cache_key = (step.skill_name, intent_id)
+            ex_embs = sm._semantic_embedding_cache.get(cache_key)
+            if ex_embs is None:
+                continue
+            sims = st_util.cos_sim(candidate_embs, ex_embs)
+            max_sim = float(sims.max())
+            if max_sim > best_score:
+                best_score = max_sim
+                best_handler = intent_data.get('handler')
+                best_intent = intent_id
+
+        if not best_handler or best_score < 0.20:
+            logger.info(
+                f"Direct skill route: no handler in '{step.skill_name}' "
+                f"(best={best_score:.2f})"
+            )
+            return None
+
+        logger.info(
+            f"Direct skill route: {step.skill_name}.{best_intent} "
+            f"(score={best_score:.2f})"
+        )
+        _dbg.log_plan_step_routing(
+            step.step_id, step.skill_name, "direct_skill",
+            matched_skill=step.skill_name, matched_intent=best_intent,
+            match_score=best_score, match_layer="plan_direct",
+        )
+
+        entities = {'original_text': enriched_text}
+        try:
+            sig = inspect.signature(best_handler)
+            if 'entities' in sig.parameters:
+                response = best_handler(entities=entities)
+            else:
+                response = best_handler()
+        except Exception as e:
+            logger.warning(f"Direct skill handler {best_intent} failed: {e}")
+            return None
+
+        if response:
+            step._routing_method = f"direct_skill:{step.skill_name}.{best_intent}"
+            if isinstance(response, str):
+                from core.honorific import resolve_honorific
+                response = resolve_honorific(response)
+            return response
+
+        return None
 
     def _llm_synthesis(self, input_text: str) -> str:
         """Use LLM to synthesize/summarize content."""

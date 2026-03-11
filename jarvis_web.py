@@ -1070,12 +1070,16 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                     except Exception:
                         pass
 
+            announcement = response  # preserve step-count announcement
             plan_result = await asyncio.to_thread(
                 task_planner.execute_plan,
                 task_planner.active_plan,
                 progress_callback=_web_progress,
             )
-            response = plan_result or "I wasn't able to complete the requested steps."
+            execution_result = plan_result or "I wasn't able to complete the requested steps."
+            # Keep both announcement and result in conversation history
+            # so the LLM can reference plan metadata in follow-ups.
+            response = f"{announcement} {execution_result}"
             used_llm = True
             streamed = True
 

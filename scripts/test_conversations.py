@@ -1299,7 +1299,7 @@ SHARE_DIR = os.path.expanduser("~/jarvis/share")
 
 
 async def run_suite(conversations, config, delay=2.0, verbose=True,
-                    reconnect_between=True):
+                    reconnect_between=True, save_path=None):
     """Run all conversations and return results."""
     results = []
 
@@ -1338,12 +1338,33 @@ async def run_suite(conversations, config, delay=2.0, verbose=True,
                 )
         print(f"Connected. Running {len(conversations)} conversations.\n")
 
+        # Track per-conversation artifacts: {conv_id: [filename, ...]}
+        conv_artifacts = {}
+
         for i, conv in enumerate(conversations):
             print(f"[{i+1}/{len(conversations)}] {conv.id}: {conv.name} "
                   f"({len(conv.turns)} turns)")
 
+            # Snapshot share/ before this conversation
+            pre_conv_files = set()
+            if os.path.isdir(SHARE_DIR):
+                pre_conv_files = {
+                    f for f in os.listdir(SHARE_DIR)
+                    if os.path.isfile(os.path.join(SHARE_DIR, f))
+                }
+
             result = await run_conversation(client, conv, delay=delay, verbose=verbose)
             results.append(result)
+
+            # Detect new files created during this conversation
+            if os.path.isdir(SHARE_DIR):
+                post_conv_files = {
+                    f for f in os.listdir(SHARE_DIR)
+                    if os.path.isfile(os.path.join(SHARE_DIR, f))
+                }
+                new_files = post_conv_files - pre_conv_files
+                if new_files:
+                    conv_artifacts[conv.id] = sorted(new_files)
 
             if result.error:
                 print(f"  ERROR: {result.error}")
@@ -1365,7 +1386,8 @@ async def run_suite(conversations, config, delay=2.0, verbose=True,
         await client.close()
 
     # Clean up artifacts created during testing
-    await cleanup_test_artifacts(config, pre_run_files, run_start_ts)
+    await cleanup_test_artifacts(config, pre_run_files, run_start_ts,
+                                 save_path=save_path, conv_artifacts=conv_artifacts)
 
     return results
 
@@ -1394,10 +1416,12 @@ CLEANUP_COMMANDS = [
 ]
 
 
-async def cleanup_test_artifacts(config, pre_run_files, run_start_ts):
+async def cleanup_test_artifacts(config, pre_run_files, run_start_ts,
+                                 save_path=None, conv_artifacts=None):
     """Remove reminders, files, and memory artifacts created by test conversations."""
     import sqlite3
     import glob as glob_mod
+    import shutil
 
     print(f"\n{'─'*70}")
     print("  Cleaning up test artifacts...")
@@ -1418,16 +1442,37 @@ async def cleanup_test_artifacts(config, pre_run_files, run_start_ts):
     finally:
         await client.close()
 
-    # 2. Remove any files in share/ that didn't exist before the run
+    # 2. Preserve then remove any files in share/ that didn't exist before the run
     if os.path.isdir(SHARE_DIR):
-        for f in os.listdir(SHARE_DIR):
+        new_files = [
+            f for f in os.listdir(SHARE_DIR)
+            if os.path.isfile(os.path.join(SHARE_DIR, f)) and f not in pre_run_files
+        ]
+
+        # Copy artifacts to per-conversation directories before cleanup
+        # Structure: run_NNN_artifacts/V34/file.docx
+        if new_files and save_path and conv_artifacts:
+            run_artifacts_dir = save_path.replace('.json', '_artifacts')
+            for conv_id, filenames in conv_artifacts.items():
+                conv_dir = os.path.join(run_artifacts_dir, conv_id)
+                os.makedirs(conv_dir, exist_ok=True)
+                for f in filenames:
+                    src = os.path.join(SHARE_DIR, f)
+                    if os.path.isfile(src):
+                        dst = os.path.join(conv_dir, f)
+                        try:
+                            shutil.copy2(src, dst)
+                            print(f"    [preserved] {f} → {os.path.relpath(conv_dir)}/")
+                        except OSError as e:
+                            print(f"    [preserve failed] {f}: {e}")
+
+        for f in new_files:
             fp = os.path.join(SHARE_DIR, f)
-            if os.path.isfile(fp) and f not in pre_run_files:
-                try:
-                    os.remove(fp)
-                    print(f"    [removed] {f}")
-                except OSError:
-                    pass
+            try:
+                os.remove(fp)
+                print(f"    [removed] {f}")
+            except OSError:
+                pass
 
     # 3. Purge memory artifacts created during this test run
     data_dir = "/mnt/storage/jarvis/data"
@@ -1712,6 +1757,7 @@ def main():
     results = asyncio.run(run_suite(
         convs, config, delay=args.delay, verbose=verbose,
         reconnect_between=not args.no_reconnect,
+        save_path=args.save,
     ))
 
     # Deactivate debug logger

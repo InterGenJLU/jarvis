@@ -1669,11 +1669,12 @@ class ConversationRouter:
         if not tp:
             return None
 
-        if not tp.needs_planning(command):
+        signal = tp.needs_planning(command)
+        if not signal:
             return None
 
         logger.info(f"Compound request detected — generating plan for: {command[:80]}")
-        plan = tp.generate_plan(command)
+        plan = tp.generate_plan(command, signal=signal)
         if not plan:
             logger.info("Planner returned no plan — falling through to single-skill routing")
             return None
@@ -2666,7 +2667,9 @@ class ConversationRouter:
         """Compress a Q&A exchange into 1-2 sentences for context retention."""
         prompt = (
             "Compress this Q&A exchange into 1-2 sentences. "
-            "Keep all key facts, numbers, and specifics.\n"
+            "Preserve exact numerical values, multipliers, formulas, "
+            "and units — these are critical for follow-up calculations. "
+            "Keep all key facts and specifics.\n"
             f'Q: "{question[:200]}"\n'
             f'A: "{answer[:800]}"\n'
             "Summary:"
@@ -2856,15 +2859,15 @@ class ConversationRouter:
                 prior_lines.append(
                     f"[topic] {self.conv_state.conversation_topic}")
 
-            if len(exchanges) > 2:
+            if len(exchanges) > 3:
                 # Older exchanges → compressed summaries (cached)
-                for ex_turn, ex_q, ex_a, ex_uid in exchanges[:-2]:
+                for ex_turn, ex_q, ex_a, ex_uid in exchanges[:-3]:
                     summary = self._get_or_create_summary(
                         ex_turn, ex_q, ex_a)
                     prior_lines.append(f"[{ex_turn}] {summary}")
 
-                # Last 2 exchanges → full fidelity
-                for ex_turn, ex_q, ex_a, ex_uid in exchanges[-2:]:
+                # Last 3 exchanges → full fidelity
+                for ex_turn, ex_q, ex_a, ex_uid in exchanges[-3:]:
                     q = ex_q[:200]
                     a = ex_a[:800]
                     if multi_speaker:

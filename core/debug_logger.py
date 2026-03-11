@@ -168,6 +168,81 @@ class ConversationDebugLogger:
             "intent_id": intent_id,
         })
 
+    # -- Plan execution events --
+
+    def log_plan_generated(self, command: str, plan_json: str,
+                            step_count: int, step_details: list,
+                            signal: str = None, llm_response: str = None):
+        """Log the raw plan output from generate_plan()."""
+        self._write("plan_generated", {
+            "command": command,
+            "signal": signal,
+            "step_count": step_count,
+            "steps": step_details,  # list of {step_id, skill, input, description}
+            "llm_raw_response": llm_response,
+            "plan_json": plan_json,
+        })
+
+    def log_plan_step_start(self, step_id: int, total_steps: int,
+                             skill_name: str, description: str,
+                             input_text: str, enriched_text: str = None):
+        """Log when a plan step begins execution."""
+        self._write("plan_step_start", {
+            "step_id": step_id,
+            "total_steps": total_steps,
+            "skill_name": skill_name,
+            "description": description,
+            "input_text": input_text,
+            "enriched_text_len": len(enriched_text) if enriched_text else 0,
+            "enriched_text": enriched_text,
+        })
+
+    def log_plan_step_routing(self, step_id: int, skill_name: str,
+                               method: str, matched_skill: str = None,
+                               matched_intent: str = None,
+                               match_score: float = None,
+                               match_layer: str = None):
+        """Log the routing decision for a plan step."""
+        self._write("plan_step_routing", {
+            "step_id": step_id,
+            "expected_skill": skill_name,
+            "routing_method": method,  # "match_intent", "execute_intent", "llm_fallback"
+            "matched_skill": matched_skill,
+            "matched_intent": matched_intent,
+            "match_score": match_score,
+            "match_layer": match_layer,
+        })
+
+    def log_plan_step_result(self, step_id: int, skill_name: str,
+                              status: str, result_text: str = None,
+                              elapsed_ms: float = 0, routing_method: str = None):
+        """Log the outcome of a plan step."""
+        self._write("plan_step_result", {
+            "step_id": step_id,
+            "skill_name": skill_name,
+            "status": status,  # "completed", "failed", "skipped", "cancelled"
+            "routing_method": routing_method,
+            "result_len": len(result_text) if result_text else 0,
+            "result_text": result_text,
+            "elapsed_ms": round(elapsed_ms, 1),
+        })
+
+    def log_plan_complete(self, step_count: int, completed: int,
+                           failed: int, skipped: int,
+                           status: str, total_ms: float = 0,
+                           final_response: str = None):
+        """Log plan completion summary."""
+        self._write("plan_complete", {
+            "step_count": step_count,
+            "completed": completed,
+            "failed": failed,
+            "skipped": skipped,
+            "status": status,
+            "total_ms": round(total_ms, 1),
+            "final_response_len": len(final_response) if final_response else 0,
+            "final_response": final_response,
+        })
+
     def log_context_window(self, segments_count: int = 0,
                             verbatim_count: int = 0,
                             query: str = None):
