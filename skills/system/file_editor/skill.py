@@ -880,7 +880,10 @@ class FileEditorSkill(BaseSkill):
             'FILENAME: <filename with extension, invent if not specified>\n'
             'ANALYSIS_TYPE: overview|comparison|deep-dive|tutorial|summary\n'
             'KEY_POINTS: <comma-separated areas to cover, or "auto" to let AI decide>\n'
-            'THEME: professional|modern|bold (default professional, use "modern" for clean/minimalist, "bold" for impactful/striking)'
+            'THEME: professional|modern|bold|minimal|elegant|earth|forest|ocean|jarvis|banfield '
+            '(default professional. modern=clean/minimalist, bold=impactful, minimal=crisp, '
+            'elegant=luxury/gold, earth=warm/natural, forest=nature/green, ocean=education/blue, '
+            'jarvis=tech/cyan, banfield=warm/orange)'
         )
 
         result = self._llm.generate(parse_prompt, max_tokens=256)
@@ -913,7 +916,10 @@ class FileEditorSkill(BaseSkill):
             elif key == 'key_points':
                 params['key_points'] = value
             elif key == 'theme':
-                if value.lower() in ('professional', 'modern', 'bold'):
+                valid_themes = ('professional', 'modern', 'bold', 'minimal',
+                                'elegant', 'earth', 'forest', 'ocean',
+                                'jarvis', 'banfield')
+                if value.lower() in valid_themes:
                     params['theme'] = value.lower()
 
         # Require at least a topic
