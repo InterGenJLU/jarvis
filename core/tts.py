@@ -114,7 +114,11 @@ class TextToSpeech:
 
     def _init_kokoro(self, config):
         """Initialize Kokoro TTS engine (in-process, CPU)."""
-        from kokoro import KPipeline
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*dropout option adds dropout.*")
+            warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
+            from kokoro import KPipeline
         import torch
         import numpy as np
 
@@ -125,7 +129,10 @@ class TextToSpeech:
         t0 = time.time()
         # Force CPU — faster than GPU for this 82M model, and avoids
         # stealing the ROCm device from CTranslate2/STT
-        self._kokoro_pipeline = KPipeline(lang_code='b', repo_id='hexgrad/Kokoro-82M', device='cpu')
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*dropout option adds dropout.*")
+            warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
+            self._kokoro_pipeline = KPipeline(lang_code='b', repo_id='hexgrad/Kokoro-82M', device='cpu')
 
         # Load blended voice: 50% fable + 50% george
         voice_a = config.get("tts.kokoro_voice_a", "bm_fable")

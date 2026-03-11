@@ -128,6 +128,7 @@ class ReminderManager:
         with self._db_lock:
             conn = sqlite3.connect(str(self.db_path), timeout=30)
             try:
+                conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS reminders (
                         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -204,6 +205,7 @@ class ReminderManager:
     def _conn(self) -> sqlite3.Connection:
         """Get a new SQLite connection with row_factory."""
         conn = sqlite3.connect(str(self.db_path), timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.row_factory = sqlite3.Row
         return conn
 

@@ -82,7 +82,8 @@ class WakeWordDetector:
         if not self.mic_device_name:
             return sd.default.device[0]  # Default input device
 
-        for attempt in range(4):
+        max_retries = 6
+        for attempt in range(max_retries):
             devices = sd.query_devices()
             for i, dev in enumerate(devices):
                 if (self.mic_device_name.lower() in dev['name'].lower() and
@@ -90,9 +91,9 @@ class WakeWordDetector:
                     if attempt > 0:
                         self.logger.info(f"Found mic '{self.mic_device_name}' on retry {attempt}")
                     return i
-            if attempt < 3:
-                self.logger.debug(f"Mic '{self.mic_device_name}' not yet available, retrying in 2s ({attempt + 1}/3)")
-                time.sleep(2)
+            if attempt < max_retries - 1:
+                self.logger.debug(f"Mic '{self.mic_device_name}' not yet available, retrying in 3s ({attempt + 1}/{max_retries - 1})")
+                time.sleep(3)
 
         self.logger.warning(f"Microphone '{self.mic_device_name}' not found after retries, using default")
         return sd.default.device[0]

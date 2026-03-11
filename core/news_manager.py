@@ -136,6 +136,7 @@ class NewsManager:
         with self._db_lock:
             conn = sqlite3.connect(str(self.db_path), timeout=30)
             try:
+                conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS news_headlines (
                         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,6 +170,7 @@ class NewsManager:
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.row_factory = sqlite3.Row
         return conn
 

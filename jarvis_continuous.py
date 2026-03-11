@@ -908,9 +908,10 @@ class JarvisContinuous:
             self.tts_worker.start()
             self.logger.info("Pipeline workers started (STT + TTS)")
 
-            # Startup health check
+            # Startup health check (delayed to let external services finish loading)
             if self.config.get("health_check.run_on_startup", True):
-                self._run_startup_health_check()
+                import threading
+                threading.Timer(30, self._run_startup_health_check).start()
 
             try:
                 # Coordinator event loop runs on main thread
