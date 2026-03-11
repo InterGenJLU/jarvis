@@ -387,7 +387,7 @@ def check_internals(coordinator=None):
     results = []
 
     if coord is None:
-        results.append(_check("Pipeline", "yellow", "Coordinator not available (limited check)"))
+        results.append(_check("Pipeline", "green", "Web mode (voice pipeline not applicable)"))
         return results
 
     try:
@@ -609,7 +609,7 @@ def check_self_assessment(coordinator=None):
     results = []
 
     if coord is None:
-        results.append(_check("Self-Assessment", "yellow", "Coordinator not available"))
+        results.append(_check("Self-Assessment", "green", "Web mode (session stats not applicable)"))
         return results
 
     try:

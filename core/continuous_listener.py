@@ -371,16 +371,23 @@ class ContinuousListener:
         Returns device index or None if no input device exists at all.
         Sets self._using_fallback_device when preferred mic isn't found.
         """
-        devices = sd.query_devices()
-
-        # Try configured device name first
+        # Try configured device name, retrying if PipeWire hasn't registered it yet
         if self.device:
-            for i, dev in enumerate(devices):
-                if (self.device in dev['name'] and
-                        dev.get('max_input_channels', 0) > 0):
-                    self._using_fallback_device = False
-                    return i
-            self.logger.warning(f"Configured mic '{self.device}' not found, trying default")
+            for attempt in range(4):
+                devices = sd.query_devices()
+                for i, dev in enumerate(devices):
+                    if (self.device in dev['name'] and
+                            dev.get('max_input_channels', 0) > 0):
+                        self._using_fallback_device = False
+                        if attempt > 0:
+                            self.logger.info(f"Found mic '{self.device}' on retry {attempt}")
+                        return i
+                if attempt < 3:
+                    self.logger.debug(f"Mic '{self.device}' not yet available, retrying in 2s ({attempt + 1}/3)")
+                    time.sleep(2)
+            self.logger.warning(f"Configured mic '{self.device}' not found after retries, trying default")
+        else:
+            devices = sd.query_devices()
 
         # Fall back to system default input
         try:

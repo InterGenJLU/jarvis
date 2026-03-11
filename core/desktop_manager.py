@@ -57,6 +57,8 @@ class DesktopManager:
         # Lazy D-Bus proxy — don't block startup
         self._proxy = None
         self._dbus_available = None  # None = not checked yet
+        self._dbus_last_attempt = 0  # timestamp of last failed attempt
+        self._DBUS_RETRY_INTERVAL = 30  # seconds between retry attempts
 
         self.logger.info("Desktop manager initialized (lazy D-Bus connection)")
 
@@ -67,11 +69,15 @@ class DesktopManager:
         if self._proxy is not None:
             return self._proxy
 
+        # If previously failed, throttle retries
         if self._dbus_available is False:
-            return None
+            import time
+            if (time.time() - self._dbus_last_attempt) < self._DBUS_RETRY_INTERVAL:
+                return None
 
         try:
             import dbus
+            import time
             bus = dbus.SessionBus()
             self._proxy = bus.get_object(_DBUS_NAME, _DBUS_PATH)
             # Quick health check
@@ -81,7 +87,9 @@ class DesktopManager:
             self.logger.info(f"Connected to JARVIS Desktop Bridge v{version}")
             return self._proxy
         except Exception as e:
+            import time
             self._dbus_available = False
+            self._dbus_last_attempt = time.time()
             self._proxy = None
             self.logger.warning(f"GNOME extension not available: {e}")
             return None

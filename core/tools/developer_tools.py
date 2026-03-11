@@ -361,16 +361,27 @@ def _devtools_system_health(args: dict) -> str:
     try:
         from core.health_check import get_full_health
         results = get_full_health(_config)
-        lines = []
-        for layer_name, checks in results.items():
-            lines.append(f"=== {layer_name.upper()} ===")
-            for check in checks:
-                status = check.get('status', 'unknown')
-                name = check.get('name', 'unknown')
-                detail = check.get('detail', '')
-                icon = {'green': 'OK', 'yellow': 'WARN', 'red': 'FAIL'}.get(status, '??')
-                lines.append(f"  [{icon}] {name}: {detail}")
-        return "\n".join(lines)
+
+        # Display the visual report on screen (terminal window)
+        try:
+            from core.health_check import format_visual_report
+            visual_report = format_visual_report(results)
+            import importlib.util
+            _spec = importlib.util.spec_from_file_location(
+                '_display',
+                '/mnt/storage/jarvis/skills/system/developer_tools/_display.py',
+            )
+            _disp_mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_disp_mod)
+            display = _disp_mod.DisplayRouter(_config)
+            display.show(visual_report, content_type='health_check',
+                         title='System Health Report')
+        except Exception as e:
+            logger.warning(f"Could not display visual health report: {e}")
+
+        # Return a conversational brief (LLM will relay it to user)
+        from core.health_check import format_voice_brief
+        return format_voice_brief(results)
     except Exception as e:
         return f"Error running health check: {e}"
 

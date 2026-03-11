@@ -53,8 +53,12 @@ class SpeakerIdentifier:
         """Lazy-load the resemblyzer voice encoder (CPU only)."""
         if self._encoder is None:
             self.logger.info("Loading resemblyzer VoiceEncoder...")
-            from resemblyzer import VoiceEncoder
-            self._encoder = VoiceEncoder(device="cpu")
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*dropout option adds dropout.*")
+                warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
+                from resemblyzer import VoiceEncoder
+                self._encoder = VoiceEncoder(device="cpu")
             self.logger.info("VoiceEncoder loaded")
         return self._encoder
 

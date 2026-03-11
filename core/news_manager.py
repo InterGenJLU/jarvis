@@ -134,7 +134,7 @@ class NewsManager:
     def _init_db(self):
         """Create the news_headlines table and indexes."""
         with self._db_lock:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30)
             try:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS news_headlines (
@@ -168,7 +168,7 @@ class NewsManager:
         self.logger.info(f"News database ready at {self.db_path}")
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.row_factory = sqlite3.Row
         return conn
 

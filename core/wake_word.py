@@ -81,14 +81,20 @@ class WakeWordDetector:
         """Find microphone device index by name"""
         if not self.mic_device_name:
             return sd.default.device[0]  # Default input device
-        
-        devices = sd.query_devices()
-        for i, dev in enumerate(devices):
-            if (self.mic_device_name.lower() in dev['name'].lower() and 
-                dev.get('max_input_channels', 0) > 0):
-                return i
-        
-        self.logger.warning(f"Microphone '{self.mic_device_name}' not found, using default")
+
+        for attempt in range(4):
+            devices = sd.query_devices()
+            for i, dev in enumerate(devices):
+                if (self.mic_device_name.lower() in dev['name'].lower() and
+                    dev.get('max_input_channels', 0) > 0):
+                    if attempt > 0:
+                        self.logger.info(f"Found mic '{self.mic_device_name}' on retry {attempt}")
+                    return i
+            if attempt < 3:
+                self.logger.debug(f"Mic '{self.mic_device_name}' not yet available, retrying in 2s ({attempt + 1}/3)")
+                time.sleep(2)
+
+        self.logger.warning(f"Microphone '{self.mic_device_name}' not found after retries, using default")
         return sd.default.device[0]
     
     def _resample_linear(self, audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:

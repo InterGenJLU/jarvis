@@ -126,7 +126,7 @@ class ReminderManager:
     def _init_db(self):
         """Create the reminders table if it doesn't exist, and run migrations."""
         with self._db_lock:
-            conn = sqlite3.connect(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path), timeout=30)
             try:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS reminders (
@@ -203,7 +203,7 @@ class ReminderManager:
 
     def _conn(self) -> sqlite3.Connection:
         """Get a new SQLite connection with row_factory."""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.row_factory = sqlite3.Row
         return conn
 

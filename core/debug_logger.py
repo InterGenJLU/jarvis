@@ -243,6 +243,14 @@ class ConversationDebugLogger:
             "final_response": final_response,
         })
 
+    def log_skill_event(self, skill_name: str, event: str, data: dict = None):
+        """Generic skill-internal event for pipeline visibility."""
+        self._write("skill_event", {
+            "skill_name": skill_name,
+            "event": event,
+            **(data or {}),
+        })
+
     def log_context_window(self, segments_count: int = 0,
                             verbatim_count: int = 0,
                             query: str = None):

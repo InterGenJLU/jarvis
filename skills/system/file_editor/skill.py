@@ -15,6 +15,7 @@ import shutil
 import tempfile
 import time
 import random
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -54,6 +55,34 @@ MAX_EDIT_BYTES = 15 * 1024        # 15KB max file for editing
 MAX_EDIT_LINES = 500              # 500 lines max for editing
 MAX_FILES_IN_SHARE = 50           # Cap on total files
 
+# Two-phase generation temperatures
+LAYOUT_TEMPERATURE = 1.2    # High creativity for slide type selection
+CONTENT_TEMPERATURE = 0.4   # Low temperature for accurate content synthesis
+
+# Valid slide types for the expanded engine
+VALID_SLIDE_TYPES = [
+    "title_hero", "section_divider", "agenda", "card_grid_3", "card_grid_4",
+    "timeline", "data_table", "full_bleed_image", "image_text_reversed",
+    "closing", "stat", "comparison", "bullets",
+]
+
+_PIPELINE_CACHE_TTL = 600  # 10 minutes
+
+
+@dataclass
+class _PipelineCache:
+    """Cached pipeline state for post-generation editing."""
+    structure: dict
+    research_context: str
+    params: dict
+    filename: str
+    output_path: str
+    images: dict
+    created_at: float = field(default_factory=time.time)
+
+    def is_expired(self) -> bool:
+        return (time.time() - self.created_at) > _PIPELINE_CACHE_TTL
+
 
 class FileEditorSkill(BaseSkill):
     """Voice-driven file creation and editing in the share/ directory."""
@@ -68,6 +97,7 @@ class FileEditorSkill(BaseSkill):
         self._image_search = ImageSearch(config=self.config)
         self._pending_confirmation = None  # (action, detail, expiry_time)
         self._last_generated_file = None   # Path to last doc gen output (for "open it")
+        self._pipeline_cache = None        # _PipelineCache for edit/refine follow-ups
 
         # Ensure share directory exists
         SHARE_DIR.mkdir(parents=True, exist_ok=True)
@@ -162,6 +192,29 @@ class FileEditorSkill(BaseSkill):
             ],
             handler=self.create_presentation,
             threshold=0.50,
+        )
+
+        self.register_semantic_intent(
+            examples=[
+                "make slide 2 more technical",
+                "change the title to something catchier",
+                "remove the fourth slide",
+                "swap slides 3 and 5",
+                "add a slide about password management",
+                "make the conclusion stronger",
+                "add another slide after slide 3",
+                "insert a new slide as number 3",
+                "edit the presentation to add more detail",
+                "update slide 4 with better statistics",
+                "delete the agenda slide",
+                "move the timeline slide to the end",
+                "rewrite the bullet points on slide 2",
+                "append a slide about cloud security",
+                "make it more professional",
+                "can you add a table slide comparing the options",
+            ],
+            handler=self.edit_presentation,
+            threshold=0.48,
         )
 
         self.register_semantic_intent(
@@ -583,6 +636,10 @@ class FileEditorSkill(BaseSkill):
         parse request → optional web research → LLM synthesis → slide generation."""
         user_text = entities.get('original_text', '')
         self.logger.info(f"[file_editor] create_presentation request: {user_text[:80]}")
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_skill_event("file_editor", "create_presentation_entry",
+                             {"user_text": user_text[:200]})
 
         # Step 1: Parse the request
         params = self._parse_document_request(user_text)
@@ -597,6 +654,156 @@ class FileEditorSkill(BaseSkill):
             params["filename"] = Path(params["filename"]).stem + ".pptx"
 
         return self._generate_document(params)
+
+    # ------------------------------------------------------------------
+    # Intent: edit_presentation
+    # ------------------------------------------------------------------
+
+    def edit_presentation(self, entities: dict) -> str:
+        """Edit/refine/append to the most recently generated presentation."""
+        user_text = entities.get('original_text', '')
+        self.logger.info(f"[file_editor] edit_presentation request: {user_text[:80]}")
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+
+        # Check for valid pipeline cache
+        has_cache = bool(self._pipeline_cache)
+        expired = self._pipeline_cache.is_expired() if has_cache else False
+        _dbg.log_skill_event("file_editor", "edit_presentation_cache_check", {
+            "user_text": user_text[:200],
+            "has_cache": has_cache,
+            "cache_expired": expired,
+            "cache_filename": self._pipeline_cache.filename if has_cache else None,
+            "cache_age_s": round(time.time() - self._pipeline_cache.created_at, 1) if has_cache else None,
+        })
+        if not has_cache or expired:
+            self.logger.info("[file_editor] No active pipeline cache, "
+                             "routing to create_presentation")
+            _dbg.log_skill_event("file_editor", "edit_fallthrough_to_create",
+                                 {"reason": "expired" if expired else "no_cache"})
+            return self.create_presentation(entities)
+
+        cache = self._pipeline_cache
+
+        # Send cached structure + edit request to LLM for interpretation
+        modified_structure = self._interpret_edit(
+            cache.structure, user_text, cache.research_context)
+        if not modified_structure:
+            return (f"I had trouble understanding that edit, {self.honorific}. "
+                    "Could you rephrase it?")
+
+        # Re-render from modified structure
+        theme_name = cache.params.get('theme', 'professional')
+        filename = cache.filename
+
+        # Carry forward existing images + fetch for any new slides
+        images = dict(cache.images)
+        temp_dir = None
+        new_slides = modified_structure.get('slides', [])
+        if self._image_search.available:
+            temp_dir = tempfile.mkdtemp(prefix="jarvis_doc_")
+            for i, slide in enumerate(new_slides):
+                if i not in images and slide.get('image_query'):
+                    img = self._image_search.search_and_download(
+                        slide['image_query'], Path(temp_dir))
+                    if img:
+                        images[i] = str(img)
+
+        try:
+            output_path = self._doc_generator.create_presentation(
+                modified_structure, filename=filename, images=images,
+                theme_name=theme_name,
+            )
+        finally:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+        if not output_path:
+            return (f"I encountered an error re-rendering the presentation, "
+                    f"{self.honorific}. The previous version is still in "
+                    "the share folder.")
+
+        # Update cache with modified structure + reset TTL
+        self._pipeline_cache = _PipelineCache(
+            structure=modified_structure,
+            research_context=cache.research_context,
+            params=cache.params,
+            filename=filename,
+            output_path=str(output_path),
+            images=images,
+        )
+        self._last_generated_file = output_path
+
+        slide_count = len(modified_structure.get('slides', []))
+        return (f"Done, {self.honorific}. I've updated {filename} — "
+                f"{slide_count} slides. Want any other changes?")
+
+    def _interpret_edit(self, current_structure: dict, edit_request: str,
+                        research_context: str = "") -> Optional[dict]:
+        """Use LLM to interpret an edit request and return modified structure."""
+        compact = json.dumps(current_structure, indent=2)
+        if len(compact) > 6000:
+            compact = compact[:6000] + "\n... [truncated]"
+
+        research_block = ""
+        if research_context:
+            truncated = (research_context[:3000]
+                         if len(research_context) > 3000 else research_context)
+            research_block = (
+                f"\nRESEARCH DATA (use for new content):\n{truncated}\n")
+
+        slide_types_str = ", ".join(VALID_SLIDE_TYPES)
+
+        edit_prompt = (
+            "You are editing an existing presentation structure.\n\n"
+            f"CURRENT STRUCTURE:\n{compact}\n\n"
+            f"{research_block}"
+            f'EDIT REQUEST: "{edit_request}"\n\n'
+            "Apply the requested edit and output the COMPLETE modified "
+            "structure as valid JSON.\n\n"
+            "EDIT OPERATIONS YOU CAN PERFORM:\n"
+            "- MODIFY content: Change title, bullets, stats, descriptions\n"
+            "- ADD slide: Insert a new slide at a specific position or end\n"
+            "- REMOVE slide: Delete a slide by number or description\n"
+            "- REORDER slides: Swap, move, or rearrange positions\n"
+            "- CHANGE slide_type: Convert a slide to a different type\n\n"
+            "RULES:\n"
+            "1. Output the COMPLETE structure (all slides, not just changed)\n"
+            "2. Preserve all unchanged slides exactly as they are\n"
+            "3. For new slides, provide full content matching the slide_type\n"
+            f"4. slide_type MUST be one of: {slide_types_str}\n"
+            "5. New content bullets must be informative (10-20 words) with "
+            "specific facts, using **bold lead phrases**\n"
+            "6. Maintain image_query fields for slides that need images\n"
+            "7. Output ONLY valid JSON. No markdown fences, no explanations.\n"
+        )
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+
+        raw = self._llm.generate(edit_prompt, max_tokens=3072,
+                                 temperature=CONTENT_TEMPERATURE)
+        raw = self._strip_markdown_fences(raw)
+
+        _dbg.log_skill_event("file_editor", "interpret_edit_llm_response", {
+            "edit_request": edit_request[:200],
+            "raw_len": len(raw),
+            "raw_preview": raw[:1000],
+        })
+
+        modified = self._parse_json_response(raw)
+        if not modified or 'slides' not in modified:
+            self.logger.error(
+                f"[file_editor] Edit interpretation failed: {raw[:200]}")
+            return None
+
+        _dbg.log_skill_event("file_editor", "interpret_edit_complete", {
+            "original_slide_count": len(current_structure.get('slides', [])),
+            "modified_slide_count": len(modified.get('slides', [])),
+            "modified_types": [s.get('slide_type') for s in modified.get('slides', [])],
+        })
+
+        return modified
 
     # ------------------------------------------------------------------
     # Intent: create_document
@@ -778,6 +985,28 @@ class FileEditorSkill(BaseSkill):
         # Remember for follow-up "open it" commands
         self._last_generated_file = output_path
 
+        # Cache pipeline state for editing follow-ups
+        if doc_type == 'presentation':
+            self._pipeline_cache = _PipelineCache(
+                structure=structure,
+                research_context=research_context,
+                params=params,
+                filename=filename,
+                output_path=str(output_path),
+                images=images,
+            )
+            self.logger.info(
+                f"[file_editor] Pipeline cache stored: {filename} "
+                f"({len(structure.get('slides', []))} slides)")
+            from core.debug_logger import get_debug_logger
+            get_debug_logger().log_skill_event("file_editor", "pipeline_cache_stored", {
+                "filename": filename,
+                "slide_count": len(structure.get('slides', [])),
+                "slide_types": [s.get('slide_type') for s in structure.get('slides', [])],
+                "has_research": bool(research_context),
+                "image_count": len(images),
+            })
+
         slide_count_actual = len(structure.get('slides', []))
         img_count = len(images)
         img_note = f" with {img_count} images" if img_count > 0 else ""
@@ -831,10 +1060,148 @@ class FileEditorSkill(BaseSkill):
                             analysis_type: str, key_points: str,
                             research_context: str,
                             doc_type: str = "presentation") -> Optional[dict]:
-        """Generate document structure via LLM, returning parsed JSON."""
+        """Generate document structure via two-phase LLM pipeline.
+
+        Phase 1: Layout selection at HIGH temperature (creative variety)
+        Phase 2: Content synthesis at LOW temperature (accuracy)
+
+        For non-presentation doc_type, falls back to single-phase generation.
+        """
+        if doc_type != "presentation":
+            return self._generate_structure_single(
+                topic, slide_count, analysis_type, key_points,
+                research_context, doc_type)
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_skill_event("file_editor", "two_phase_start", {
+            "topic": topic, "slide_count": slide_count,
+            "analysis_type": analysis_type,
+            "has_research": bool(research_context),
+        })
+
+        # Phase 1: Creative layout selection
+        layout = self._generate_layout(topic, slide_count, analysis_type,
+                                       key_points)
+        if not layout:
+            self.logger.warning("[file_editor] Phase 1 failed, retrying at lower temp")
+            _dbg.log_skill_event("file_editor", "phase1_retry", {"reason": "parse_fail"})
+            layout = self._generate_layout(topic, slide_count, analysis_type,
+                                           key_points, temperature=1.0)
+        if not layout:
+            self.logger.error("[file_editor] Phase 1 layout generation failed")
+            _dbg.log_skill_event("file_editor", "phase1_failed")
+            return None
+
+        type_names = [s.get('slide_type', '?') for s in layout]
+        self.logger.info(f"[file_editor] Phase 1 layout: {type_names}")
+        _dbg.log_skill_event("file_editor", "phase1_complete", {
+            "layout": layout, "type_names": type_names,
+        })
+
+        # Phase 2: Content synthesis with locked layout
+        structure = self._generate_content(
+            topic, layout, analysis_type, key_points,
+            research_context)
+        if not structure or 'slides' not in structure:
+            self.logger.error("[file_editor] Phase 2 content generation failed")
+            _dbg.log_skill_event("file_editor", "phase2_failed")
+            return None
+
+        _dbg.log_skill_event("file_editor", "phase2_complete", {
+            "slide_count": len(structure.get('slides', [])),
+            "slide_types": [s.get('slide_type') for s in structure.get('slides', [])],
+            "structure_keys": list(structure.keys()),
+        })
+
+        return structure
+
+    def _generate_layout(self, topic: str, slide_count: int,
+                         analysis_type: str, key_points: str,
+                         temperature: float = LAYOUT_TEMPERATURE) -> Optional[list]:
+        """Phase 1: Generate slide layout plan at HIGH temperature.
+
+        Returns a list of {slide_type, topic_hint} dicts — small schema,
+        robust at high temperature. No research data injected.
+        """
+        key_points_block = ""
+        if key_points and key_points != "auto":
+            key_points_block = f"\nKEY AREAS TO COVER: {key_points}\n"
+
+        slide_types_str = ", ".join(VALID_SLIDE_TYPES)
+
+        layout_prompt = (
+            f'Create a slide layout plan for a {slide_count}-slide '
+            f'{analysis_type} about "{topic}".\n'
+            f'{key_points_block}\n'
+            'Output valid JSON only — a JSON array of objects, one per slide:\n'
+            '[\n'
+            '  {"slide_type": "title_hero", "topic_hint": "Main title and intro"},\n'
+            '  {"slide_type": "bullets", "topic_hint": "Overview of key trends"},\n'
+            '  {"slide_type": "card_grid_3", "topic_hint": "Three main categories"},\n'
+            '  {"slide_type": "timeline", "topic_hint": "Evolution over time"},\n'
+            '  {"slide_type": "stat", "topic_hint": "Key statistic"},\n'
+            '  {"slide_type": "closing", "topic_hint": "Summary and takeaways"}\n'
+            ']\n\n'
+            'RULES:\n'
+            f'1. slide_type MUST be one of: {slide_types_str}\n'
+            '2. First slide MUST be "title_hero". Last slide MUST be "closing".\n'
+            '3. MANDATORY VARIETY: Use at least 3 different slide_type values.\n'
+            '4. MUST include at least one of: card_grid_3, card_grid_4, timeline, data_table.\n'
+            '5. Maximum 2 consecutive "bullets" slides — break them up with visual types.\n'
+            '6. topic_hint is a 5-10 word description of what this slide covers.\n'
+            f'7. Generate exactly {slide_count} entries.\n'
+            '8. Output ONLY valid JSON array. No markdown fences, no explanations.\n'
+        )
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+
+        raw = self._llm.generate(layout_prompt, max_tokens=512,
+                                 temperature=temperature)
+        raw = self._strip_markdown_fences(raw)
+
+        _dbg.log_skill_event("file_editor", "phase1_llm_response", {
+            "temperature": temperature,
+            "raw_len": len(raw),
+            "raw_preview": raw[:500],
+        })
+
+        try:
+            layout = json.loads(raw.strip())
+        except json.JSONDecodeError:
+            # Try to extract array from surrounding text
+            match = re.search(r'\[.*\]', raw, re.DOTALL)
+            if match:
+                try:
+                    layout = json.loads(match.group())
+                except json.JSONDecodeError:
+                    self.logger.error(f"[file_editor] Layout JSON parse failed: {raw[:200]}")
+                    return None
+            else:
+                self.logger.error(f"[file_editor] No JSON array in layout response: {raw[:200]}")
+                return None
+
+        if not isinstance(layout, list) or len(layout) == 0:
+            return None
+
+        # Validate and sanitize slide types
+        for entry in layout:
+            if entry.get('slide_type') not in VALID_SLIDE_TYPES:
+                entry['slide_type'] = 'bullets'
+
+        return layout
+
+    def _generate_content(self, topic: str, layout: list,
+                          analysis_type: str, key_points: str,
+                          research_context: str) -> Optional[dict]:
+        """Phase 2: Fill locked layout with content at LOW temperature.
+
+        Receives the layout plan from Phase 1 and research data.
+        Returns the full structure dict with all content fields populated.
+        """
         research_block = ""
         if research_context:
-            # Truncate to avoid blowing up context
             if len(research_context) > 8000:
                 research_context = research_context[:8000] + "\n[...truncated]"
             research_block = (
@@ -846,97 +1213,142 @@ class FileEditorSkill(BaseSkill):
         if key_points and key_points != "auto":
             key_points_instruction = f"\nKEY AREAS TO COVER: {key_points}\n"
 
-        # Format-aware bullet guidance
-        if doc_type == "presentation":
-            bullet_guidance = (
-                '2. Each content slide MUST have 4-6 bullet points.\n'
-                '3. Each bullet MUST be an informative phrase (10-20 words) '
-                'containing at least one specific fact: a number, statistic, '
-                'dollar figure, percentage, named entity, or concrete example.\n'
-                '   GOOD: "**Ransomware cost:** enterprises lost $20B globally in 2025, up 40% from 2023"\n'
-                '   GOOD: "**Colonial Pipeline (2021):** shut down 5,500 miles of fuel supply for 6 days"\n'
-                '   BAD: "Ransomware is increasing"\n'
-                '   BAD: "Critical infrastructure is at risk"\n'
-                '4. Use **bold lead phrases** at the start of bullets: **Key term:** followed by the detail.\n'
-                '   Every bullet SHOULD start with a **bolded 1-3 word lead** using **double asterisks**.\n'
-            )
-        else:
-            bullet_guidance = (
-                '2. Each section MUST have 4-6 bullet points.\n'
-                '3. Each bullet MUST be a complete, informative sentence (15-30 words) '
-                'containing specific facts: numbers, statistics, dollar figures, '
-                'named examples, dates, or concrete evidence.\n'
-                '   GOOD: "**Data breach costs:** The average reached $4.45M in 2024, with healthcare breaches averaging $10.93M according to IBM."\n'
-                '   BAD: "Data breaches are becoming more expensive."\n'
-                '4. Use **bold lead phrases** at the start of bullets using **double asterisks**.\n'
+        layout_json = json.dumps(layout, indent=2)
+
+        content_prompt = (
+            f'Generate full presentation content for a {analysis_type} about "{topic}".\n'
+            f'Today\'s date: March 2026.\n'
+            f'{research_block}'
+            f'{key_points_instruction}\n'
+            f'LOCKED LAYOUT (do NOT change slide_type or order):\n{layout_json}\n\n'
+            'Output valid JSON with this structure:\n'
+            '{\n'
+            '  "title": "Presentation Title",\n'
+            '  "subtitle": "Brief subtitle with year/scope",\n'
+            '  "slides": [\n'
+            '    // For EACH slide in the layout, provide the required fields:\n'
+            '    // ALL types need: "title", "slide_type", "notes", "image_query"\n'
+            '    // bullets: + "bullets" (array of 4-6 items)\n'
+            '    // stat: + "stat_value" (short like "$4.45M"), "stat_label", "bullets"\n'
+            '    // comparison: + "left_heading", "left_points", "right_heading", "right_points", "bullets"\n'
+            '    // card_grid_3/card_grid_4: + "cards" (array of {heading, description})\n'
+            '    // timeline: + "timeline_points" (array of {label, description})\n'
+            '    // data_table: + "table_headers" (array), "table_rows" (array of arrays)\n'
+            '    // section_divider: + "section_number" ("01"), "subtitle"\n'
+            '    // agenda: + "agenda_items" (array of topic strings)\n'
+            '    // full_bleed_image: + "overlay_text", "image_query"\n'
+            '    // image_text_reversed: + "bullets", "image_query"\n'
+            '    // title_hero: + "subtitle"\n'
+            '    // closing: + "closing_text", "bullets"\n'
+            '  ]\n'
+            '}\n\n'
+            'RULES:\n'
+            '1. First slide is the title/hero. Last slide is the closing.\n'
+            '2. Each content slide MUST have 4-6 bullet points (where applicable).\n'
+            '3. Each bullet MUST be an informative phrase (10-20 words) '
+            'containing at least one specific fact: a number, statistic, '
+            'dollar figure, percentage, named entity, or concrete example.\n'
+            '   GOOD: "**Ransomware cost:** enterprises lost $20B globally in 2025, up 40% from 2023"\n'
+            '   BAD: "Ransomware is increasing"\n'
+            '4. Use **bold lead phrases** at the start of bullets: **Key term:** followed by the detail.\n'
+            '5. "stat" slides: stat_value is a SHORT string like "$107B" or "47%". '
+            'stat_label is one sentence. Add 2-3 supporting bullets.\n'
+            '6. "comparison" slides: left/right headings and 2-3 points each. Add summary bullet.\n'
+            '7. "card_grid" slides: 3 cards (or 4 for card_grid_4), each with heading + 1-2 sentence description.\n'
+            '8. "timeline" slides: 3-6 timeline points, each with label + brief description.\n'
+            '9. "data_table" slides: headers array + rows (max 6 cols, 8 rows).\n'
+            '10. MUST extract and use specific facts from the RESEARCH DATA. '
+            'Do NOT ignore research and write generic content.\n'
+            '11. image_query should be a simple 2-4 word search for a relevant stock photo.\n'
+            '12. NEVER write vague filler bullets like "X is important" or "Y is growing".\n'
+            '13. notes field is optional but encouraged — speaker talking points.\n'
+            '14. Output ONLY valid JSON. No markdown fences, no explanations.\n'
+        )
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+
+        raw = self._llm.generate(content_prompt, max_tokens=3072,
+                                 temperature=CONTENT_TEMPERATURE)
+        raw = self._strip_markdown_fences(raw)
+
+        _dbg.log_skill_event("file_editor", "phase2_llm_response", {
+            "temperature": CONTENT_TEMPERATURE,
+            "raw_len": len(raw),
+            "raw_preview": raw[:1000],
+        })
+
+        structure = self._parse_json_response(raw)
+
+        if not structure or 'slides' not in structure:
+            self.logger.error(f"[file_editor] Content gen failed: {raw[:200]}")
+            return None
+
+        return structure
+
+    def _generate_structure_single(self, topic: str, slide_count: int,
+                                   analysis_type: str, key_points: str,
+                                   research_context: str,
+                                   doc_type: str = "document") -> Optional[dict]:
+        """Single-phase structure generation for non-presentation doc types."""
+        research_block = ""
+        if research_context:
+            if len(research_context) > 8000:
+                research_context = research_context[:8000] + "\n[...truncated]"
+            research_block = (
+                f"\nRESEARCH DATA (use this as your primary source):\n"
+                f"{research_context}\n"
             )
 
+        key_points_instruction = ""
+        if key_points and key_points != "auto":
+            key_points_instruction = f"\nKEY AREAS TO COVER: {key_points}\n"
+
+        bullet_guidance = (
+            '2. Each section MUST have 4-6 bullet points.\n'
+            '3. Each bullet MUST be a complete, informative sentence (15-30 words) '
+            'containing specific facts: numbers, statistics, dollar figures, '
+            'named examples, dates, or concrete evidence.\n'
+            '   GOOD: "**Data breach costs:** The average reached $4.45M in 2024, '
+            'with healthcare breaches averaging $10.93M according to IBM."\n'
+            '   BAD: "Data breaches are becoming more expensive."\n'
+            '4. Use **bold lead phrases** at the start of bullets using **double asterisks**.\n'
+        )
+
         structure_prompt = (
-            f'Create a structured outline for a {slide_count}-slide '
+            f'Create a structured outline for a {slide_count}-section '
             f'{analysis_type} about "{topic}".\n'
             f'Today\'s date: March 2026.\n'
             f'{research_block}'
             f'{key_points_instruction}\n'
             'Output valid JSON only — no other text, no markdown fences:\n'
             '{\n'
-            '  "title": "Presentation Title",\n'
+            '  "title": "Document Title",\n'
             '  "subtitle": "Brief subtitle with year/scope",\n'
             '  "slides": [\n'
             '    {\n'
-            '      "title": "Slide Title",\n'
+            '      "title": "Section Title",\n'
             '      "slide_type": "bullets",\n'
             '      "bullets": ["**Key fact:** informative point with data"],\n'
-            '      "notes": "Speaker talking points (not shown on slide)",\n'
-            '      "image_query": "search term for relevant image"\n'
-            '    },\n'
-            '    {\n'
-            '      "title": "Key Metric",\n'
-            '      "slide_type": "stat",\n'
-            '      "stat_value": "$4.45M",\n'
-            '      "stat_label": "Average data breach cost in 2024",\n'
-            '      "bullets": ["**Context:** supporting detail"],\n'
-            '      "notes": "Emphasize year-over-year trend"\n'
-            '    },\n'
-            '    {\n'
-            '      "title": "X vs Y",\n'
-            '      "slide_type": "comparison",\n'
-            '      "left_heading": "Option A",\n'
-            '      "left_points": ["**Strength:** detail", "**Strength:** detail"],\n'
-            '      "right_heading": "Option B",\n'
-            '      "right_points": ["**Strength:** detail", "**Strength:** detail"],\n'
-            '      "bullets": ["**Summary:** both viable for enterprise use"],\n'
-            '      "notes": "Highlight key differentiator"\n'
+            '      "notes": "Additional context"\n'
             '    }\n'
             '  ]\n'
             '}\n\n'
             'RULES:\n'
-            '1. First slide is title/intro (may have few or no bullets). '
-            'Last slide is conclusion/summary with key takeaways.\n'
+            '1. First section is title/intro. Last section is conclusion/summary.\n'
             f'{bullet_guidance}'
-            '5. slide_type MUST be one of: "bullets", "stat", "comparison".\n'
-            '6. MANDATORY VARIETY: You MUST use at least 2 different slide_type values.\n'
-            '   - MUST include exactly 1 "stat" slide with a striking number (revenue, percentage, count).\n'
-            '   - MUST include exactly 1 "comparison" slide when the topic involves 2+ items to contrast.\n'
-            '   - Remaining slides use "bullets".\n'
-            '7. "stat" slides: stat_value is a SHORT string like "$107B" or "893M+" or "47%". '
-            'stat_label is one sentence explaining it. Add 2-3 supporting bullets.\n'
-            '8. "comparison" slides: left_heading and right_heading are the two items. '
-            'left_points and right_points each have 2-3 bullets. Add a summary bullet.\n'
-            '9. MUST extract and use specific facts, names, statistics, and examples '
-            'from the RESEARCH DATA above. Do NOT ignore the research and write generic content.\n'
-            '10. image_query should be a simple 2-4 word search for a relevant stock photo.\n'
-            f'11. Generate exactly {slide_count} slides total.\n'
-            '12. If comparing items, dedicate one slide per item with specific pros/cons/metrics.\n'
-            '13. NEVER write vague filler bullets like "X is important" or "Y is growing". '
-            'Every bullet must teach the reader something specific.\n'
-            '14. notes field is optional but encouraged — add speaker talking points that expand on slide content.\n'
-            '15. Output ONLY valid JSON. No markdown fences, no explanations.\n'
+            '5. slide_type MUST be one of: "bullets", "stat".\n'
+            '6. MUST include at least 1 "stat" section with a striking number.\n'
+            '7. "stat" sections: stat_value is a SHORT string, stat_label is one sentence.\n'
+            '8. MUST extract and use specific facts from the RESEARCH DATA.\n'
+            f'9. Generate exactly {slide_count} sections total.\n'
+            '10. NEVER write vague filler. Every bullet must teach something specific.\n'
+            '11. Output ONLY valid JSON. No markdown fences, no explanations.\n'
         )
 
         raw = self._llm.generate(structure_prompt, max_tokens=3072)
         raw = self._strip_markdown_fences(raw)
 
-        # Try to extract JSON from the response
         structure = self._parse_json_response(raw)
 
         if not structure or 'slides' not in structure:
