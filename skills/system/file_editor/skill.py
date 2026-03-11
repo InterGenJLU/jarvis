@@ -211,6 +211,7 @@ class FileEditorSkill(BaseSkill):
                 "rewrite the bullet points on slide 2",
                 "append a slide about cloud security",
                 "make it more professional",
+                "make the introduction slide more engaging",
                 "can you add a table slide comparing the options",
             ],
             handler=self.edit_presentation,
@@ -636,7 +637,8 @@ class FileEditorSkill(BaseSkill):
         r'\b(add\s+a\s+slide|add\s+another\s+slide|append\s+a\s+slide|'
         r'insert\s+a\s+slide|add\s+slide|remove\s+slide|delete\s+slide|'
         r'swap\s+slide|move\s+slide|reorder\s+slide|edit\s+slide|'
-        r'change\s+slide|update\s+slide|modify\s+slide|make\s+slide|'
+        r'change\s+slide|update\s+slide|modify\s+slide|'
+        r'make\s+(?:the\s+)?(?:\w+\s+)?slide|make\s+slide|make\s+it\b|'
         r'rewrite\s+slide|add\s+a\s+new\s+slide)\b', re.IGNORECASE)
 
     def create_presentation(self, entities: dict) -> str:
@@ -886,8 +888,15 @@ class FileEditorSkill(BaseSkill):
             'jarvis=tech/cyan, banfield=warm/orange)'
         )
 
-        result = self._llm.generate(parse_prompt, max_tokens=256)
+        result = self._llm.generate(parse_prompt, max_tokens=384)
         self.logger.debug(f"[file_editor] parse result: {result}")
+
+        from core.debug_logger import get_debug_logger
+        _dbg = get_debug_logger()
+        _dbg.log_skill_event("file_editor", "parse_document_request", {
+            "raw_parse_result": result[:500],
+            "user_text_preview": user_text[:200],
+        })
 
         params = {}
         for line in result.strip().splitlines():
@@ -933,6 +942,14 @@ class FileEditorSkill(BaseSkill):
         params.setdefault('analysis_type', 'overview')
         params.setdefault('key_points', 'auto')
         params.setdefault('theme', 'professional')
+
+        _dbg.log_skill_event("file_editor", "parsed_document_params", {
+            "theme": params.get('theme'),
+            "slide_count": params.get('slide_count'),
+            "doc_type": params.get('doc_type'),
+            "topic_preview": (params.get('topic') or '')[:100],
+            "filename": params.get('filename'),
+        })
 
         return params
 
@@ -1296,7 +1313,7 @@ class FileEditorSkill(BaseSkill):
         from core.debug_logger import get_debug_logger
         _dbg = get_debug_logger()
 
-        raw = self._llm.generate(content_prompt, max_tokens=3072,
+        raw = self._llm.generate(content_prompt, max_tokens=6144,
                                  temperature=CONTENT_TEMPERATURE)
         raw = self._strip_markdown_fences(raw)
 

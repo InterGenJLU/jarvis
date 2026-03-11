@@ -78,7 +78,11 @@ def _estimate_text_overflow(text_frame, shape):
 
 
 def _check_overlaps(shapes_info):
-    """Return list of (shape_a, shape_b, overlap_sq_in)."""
+    """Return list of (shape_a, shape_b, overlap_sq_in).
+
+    Skips containment pairs (one shape fully inside another) since those
+    are intentional (e.g. TextBox inside a RoundedRectangle card).
+    """
     overlaps = []
     for i, s1 in enumerate(shapes_info):
         for j, s2 in enumerate(shapes_info):
@@ -87,6 +91,10 @@ def _check_overlaps(shapes_info):
             l1, t1, r1, b1 = s1
             l2, t2, r2, b2 = s2
             if l1 < r2 and r1 > l2 and t1 < b2 and b1 > t2:
+                # Skip containment (one shape fully inside the other)
+                if (l1 <= l2 and t1 <= t2 and r1 >= r2 and b1 >= b2) or \
+                   (l2 <= l1 and t2 <= t1 and r2 >= r1 and b2 >= b1):
+                    continue
                 area = ((min(r1, r2) - max(l1, l2)) *
                         (min(b1, b2) - max(t1, t2))) / (EMU_PER_INCH ** 2)
                 overlaps.append((i, j, round(area, 3)))
@@ -224,9 +232,35 @@ def inspect_pptx(filepath):
 # WebSocket client
 # ---------------------------------------------------------------------------
 
-async def ws_send_and_collect(uri, message_text, turn_label, transcript,
+async def ws_drain_initial(ws):
+    """Drain initial burst messages after connecting (until system_stats)."""
+    import aiohttp
+
+    initial_messages = []
+    try:
+        while True:
+            msg = await asyncio.wait_for(ws.receive(), timeout=5)
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                data = json.loads(msg.data)
+                initial_messages.append({
+                    "ts": time.time(),
+                    "direction": "recv_initial",
+                    "type": data.get("type"),
+                    "size": len(msg.data),
+                })
+                if data.get("type") == "system_stats":
+                    break
+            elif msg.type in (aiohttp.WSMsgType.CLOSED,
+                              aiohttp.WSMsgType.ERROR):
+                break
+    except asyncio.TimeoutError:
+        pass
+    return initial_messages
+
+
+async def ws_send_and_collect(ws, message_text, turn_label, transcript,
                               timeout=600):
-    """Send a chat message over WS and collect all response messages."""
+    """Send a chat message on an existing WS and collect all response messages."""
     import aiohttp
 
     turn_record = {
@@ -242,101 +276,84 @@ async def ws_send_and_collect(uri, message_text, turn_label, transcript,
     }
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(uri, timeout=30) as ws:
-                # Drain initial burst
-                initial_messages = []
-                try:
-                    while True:
-                        msg = await asyncio.wait_for(ws.receive(), timeout=5)
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            data = json.loads(msg.data)
-                            initial_messages.append({
-                                "ts": time.time(),
-                                "direction": "recv_initial",
-                                "type": data.get("type"),
-                                "size": len(msg.data),
-                            })
-                            if data.get("type") == "system_stats":
-                                break
-                        elif msg.type in (aiohttp.WSMsgType.CLOSED,
-                                          aiohttp.WSMsgType.ERROR):
-                            break
-                except asyncio.TimeoutError:
-                    pass
+        # Send message
+        payload = json.dumps({"type": "message", "content": message_text})
+        await ws.send_str(payload)
+        transcript.append({
+            "ts": time.time(),
+            "direction": "sent",
+            "turn": turn_label,
+            "payload": {"type": "message", "content": message_text},
+        })
 
-                turn_record["initial_messages"] = initial_messages
+        t0 = time.time()
 
-                # Send message
-                payload = json.dumps({"type": "message", "content": message_text})
-                await ws.send_str(payload)
-                transcript.append({
+        # Collect responses until stats message (end-of-response)
+        got_stats = False
+        while True:
+            remaining = timeout - (time.time() - t0)
+            if remaining <= 0:
+                turn_record["error"] = f"Timeout after {timeout}s"
+                break
+            try:
+                msg = await asyncio.wait_for(
+                    ws.receive(),
+                    timeout=min(remaining, 60))
+            except asyncio.TimeoutError:
+                continue
+
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                data = json.loads(msg.data)
+                recv_record = {
                     "ts": time.time(),
-                    "direction": "sent",
+                    "direction": "recv",
                     "turn": turn_label,
-                    "payload": {"type": "message", "content": message_text},
+                    "type": data.get("type"),
+                    "size": len(msg.data),
+                    "data": data,
+                }
+                transcript.append(recv_record)
+                turn_record["ws_messages_received"].append({
+                    "ts": time.time(),
+                    "type": data.get("type"),
+                    "size": len(msg.data),
+                    "preview": json.dumps(data)[:500],
                 })
 
-                t0 = time.time()
+                if data.get("type") == "response":
+                    turn_record["response_text"] = data.get("content", "")
 
-                # Collect responses until stats message (end-of-response)
-                got_stats = False
-                while True:
-                    remaining = timeout - (time.time() - t0)
-                    if remaining <= 0:
-                        turn_record["error"] = f"Timeout after {timeout}s"
-                        break
-                    try:
-                        msg = await asyncio.wait_for(
-                            ws.receive(),
-                            timeout=min(remaining, 60))
-                    except asyncio.TimeoutError:
-                        continue
+                elif data.get("type") == "stream":
+                    if turn_record["response_text"] is None:
+                        turn_record["response_text"] = ""
+                    turn_record["response_text"] += data.get("content", "")
 
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        data = json.loads(msg.data)
-                        recv_record = {
-                            "ts": time.time(),
-                            "direction": "recv",
-                            "turn": turn_label,
-                            "type": data.get("type"),
-                            "size": len(msg.data),
-                            "data": data,
-                        }
-                        transcript.append(recv_record)
-                        turn_record["ws_messages_received"].append({
-                            "ts": time.time(),
-                            "type": data.get("type"),
-                            "size": len(msg.data),
-                            "preview": json.dumps(data)[:500],
-                        })
+                elif data.get("type") == "stream_token":
+                    if turn_record["response_text"] is None:
+                        turn_record["response_text"] = ""
+                    turn_record["response_text"] += data.get("token", "")
 
-                        if data.get("type") == "response":
-                            turn_record["response_text"] = data.get("content", "")
+                elif data.get("type") == "stream_end":
+                    pass  # response text already accumulated from stream_token
 
-                        elif data.get("type") == "stream":
-                            if turn_record["response_text"] is None:
-                                turn_record["response_text"] = ""
-                            turn_record["response_text"] += data.get("content", "")
+                elif data.get("type") == "stats":
+                    turn_record["stats"] = data.get("data")
+                    got_stats = True
 
-                        elif data.get("type") == "stats":
-                            turn_record["stats"] = data.get("data")
-                            got_stats = True
+                elif data.get("type") == "error":
+                    turn_record["error"] = data.get("content")
+                    break
 
-                        elif data.get("type") == "error":
-                            turn_record["error"] = data.get("content")
-                            break
-
-                        elif data.get("type") == "system_stats":
-                            if got_stats:
-                                break
-
-                    elif msg.type in (aiohttp.WSMsgType.CLOSED,
-                                      aiohttp.WSMsgType.ERROR):
-                        turn_record["error"] = f"WebSocket closed/error: {msg.type}"
+                elif data.get("type") == "system_stats":
+                    if got_stats:
                         break
 
-                turn_record["elapsed_s"] = round(time.time() - t0, 2)
+            elif msg.type in (aiohttp.WSMsgType.CLOSED,
+                              aiohttp.WSMsgType.ERROR):
+                turn_record["error"] = f"WebSocket closed/error: {msg.type}"
+                break
+
+        turn_record["elapsed_s"] = round(time.time() - t0, 2)
 
     except Exception as e:
         turn_record["error"] = f"Connection error: {e}"
@@ -848,6 +865,8 @@ async def run_test(output_dir):
     transcript = []
     sequences_results = []
 
+    import aiohttp
+
     for seq_idx, seq in enumerate(SEQUENCES):
         seq_result = {
             "name": seq["name"],
@@ -859,25 +878,33 @@ async def run_test(output_dir):
         print(f"  SEQUENCE {seq['name']} (theme: {seq['theme']})")
         print(f"{'─'*60}")
 
-        for turn_idx, (turn_label, message) in enumerate(seq["turns"]):
-            print(f"\n  [{turn_label}]")
-            print(f"  Sending: \"{message[:100]}{'...' if len(message) > 100 else ''}\"")
+        # Keep a SINGLE WebSocket connection open for all turns in this sequence
+        # so the server preserves conversation context between turns.
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(ws_uri, timeout=30) as ws:
+                initial = await ws_drain_initial(ws)
+                print(f"  WS connected, drained {len(initial)} initial messages")
 
-            result = await ws_send_and_collect(
-                ws_uri, message, turn_label, transcript, timeout=600)
-            seq_result["results"].append(result)
+                for turn_idx, (turn_label, message) in enumerate(seq["turns"]):
+                    print(f"\n  [{turn_label}]")
+                    print(f"  Sending: \"{message[:100]}{'...' if len(message) > 100 else ''}\"")
 
-            print(f"  Elapsed: {result['elapsed_s']}s")
-            if result["error"]:
-                print(f"  *** ERROR: {result['error']}")
-            else:
-                resp_preview = (result.get("response_text") or "")[:150]
-                print(f"  Response: \"{resp_preview}\"")
-            print(f"  WS messages: {len(result['ws_messages_received'])}")
+                    result = await ws_send_and_collect(
+                        ws, message, turn_label, transcript, timeout=600)
+                    result["initial_messages"] = initial if turn_idx == 0 else []
+                    seq_result["results"].append(result)
 
-            # Pause between turns within a sequence
-            if turn_idx < len(seq["turns"]) - 1:
-                await asyncio.sleep(3)
+                    print(f"  Elapsed: {result['elapsed_s']}s")
+                    if result["error"]:
+                        print(f"  *** ERROR: {result['error']}")
+                    else:
+                        resp_preview = (result.get("response_text") or "")[:150]
+                        print(f"  Response: \"{resp_preview}\"")
+                    print(f"  WS messages: {len(result['ws_messages_received'])}")
+
+                    # Pause between turns within a sequence
+                    if turn_idx < len(seq["turns"]) - 1:
+                        await asyncio.sleep(3)
 
         sequences_results.append(seq_result)
 
