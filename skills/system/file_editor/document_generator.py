@@ -12,6 +12,7 @@ and theme selection.
 """
 
 import os
+import random
 import re
 import subprocess
 from pathlib import Path
@@ -22,6 +23,8 @@ from pptx.util import Inches, Pt, Emu
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.dml.color import RGBColor
+from pptx.oxml.ns import qn
+from pptx.oxml import parse_xml
 
 from docx import Document
 from docx.shared import Pt as DocxPt, Inches as DocxInches, RGBColor as DocxRGB
@@ -33,31 +36,145 @@ from core.debug_logger import get_debug_logger
 
 SHARE_DIR = Path(os.path.expanduser("~/jarvis/share"))
 
-# Font standardization — universal system-safe fonts
+# Default fonts (fallback if theme doesn't specify)
 HEADING_FONT = "Calibri"
 BODY_FONT = "Calibri"
 
-# Color themes — all light-background
+# ------------------------------------------------------------------
+# Color themes — 10 themes, each with font pairing + accent patterns
+# ------------------------------------------------------------------
 THEMES = {
     "professional": {
-        "heading": RGBColor(0x1A, 0x1A, 0x2E),    # Navy
-        "subtitle": RGBColor(0x55, 0x55, 0x77),    # Purple-gray
-        "body": RGBColor(0x33, 0x33, 0x33),         # Dark gray
-        "accent": RGBColor(0x2B, 0x57, 0x9A),       # Blue
+        "heading": RGBColor(0x1B, 0x2A, 0x4A),     # Deep navy
+        "subtitle": RGBColor(0x4A, 0x6F, 0xA5),     # Steel blue
+        "body": RGBColor(0x2D, 0x37, 0x48),          # Dark slate
+        "accent": RGBColor(0xE8, 0x91, 0x3A),        # Warm amber
+        "secondary_accent": RGBColor(0xA0, 0xAE, 0xC0),  # Cool gray
+        "heading_font": "Cambria",
+        "body_font": "Calibri",
+        "accent_patterns": ["underline", "top_bottom_bars", "corner_brackets"],
     },
     "modern": {
-        "heading": RGBColor(0x2D, 0x2D, 0x2D),     # Charcoal
-        "subtitle": RGBColor(0x66, 0x66, 0x66),     # Medium gray
-        "body": RGBColor(0x3A, 0x3A, 0x3A),         # Dark gray
-        "accent": RGBColor(0x00, 0x96, 0x88),        # Teal
+        "heading": RGBColor(0x0D, 0x3B, 0x3E),      # Dark teal
+        "subtitle": RGBColor(0x2E, 0x8B, 0x8B),      # Medium teal
+        "body": RGBColor(0x33, 0x33, 0x33),           # Charcoal
+        "accent": RGBColor(0xFF, 0x6B, 0x35),         # Coral orange
+        "secondary_accent": RGBColor(0xB2, 0xDF, 0xDB),  # Light teal
+        "heading_font": "Century Gothic",
+        "body_font": "Georgia",
+        "accent_patterns": ["left_bar", "circles_cluster", "gradient_sidebar"],
     },
     "bold": {
-        "heading": RGBColor(0x1A, 0x23, 0x3B),     # Dark navy
-        "subtitle": RGBColor(0x55, 0x55, 0x66),     # Muted gray
-        "body": RGBColor(0x33, 0x33, 0x33),         # Dark gray
-        "accent": RGBColor(0xE8, 0x6C, 0x00),       # Warm orange
+        "heading": RGBColor(0x1A, 0x23, 0x3B),      # Dark navy
+        "subtitle": RGBColor(0x55, 0x55, 0x66),      # Muted gray
+        "body": RGBColor(0x33, 0x33, 0x33),           # Dark gray
+        "accent": RGBColor(0xE8, 0x6C, 0x00),         # Warm orange
+        "secondary_accent": RGBColor(0xFF, 0xB7, 0x4D),  # Light orange
+        "heading_font": "Arial Black",
+        "body_font": "Arial",
+        "accent_patterns": ["top_band", "stepped_bars", "dual_tone_footer"],
+    },
+    "minimal": {
+        "heading": RGBColor(0x1A, 0x1A, 0x2E),      # Near-black navy
+        "subtitle": RGBColor(0x6B, 0x72, 0x80),      # Medium gray
+        "body": RGBColor(0x37, 0x41, 0x51),           # Dark gray
+        "accent": RGBColor(0x3B, 0x82, 0xF6),         # Bright blue
+        "secondary_accent": RGBColor(0xE5, 0xE7, 0xEB),  # Light gray
+        "heading_font": "Calibri",
+        "body_font": "Calibri",
+        "accent_patterns": ["underline", "line_cluster", "corner_brackets"],
+    },
+    "elegant": {
+        "heading": RGBColor(0x21, 0x21, 0x21),      # Near black
+        "subtitle": RGBColor(0x61, 0x61, 0x61),      # Medium gray
+        "body": RGBColor(0x42, 0x42, 0x42),           # Dark gray
+        "accent": RGBColor(0xC9, 0xA8, 0x4C),         # Muted gold
+        "secondary_accent": RGBColor(0xE0, 0xE0, 0xE0),  # Silver gray
+        "heading_font": "Book Antiqua",
+        "body_font": "Verdana",
+        "accent_patterns": ["corner_brackets", "diamond", "gradient_sidebar"],
+    },
+    "earth": {
+        "heading": RGBColor(0x4E, 0x34, 0x2E),      # Chocolate brown
+        "subtitle": RGBColor(0x8D, 0x6E, 0x63),      # Warm taupe
+        "body": RGBColor(0x3E, 0x27, 0x23),           # Dark brown
+        "accent": RGBColor(0xE6, 0xB3, 0x5A),         # Ochre gold
+        "secondary_accent": RGBColor(0xCC, 0x59, 0x59),  # Terracotta
+        "heading_font": "Georgia",
+        "body_font": "Verdana",
+        "accent_patterns": ["left_bar", "circles_cluster", "dual_tone_footer"],
+    },
+    "forest": {
+        "heading": RGBColor(0x1B, 0x43, 0x32),      # Forest green
+        "subtitle": RGBColor(0x55, 0x6B, 0x2F),      # Olive green
+        "body": RGBColor(0x2D, 0x34, 0x36),           # Dark charcoal
+        "accent": RGBColor(0xE9, 0xC4, 0x6A),         # Warm gold
+        "secondary_accent": RGBColor(0xA7, 0xC4, 0xA0),  # Sage
+        "heading_font": "Trebuchet MS",
+        "body_font": "Georgia",
+        "accent_patterns": ["stepped_bars", "dot_grid", "line_cluster"],
+    },
+    "ocean": {
+        "heading": RGBColor(0x0C, 0x2D, 0x48),      # Deep ocean blue
+        "subtitle": RGBColor(0x2E, 0x86, 0xAB),      # Cerulean
+        "body": RGBColor(0x2C, 0x3E, 0x50),           # Dark blue-gray
+        "accent": RGBColor(0xF1, 0x8F, 0x01),         # Tangerine
+        "secondary_accent": RGBColor(0xA8, 0xDA, 0xDC),  # Ice blue
+        "heading_font": "Tahoma",
+        "body_font": "Cambria",
+        "accent_patterns": ["top_band", "circles_cluster", "top_bottom_bars"],
+    },
+    "jarvis": {
+        "heading": RGBColor(0x0A, 0x0E, 0x1A),      # JARVIS deep navy
+        "subtitle": RGBColor(0x64, 0x74, 0x8B),      # Slate gray
+        "body": RGBColor(0x1E, 0x29, 0x3B),           # Dark slate
+        "accent": RGBColor(0x38, 0xBD, 0xF8),         # Signature cyan
+        "secondary_accent": RGBColor(0x0C, 0x4A, 0x6E),  # Dark blue
+        "heading_font": "Century Gothic",
+        "body_font": "Calibri",
+        "accent_patterns": ["gradient_sidebar", "dot_grid", "diamond"],
+    },
+    "banfield": {
+        "heading": RGBColor(0x07, 0x3B, 0x4C),      # Dark teal-navy
+        "subtitle": RGBColor(0x5A, 0x6E, 0x78),      # Gray-teal
+        "body": RGBColor(0x1A, 0x1A, 0x1A),           # Near-black
+        "accent": RGBColor(0xD7, 0x41, 0x00),         # Banfield orange
+        "secondary_accent": RGBColor(0xF5, 0x7F, 0x04),  # Bright orange
+        "heading_font": "Tahoma",
+        "body_font": "Calibri",
+        "accent_patterns": ["left_bar", "top_band", "dual_tone_footer"],
     },
 }
+
+
+def _hfont(theme):
+    """Get heading font from theme with fallback."""
+    return theme.get("heading_font", HEADING_FONT)
+
+
+def _bfont(theme):
+    """Get body font from theme with fallback."""
+    return theme.get("body_font", BODY_FONT)
+
+
+def _set_shape_opacity(shape, opacity_percent):
+    """Set fill opacity for a shape. opacity_percent: 0-100 (100=fully opaque)."""
+    alpha_val = str(int(opacity_percent * 1000))
+    spPr = shape._element.spPr
+    solidFill = spPr.find(qn('a:solidFill'))
+    if solidFill is None:
+        return
+    color_elem = solidFill.find(qn('a:srgbClr'))
+    if color_elem is None:
+        color_elem = solidFill.find(qn('a:schemeClr'))
+    if color_elem is None:
+        return
+    for existing in color_elem.findall(qn('a:alpha')):
+        color_elem.remove(existing)
+    alpha_elem = parse_xml(
+        f'<a:alpha xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+        f' val="{alpha_val}"/>')
+    color_elem.append(alpha_elem)
 
 _BOLD_RE = re.compile(r'\*\*(.+?)\*\*')
 
@@ -83,17 +200,22 @@ def _parse_bold_text(text: str) -> list:
 
 
 def _add_formatted_runs(paragraph, text, font_size, font_color,
-                        accent_color=None, heading=False):
+                        accent_color=None, heading=False, theme=None):
     """Add text with bold/normal runs parsed from **markdown** to a paragraph.
 
     Bold segments render in accent_color (if provided) for visual emphasis.
-    Set heading=True to use HEADING_FONT instead of BODY_FONT.
+    Set heading=True to use heading font instead of body font.
+    Pass theme dict for theme-aware font selection.
     """
+    if heading:
+        font_name = _hfont(theme) if theme else HEADING_FONT
+    else:
+        font_name = _bfont(theme) if theme else BODY_FONT
     segments = _parse_bold_text(text)
     for seg_text, is_bold in segments:
         run = paragraph.add_run()
         run.text = seg_text
-        run.font.name = HEADING_FONT if heading else BODY_FONT
+        run.font.name = font_name
         run.font.size = font_size
         run.font.bold = is_bold
         if is_bold and accent_color:
@@ -123,8 +245,12 @@ class DocumentGenerator:
         self.logger = get_logger(__name__, config)
         SHARE_DIR.mkdir(parents=True, exist_ok=True)
 
-    def _add_accent_bar(self, slide, prs, theme, y_pos=None):
-        """Add a thin accent-colored bar across the slide under the title area."""
+    # ------------------------------------------------------------------
+    # Accent pattern methods (12 patterns)
+    # ------------------------------------------------------------------
+
+    def _accent_underline(self, slide, prs, theme, y_pos=None):
+        """Pattern: thin accent-colored bar under the title area."""
         bar_height = Inches(0.06)
         y = y_pos or Inches(1.55)
         shape = slide.shapes.add_shape(
@@ -133,7 +259,204 @@ class DocumentGenerator:
             Emu(int(prs.slide_width - Inches(1))), bar_height)
         shape.fill.solid()
         shape.fill.fore_color.rgb = theme["accent"]
-        shape.line.fill.background()  # No border
+        shape.line.fill.background()
+
+    def _accent_left_bar(self, slide, prs, theme, **kw):
+        """Pattern: vertical accent bar on left edge, full height."""
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0), Inches(0), Inches(0.5), prs.slide_height)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = theme["accent"]
+        shape.line.fill.background()
+
+    def _accent_top_band(self, slide, prs, theme, **kw):
+        """Pattern: full-width accent strip at top, 0.5" tall."""
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0), Inches(0), prs.slide_width, Inches(0.5))
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = theme["accent"]
+        shape.line.fill.background()
+
+    def _accent_corner_brackets(self, slide, prs, theme, **kw):
+        """Pattern: L-shaped brackets in top-left and bottom-right corners."""
+        t = Inches(0.06)  # bracket thickness
+        blen = Inches(1.5)  # bracket arm length
+        # Top-left
+        h1 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(0.4), blen, t)
+        v1 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0.4), Inches(0.4), t, blen)
+        # Bottom-right
+        sw, sh = int(prs.slide_width), int(prs.slide_height)
+        h2 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Emu(sw - int(blen) - int(Inches(0.4))),
+            Emu(sh - int(Inches(0.4)) - int(t)),
+            blen, t)
+        v2 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Emu(sw - int(Inches(0.4)) - int(t)),
+            Emu(sh - int(blen) - int(Inches(0.4))),
+            t, blen)
+        for s in (h1, v1, h2, v2):
+            s.fill.solid()
+            s.fill.fore_color.rgb = theme["accent"]
+            s.line.fill.background()
+            _set_shape_opacity(s, 70)
+
+    def _accent_stepped_bars(self, slide, prs, theme, **kw):
+        """Pattern: 4 rectangles decreasing in width, staircase on left."""
+        widths = [0.8, 0.6, 0.4, 0.2]
+        opacities = [50, 40, 30, 20]
+        for i, (w, op) in enumerate(zip(widths, opacities)):
+            y = 1.8 + i * 1.2
+            s = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                Inches(0), Inches(y), Inches(w), Inches(1.2))
+            s.fill.solid()
+            s.fill.fore_color.rgb = theme["accent"]
+            s.line.fill.background()
+            _set_shape_opacity(s, op)
+
+    def _accent_gradient_sidebar(self, slide, prs, theme, **kw):
+        """Pattern: 5 stacked thin rects on left, opacity fading top to bottom."""
+        seg_h = int(prs.slide_height) // 5
+        for i in range(5):
+            s = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                Inches(0), Emu(i * seg_h), Inches(0.25), Emu(seg_h))
+            s.fill.solid()
+            s.fill.fore_color.rgb = theme["accent"]
+            s.line.fill.background()
+            _set_shape_opacity(s, 60 - i * 12)
+
+    def _accent_dual_tone_footer(self, slide, prs, theme, **kw):
+        """Pattern: two side-by-side rects at bottom (60/40 split)."""
+        sw = int(prs.slide_width)
+        left_w = int(sw * 0.6)
+        right_w = sw - left_w
+        y = Inches(6.35)
+        h = Inches(1.15)
+        s1 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0), y, Emu(left_w), h)
+        s1.fill.solid()
+        s1.fill.fore_color.rgb = theme["accent"]
+        s1.line.fill.background()
+        s2 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Emu(left_w), y, Emu(right_w), h)
+        s2.fill.solid()
+        s2.fill.fore_color.rgb = theme.get("secondary_accent", theme["accent"])
+        s2.line.fill.background()
+        _set_shape_opacity(s2, 40)
+
+    def _accent_circles_cluster(self, slide, prs, theme, **kw):
+        """Pattern: 3 overlapping circles in bottom-right, cascading opacity."""
+        specs = [
+            (10.5, 5.0, 3.5, 15),
+            (11.0, 5.5, 2.5, 25),
+            (11.8, 6.0, 1.5, 40),
+        ]
+        for x, y, size, op in specs:
+            s = slide.shapes.add_shape(
+                MSO_SHAPE.OVAL,
+                Inches(x), Inches(y), Inches(size), Inches(size))
+            s.fill.solid()
+            s.fill.fore_color.rgb = theme["accent"]
+            s.line.fill.background()
+            _set_shape_opacity(s, op)
+
+    def _accent_top_bottom_bars(self, slide, prs, theme, **kw):
+        """Pattern: thick bar at top + thin bar at bottom (asymmetric)."""
+        s1 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0), Inches(0), prs.slide_width, Inches(0.35))
+        s1.fill.solid()
+        s1.fill.fore_color.rgb = theme["accent"]
+        s1.line.fill.background()
+        s2 = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0), Inches(7.38), prs.slide_width, Inches(0.12))
+        s2.fill.solid()
+        s2.fill.fore_color.rgb = theme["accent"]
+        s2.line.fill.background()
+        _set_shape_opacity(s2, 40)
+
+    def _accent_diamond(self, slide, prs, theme, **kw):
+        """Pattern: rotated 45-degree square partially off right edge."""
+        s = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(10.8), Inches(2.0), Inches(4.0), Inches(4.0))
+        s.rotation = 45.0
+        s.fill.solid()
+        s.fill.fore_color.rgb = theme["accent"]
+        s.line.fill.background()
+        _set_shape_opacity(s, 18)
+
+    def _accent_dot_grid(self, slide, prs, theme, **kw):
+        """Pattern: 5x5 grid of small circles in top-right corner, fading."""
+        dot_size = Inches(0.18)
+        spacing = Inches(0.35)
+        base_x, base_y = Inches(10.3), Inches(0.3)
+        for row in range(5):
+            for col in range(5):
+                x = int(base_x) + col * int(spacing)
+                y = int(base_y) + row * int(spacing)
+                opacity = max(10, 50 - (row + col) * 8)
+                dot = slide.shapes.add_shape(
+                    MSO_SHAPE.OVAL, Emu(x), Emu(y), dot_size, dot_size)
+                dot.fill.solid()
+                dot.fill.fore_color.rgb = theme["accent"]
+                dot.line.fill.background()
+                _set_shape_opacity(dot, opacity)
+
+    def _accent_line_cluster(self, slide, prs, theme, **kw):
+        """Pattern: 5 thin horizontal lines of varying lengths in bottom third."""
+        lines = [
+            (0.5, 5.8, 5.0),
+            (1.0, 6.05, 7.5),
+            (0.5, 6.3, 4.0),
+            (1.5, 6.55, 8.0),
+            (0.5, 6.8, 3.0),
+        ]
+        for x, y, w in lines:
+            s = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                Inches(x), Inches(y), Inches(w), Inches(0.03))
+            s.fill.solid()
+            s.fill.fore_color.rgb = theme["accent"]
+            s.line.fill.background()
+            _set_shape_opacity(s, 25)
+
+    # Accent pattern dispatcher
+    _ACCENT_METHODS = {
+        "underline": "_accent_underline",
+        "left_bar": "_accent_left_bar",
+        "top_band": "_accent_top_band",
+        "corner_brackets": "_accent_corner_brackets",
+        "stepped_bars": "_accent_stepped_bars",
+        "gradient_sidebar": "_accent_gradient_sidebar",
+        "dual_tone_footer": "_accent_dual_tone_footer",
+        "circles_cluster": "_accent_circles_cluster",
+        "top_bottom_bars": "_accent_top_bottom_bars",
+        "diamond": "_accent_diamond",
+        "dot_grid": "_accent_dot_grid",
+        "line_cluster": "_accent_line_cluster",
+    }
+
+    def _apply_accent(self, slide, prs, theme):
+        """Apply the accent pattern for this slide based on theme's pattern list."""
+        patterns = theme.get("accent_patterns", ["underline"])
+        idx = getattr(self, '_current_slide_idx', 0)
+        pattern_name = patterns[idx % len(patterns)]
+        method_name = self._ACCENT_METHODS.get(pattern_name, "_accent_underline")
+        method = getattr(self, method_name)
+        method(slide, prs, theme)
+
+    def _add_accent_bar(self, slide, prs, theme, y_pos=None):
+        """Legacy compat — delegates to _accent_underline."""
+        self._accent_underline(slide, prs, theme, y_pos=y_pos)
 
     # ------------------------------------------------------------------
     # PPTX Generation
@@ -163,10 +486,15 @@ class DocumentGenerator:
             theme = THEMES.get(theme_name, THEMES["professional"])
             slides_data = structure.get("slides", [])
             total_slides = len(slides_data)
+            h_font = _hfont(theme)
+            b_font = _bfont(theme)
 
             _dbg.log_skill_event("doc_gen", "create_presentation_entry", {
                 "filename": filename,
                 "theme_name": theme_name,
+                "heading_font": h_font,
+                "body_font": b_font,
+                "accent_patterns": theme.get("accent_patterns", ["underline"]),
                 "total_slides": total_slides,
                 "slide_types": [s.get("slide_type", "bullets") for s in slides_data],
                 "image_indices": list(images.keys()) if images else [],
@@ -174,6 +502,7 @@ class DocumentGenerator:
             })
 
             for i, slide_data in enumerate(slides_data):
+                self._current_slide_idx = i
                 slide_title = slide_data.get("title", f"Slide {i + 1}")
                 bullets = slide_data.get("bullets", [])
                 slide_type = slide_data.get("slide_type", "bullets")
@@ -342,6 +671,7 @@ class DocumentGenerator:
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = title
+        run.font.name = _hfont(theme)
         run.font.size = Pt(40)
         run.font.bold = True
         run.font.color.rgb = theme["heading"]
@@ -357,6 +687,7 @@ class DocumentGenerator:
             sp.alignment = PP_ALIGN.CENTER
             run_s = sp.add_run()
             run_s.text = subtitle
+            run_s.font.name = _bfont(theme)
             run_s.font.size = Pt(20)
             run_s.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
 
@@ -379,11 +710,12 @@ class DocumentGenerator:
         title_shape = slide.placeholders[0]
         title_shape.text = title
         for paragraph in title_shape.text_frame.paragraphs:
+            paragraph.font.name = _hfont(theme)
             paragraph.font.size = Pt(28)
             paragraph.font.bold = True
             paragraph.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         if len(slide.placeholders) > 1:
             body_shape = slide.placeholders[1]
@@ -392,7 +724,7 @@ class DocumentGenerator:
 
             for j, bullet in enumerate(bullets):
                 p = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-                _add_formatted_runs(p, bullet, Pt(18), theme["body"], theme["accent"])
+                _add_formatted_runs(p, bullet, Pt(18), theme["body"], theme["accent"], theme=theme)
                 p.space_after = Pt(8)
                 p.level = 0
 
@@ -416,11 +748,12 @@ class DocumentGenerator:
         title_shape = slide.placeholders[0]
         title_shape.text = title
         for paragraph in title_shape.text_frame.paragraphs:
+            paragraph.font.name = _hfont(theme)
             paragraph.font.size = Pt(28)
             paragraph.font.bold = True
             paragraph.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         slide_width = prs.slide_width
 
@@ -433,7 +766,7 @@ class DocumentGenerator:
 
         for j, bullet in enumerate(bullets):
             p = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-            _add_formatted_runs(p, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"])
+            _add_formatted_runs(p, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"], theme=theme)
             p.space_after = Pt(6)
 
         # Image — right 40%
@@ -473,11 +806,12 @@ class DocumentGenerator:
         title_shape = slide.placeholders[0]
         title_shape.text = title
         for p in title_shape.text_frame.paragraphs:
+            p.font.name = _hfont(theme)
             p.font.size = Pt(28)
             p.font.bold = True
             p.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         slide_width = prs.slide_width
         content_width = Emu(int(slide_width - Inches(2)))
@@ -492,6 +826,7 @@ class DocumentGenerator:
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = stat_value
+        run.font.name = _hfont(theme)
         run.font.size = Pt(54)
         run.font.bold = True
         run.font.color.rgb = theme["accent"]
@@ -507,6 +842,7 @@ class DocumentGenerator:
             p2.alignment = PP_ALIGN.CENTER
             run2 = p2.add_run()
             run2.text = stat_label
+            run2.font.name = _bfont(theme)
             run2.font.size = Pt(20)
             run2.font.color.rgb = theme["subtitle"]
 
@@ -520,7 +856,7 @@ class DocumentGenerator:
             tf3.word_wrap = True
             for j, bullet in enumerate(bullets):
                 p3 = tf3.paragraphs[0] if j == 0 else tf3.add_paragraph()
-                _add_formatted_runs(p3, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"])
+                _add_formatted_runs(p3, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"], theme=theme)
                 p3.space_after = Pt(4)
 
         return slide
@@ -545,11 +881,12 @@ class DocumentGenerator:
         title_shape = slide.placeholders[0]
         title_shape.text = title
         for p in title_shape.text_frame.paragraphs:
+            p.font.name = _hfont(theme)
             p.font.size = Pt(28)
             p.font.bold = True
             p.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         slide_width = prs.slide_width
         col_width = Emu(int((slide_width - Inches(2)) * 0.47))
@@ -566,6 +903,7 @@ class DocumentGenerator:
         p_lh = ltf.paragraphs[0]
         run_lh = p_lh.add_run()
         run_lh.text = left_heading
+        run_lh.font.name = _hfont(theme)
         run_lh.font.size = Pt(22)
         run_lh.font.bold = True
         run_lh.font.color.rgb = theme["accent"]
@@ -573,7 +911,7 @@ class DocumentGenerator:
 
         for point in slide_data.get("left_points", []):
             p_l = ltf.add_paragraph()
-            _add_formatted_runs(p_l, f"\u2022 {point}", Pt(16), theme["body"], theme["accent"])
+            _add_formatted_runs(p_l, f"\u2022 {point}", Pt(16), theme["body"], theme["accent"], theme=theme)
             p_l.space_after = Pt(6)
 
         # Right column
@@ -587,6 +925,7 @@ class DocumentGenerator:
         p_rh = rtf.paragraphs[0]
         run_rh = p_rh.add_run()
         run_rh.text = right_heading
+        run_rh.font.name = _hfont(theme)
         run_rh.font.size = Pt(22)
         run_rh.font.bold = True
         run_rh.font.color.rgb = theme["accent"]
@@ -594,7 +933,7 @@ class DocumentGenerator:
 
         for point in slide_data.get("right_points", []):
             p_r = rtf.add_paragraph()
-            _add_formatted_runs(p_r, f"\u2022 {point}", Pt(16), theme["body"], theme["accent"])
+            _add_formatted_runs(p_r, f"\u2022 {point}", Pt(16), theme["body"], theme["accent"], theme=theme)
             p_r.space_after = Pt(6)
 
         return slide
@@ -666,7 +1005,7 @@ class DocumentGenerator:
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(44)
         run.font.bold = True
         title_color = RGBColor(0xFF, 0xFF, 0xFF) if image_path else theme["heading"]
@@ -684,7 +1023,7 @@ class DocumentGenerator:
             sp.alignment = PP_ALIGN.CENTER
             run_s = sp.add_run()
             run_s.text = subtitle
-            run_s.font.name = BODY_FONT
+            run_s.font.name = _bfont(theme)
             run_s.font.size = Pt(22)
             run_s.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
 
@@ -718,7 +1057,7 @@ class DocumentGenerator:
             p = tf.paragraphs[0]
             run = p.add_run()
             run.text = str(section_num).zfill(2)
-            run.font.name = HEADING_FONT
+            run.font.name = _hfont(theme)
             run.font.size = Pt(72)
             run.font.bold = True
             run.font.color.rgb = theme["accent"]
@@ -733,7 +1072,7 @@ class DocumentGenerator:
         p = tf.paragraphs[0]
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(36)
         run.font.bold = True
         run.font.color.rgb = theme["heading"]
@@ -749,7 +1088,7 @@ class DocumentGenerator:
             sp = stf.paragraphs[0]
             run_s = sp.add_run()
             run_s.text = subtitle
-            run_s.font.name = BODY_FONT
+            run_s.font.name = _bfont(theme)
             run_s.font.size = Pt(20)
             run_s.font.color.rgb = theme["subtitle"]
 
@@ -785,12 +1124,12 @@ class DocumentGenerator:
         p = tf.paragraphs[0]
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(28)
         run.font.bold = True
         run.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         # Agenda items — numbered list
         items = slide_data.get("agenda_items", slide_data.get("bullets", []))
@@ -808,7 +1147,7 @@ class DocumentGenerator:
             np_.alignment = PP_ALIGN.RIGHT
             nr = np_.add_run()
             nr.text = f"{idx + 1:02d}"
-            nr.font.name = HEADING_FONT
+            nr.font.name = _hfont(theme)
             nr.font.size = Pt(28)
             nr.font.bold = True
             nr.font.color.rgb = theme["accent"]
@@ -819,7 +1158,7 @@ class DocumentGenerator:
             ttf = txt_box.text_frame
             ttf.word_wrap = True
             tp = ttf.paragraphs[0]
-            _add_formatted_runs(tp, item, Pt(22), theme["body"], theme["accent"])
+            _add_formatted_runs(tp, item, Pt(22), theme["body"], theme["accent"], theme=theme)
 
         return slide
 
@@ -854,12 +1193,12 @@ class DocumentGenerator:
         p = tf.paragraphs[0]
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(28)
         run.font.bold = True
         run.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         # Determine column count from slide_type
         cards = slide_data.get("cards", [])
@@ -901,7 +1240,7 @@ class DocumentGenerator:
             hp.alignment = PP_ALIGN.CENTER
             hr = hp.add_run()
             hr.text = card.get("heading", "")
-            hr.font.name = HEADING_FONT
+            hr.font.name = _hfont(theme)
             hr.font.size = Pt(20)
             hr.font.bold = True
             hr.font.color.rgb = theme["accent"]
@@ -915,7 +1254,7 @@ class DocumentGenerator:
             dp = dtf.paragraphs[0]
             _add_formatted_runs(
                 dp, card.get("description", ""),
-                Pt(14), theme["body"], theme["accent"])
+                Pt(14), theme["body"], theme["accent"], theme=theme)
 
         return slide
 
@@ -947,12 +1286,12 @@ class DocumentGenerator:
         p = tf.paragraphs[0]
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(28)
         run.font.bold = True
         run.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         points = slide_data.get("timeline_points", [])[:6]  # Max 6 points
         if not points:
@@ -1006,21 +1345,21 @@ class DocumentGenerator:
                 lp.alignment = PP_ALIGN.CENTER
                 lr = lp.add_run()
                 lr.text = label_text
-                lr.font.name = HEADING_FONT
+                lr.font.name = _hfont(theme)
                 lr.font.size = Pt(14)
                 lr.font.bold = True
                 lr.font.color.rgb = theme["heading"]
                 # Description
                 dbox = slide.shapes.add_textbox(
-                    label_x, Inches(2.7), label_width, Inches(0.8))
+                    label_x, Inches(2.7), label_width, Inches(1.2))
                 dtf = dbox.text_frame
                 dtf.word_wrap = True
                 dp = dtf.paragraphs[0]
                 dp.alignment = PP_ALIGN.CENTER
                 dr = dp.add_run()
                 dr.text = desc_text
-                dr.font.name = BODY_FONT
-                dr.font.size = Pt(12)
+                dr.font.name = _bfont(theme)
+                dr.font.size = Pt(11)
                 dr.font.color.rgb = theme["body"]
             else:  # Below
                 lbox = slide.shapes.add_textbox(
@@ -1031,21 +1370,21 @@ class DocumentGenerator:
                 lp.alignment = PP_ALIGN.CENTER
                 lr = lp.add_run()
                 lr.text = label_text
-                lr.font.name = HEADING_FONT
+                lr.font.name = _hfont(theme)
                 lr.font.size = Pt(14)
                 lr.font.bold = True
                 lr.font.color.rgb = theme["heading"]
 
                 dbox = slide.shapes.add_textbox(
-                    label_x, Inches(4.8), label_width, Inches(0.8))
+                    label_x, Inches(4.8), label_width, Inches(1.0))
                 dtf = dbox.text_frame
                 dtf.word_wrap = True
                 dp = dtf.paragraphs[0]
                 dp.alignment = PP_ALIGN.CENTER
                 dr = dp.add_run()
                 dr.text = desc_text
-                dr.font.name = BODY_FONT
-                dr.font.size = Pt(12)
+                dr.font.name = _bfont(theme)
+                dr.font.size = Pt(11)
                 dr.font.color.rgb = theme["body"]
 
         return slide
@@ -1081,12 +1420,12 @@ class DocumentGenerator:
         p = tf.paragraphs[0]
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(28)
         run.font.bold = True
         run.font.color.rgb = theme["heading"]
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         headers = slide_data.get("table_headers", [])
         rows = slide_data.get("table_rows", [])
@@ -1097,7 +1436,7 @@ class DocumentGenerator:
             for j, bullet in enumerate(bullets):
                 bp = tf.add_paragraph() if j > 0 else tf.paragraphs[0]
                 _add_formatted_runs(bp, bullet, Pt(16), theme["body"],
-                                    theme["accent"])
+                                    theme["accent"], theme=theme)
             return slide
 
         # Clamp dimensions
@@ -1126,7 +1465,7 @@ class DocumentGenerator:
             p.alignment = PP_ALIGN.CENTER
             run = p.add_run()
             run.text = str(header_text)
-            run.font.name = HEADING_FONT
+            run.font.name = _hfont(theme)
             run.font.size = Pt(14)
             run.font.bold = True
             run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
@@ -1145,7 +1484,7 @@ class DocumentGenerator:
                 p = cell.text_frame.paragraphs[0]
                 run = p.add_run()
                 run.text = cell_text
-                run.font.name = BODY_FONT
+                run.font.name = _bfont(theme)
                 run.font.size = Pt(13)
                 run.font.color.rgb = theme["body"]
                 # Alternating row fill
@@ -1224,7 +1563,7 @@ class DocumentGenerator:
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(36)
         run.font.bold = True
         run.font.color.rgb = title_color
@@ -1241,7 +1580,7 @@ class DocumentGenerator:
             sp.alignment = PP_ALIGN.CENTER
             sr = sp.add_run()
             sr.text = overlay_text
-            sr.font.name = BODY_FONT
+            sr.font.name = _bfont(theme)
             sr.font.size = Pt(20)
             sr.font.color.rgb = title_color
 
@@ -1270,9 +1609,9 @@ class DocumentGenerator:
             paragraph.font.size = Pt(28)
             paragraph.font.bold = True
             paragraph.font.color.rgb = theme["heading"]
-            paragraph.font.name = HEADING_FONT
+            paragraph.font.name = _hfont(theme)
 
-        self._add_accent_bar(slide, prs, theme)
+        self._apply_accent(slide, prs, theme)
 
         slide_width = prs.slide_width
         bullets = slide_data.get("bullets", [])
@@ -1303,7 +1642,7 @@ class DocumentGenerator:
         for j, bullet in enumerate(bullets):
             bp = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
             _add_formatted_runs(
-                bp, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"])
+                bp, f"\u2022 {bullet}", Pt(16), theme["body"], theme["accent"], theme=theme)
             bp.space_after = Pt(6)
 
         return slide
@@ -1346,7 +1685,7 @@ class DocumentGenerator:
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
         run.text = title
-        run.font.name = HEADING_FONT
+        run.font.name = _hfont(theme)
         run.font.size = Pt(36)
         run.font.bold = True
         run.font.color.rgb = theme["heading"]
@@ -1363,7 +1702,7 @@ class DocumentGenerator:
             cp.alignment = PP_ALIGN.CENTER
             cr = cp.add_run()
             cr.text = closing_text
-            cr.font.name = BODY_FONT
+            cr.font.name = _bfont(theme)
             cr.font.size = Pt(18)
             cr.font.color.rgb = theme["subtitle"]
 
@@ -1371,15 +1710,15 @@ class DocumentGenerator:
         bullets = slide_data.get("bullets", [])
         if bullets:
             bullet_box = slide.shapes.add_textbox(
-                Inches(2), Inches(4.5),
-                Emu(int(prs.slide_width - Inches(4))), Inches(1.8))
+                Inches(2), Inches(4.3),
+                Emu(int(prs.slide_width - Inches(4))), Inches(1.5))
             btf = bullet_box.text_frame
             btf.word_wrap = True
             for j, bullet in enumerate(bullets):
                 bp = btf.paragraphs[0] if j == 0 else btf.add_paragraph()
                 bp.alignment = PP_ALIGN.CENTER
                 _add_formatted_runs(
-                    bp, bullet, Pt(16), theme["body"], theme["accent"])
+                    bp, bullet, Pt(14), theme["body"], theme["accent"], theme=theme)
                 bp.space_after = Pt(4)
 
         return slide
