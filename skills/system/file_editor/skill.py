@@ -928,8 +928,9 @@ class FileEditorSkill(BaseSkill):
                 valid_themes = ('professional', 'modern', 'bold', 'minimal',
                                 'elegant', 'earth', 'forest', 'ocean',
                                 'jarvis', 'banfield')
-                if value.lower() in valid_themes:
-                    params['theme'] = value.lower()
+                theme_val = value.lower().strip('.,;:!? ')
+                if theme_val in valid_themes:
+                    params['theme'] = theme_val
 
         # Require at least a topic
         if not params.get('topic'):
@@ -1313,8 +1314,10 @@ class FileEditorSkill(BaseSkill):
         from core.debug_logger import get_debug_logger
         _dbg = get_debug_logger()
 
+        phase2_timeout = max(30, len(layout) * 5)
         raw = self._llm.generate(content_prompt, max_tokens=6144,
-                                 temperature=CONTENT_TEMPERATURE)
+                                 temperature=CONTENT_TEMPERATURE,
+                                 timeout=phase2_timeout)
         raw = self._strip_markdown_fences(raw)
 
         _dbg.log_skill_event("file_editor", "phase2_llm_response", {

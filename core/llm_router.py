@@ -207,7 +207,7 @@ class LLMRouter:
         return {"role": "user", "content": text}
 
     def generate(self, prompt: str, use_api: bool = False, max_tokens: int = 512,
-                 temperature: float | None = None) -> str:
+                 temperature: float | None = None, timeout: int = 30) -> str:
         """
         Generate response from LLM.
 
@@ -218,6 +218,7 @@ class LLMRouter:
             prompt: Input prompt
             use_api: Whether to force API (Claude) instead of local
             max_tokens: Maximum tokens to generate
+            timeout: HTTP request timeout in seconds (local only)
 
         Returns:
             Generated text response
@@ -225,10 +226,12 @@ class LLMRouter:
         if use_api:
             return self._generate_api(prompt, max_tokens)
         else:
-            return self._generate_local(prompt, max_tokens, temperature=temperature)
+            return self._generate_local(prompt, max_tokens, temperature=temperature,
+                                        timeout=timeout)
     
     def _generate_local(self, user_message: str, max_tokens: int = 512,
-                        temperature: float | None = None) -> str:
+                        temperature: float | None = None,
+                        timeout: int = 30) -> str:
         """Generate using llama-server REST API"""
         from core import persona
         system_prompt = persona.system_prompt_brief()
@@ -248,7 +251,7 @@ class LLMRouter:
                     "top_k": self.top_k,
                     "max_tokens": max_tokens
                 },
-                timeout=30
+                timeout=timeout
             )
             # Log context overflow clearly instead of generic error
             if response.status_code == 400:
