@@ -143,6 +143,21 @@ SCHEMA = {
                     "type": "string",
                     "description": "Package or command name for 'package_info'."
                 },
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "Max number of results to return for 'list_files' "
+                        "(default 100, max 100)."
+                    )
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["name", "modified", "size"],
+                    "description": (
+                        "Sort order for 'list_files': name (alphabetical, default), "
+                        "modified (most recent first), or size (largest first)."
+                    )
+                },
             },
             "required": ["action"]
         }
@@ -180,7 +195,11 @@ def handler(args: dict) -> str:
         "search": lambda: _find_search(args.get("pattern", "")),
         "count_files": lambda: _find_count_files(args.get("directory", "home")),
         "count_code": lambda: _find_count_code(),
-        "list_files": lambda: _find_list_files(args.get("directory", "home")),
+        "list_files": lambda: _find_list_files(
+            args.get("directory", "home"),
+            limit=args.get("limit"),
+            sort_by=args.get("sort_by"),
+        ),
         "dir_sizes": lambda: _find_dir_sizes(args.get("directory", "home")),
         "disk_usage": lambda: _find_disk_usage(),
         "file_info": lambda: _find_file_info(args.get("pattern", "")),
@@ -269,21 +288,42 @@ def _find_count_files(directory: str) -> str:
     return f"'{directory}' contains {' and '.join(parts)}."
 
 
-def _find_list_files(directory: str) -> str:
+def _find_list_files(directory: str, limit: int = None,
+                     sort_by: str = None) -> str:
     """List files in a named directory with sizes (including directory sizes)."""
     target = _resolve_dir(directory)
     if not target:
         return f"Directory '{directory}' does not exist."
     try:
-        entries = sorted(target.iterdir(), key=lambda p: p.name.lower())
+        entries = list(target.iterdir())
     except PermissionError:
         return f"Permission denied accessing '{directory}'."
 
     if not entries:
         return f"'{directory}' is empty."
 
+    # Filter hidden files
+    visible = [e for e in entries if not e.name.startswith('.')]
+    if not visible:
+        return f"'{directory}' contains only hidden files."
+
+    # Sort entries
+    sort_by = sort_by or "name"
+    if sort_by == "modified":
+        visible.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    elif sort_by == "size":
+        visible.sort(key=lambda p: (p.stat().st_size if p.is_file() else 0),
+                     reverse=True)
+    else:
+        visible.sort(key=lambda p: p.name.lower())
+
+    # Apply limit
+    cap = min(limit or 100, 100)
+    total = len(visible)
+    display = visible[:cap]
+
     # Get directory sizes via du -sh for all subdirs in one call
-    visible_dirs = [e for e in entries if e.is_dir() and not e.name.startswith('.')]
+    visible_dirs = [e for e in display if e.is_dir()]
     dir_sizes = {}
     if visible_dirs:
         du_args = ["du", "-sh", "--"] + [str(d) for d in visible_dirs[:50]]
@@ -297,9 +337,7 @@ def _find_list_files(directory: str) -> str:
                     dir_sizes[dirname] = size_str
 
     lines = []
-    for entry in entries[:100]:
-        if entry.name.startswith('.'):
-            continue
+    for entry in display:
         if entry.is_dir():
             sz = dir_sizes.get(entry.name, "")
             if sz:
@@ -313,13 +351,10 @@ def _find_list_files(directory: str) -> str:
             except OSError:
                 lines.append(f"  {entry.name}")
 
-    if not lines:
-        return f"'{directory}' contains only hidden files."
-
-    total = len([e for e in entries if not e.name.startswith('.')])
-    header = f"'{directory}' — {total} items:"
-    if total > 100:
-        lines.append(f"  ... and {total - 100} more")
+    sort_label = {"name": "alphabetical", "modified": "most recent", "size": "largest"}.get(sort_by, "")
+    header = f"'{directory}' — {total} items (sorted by {sort_label}):"
+    if total > cap:
+        lines.append(f"  ... and {total - cap} more")
     return header + "\n" + "\n".join(lines)
 
 

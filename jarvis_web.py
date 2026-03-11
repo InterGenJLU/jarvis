@@ -2017,17 +2017,19 @@ async def _handle_chat_message(ws, cmd_lock, components, tts_proxy, config,
             logger.info("JARVIS: %s%s", (response_text or "")[:200],
                         " [streamed]" if result.get('streamed') else "")
 
-            # Only send response message if not already streamed
-            if not result.get('streamed') and response_text:
+            # Always send response message (even empty) so every command
+            # produces the full WS sequence: response → stats → system_stats
+            if not result.get('streamed'):
                 await ws.send_json({
                     'type': 'response',
-                    'content': response_text,
+                    'content': response_text or '',
                 })
-            if result['stats']:
-                await ws.send_json({
-                    'type': 'stats',
-                    'data': result['stats'],
-                })
+            # Always send stats (even empty) so clients can use it as
+            # an end-of-response signal for bare acks with no LLM call
+            await ws.send_json({
+                'type': 'stats',
+                'data': result['stats'] or {},
+            })
             # Send structured health report for rich rendering
             if health_data:
                 await ws.send_json({

@@ -172,11 +172,14 @@ class SelfAwareness:
                 for line in f:
                     if line.startswith("model name"):
                         cpu = line.split(":", 1)[1].strip()
+                        # Extract physical core count before stripping suffix
+                        # os.cpu_count() returns logical threads (24 on 12C/24T)
+                        core_match = re.search(r'(\d+)-Core', cpu)
+                        hw["cpu_cores"] = int(core_match.group(1)) if core_match else (os.cpu_count() or 0)
                         # Strip redundant suffix like "12-Core Processor"
                         cpu = re.sub(r'\s+\d+-Core Processor$', '', cpu)
                         hw["cpu_model"] = cpu
                         break
-            hw["cpu_cores"] = os.cpu_count() or 0
         except Exception:
             pass
 
@@ -202,7 +205,9 @@ class SelfAwareness:
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
-                for line in result.stdout.splitlines():
+                # Iterate in reverse so highest GPU ID (compute GPU) wins
+                # over lower GPU ID (display GPU)
+                for line in reversed(result.stdout.splitlines()):
                     if "Card Series" in line or "Card series" in line:
                         hw["gpu_model"] = line.split(":")[-1].strip()
                         break
@@ -213,7 +218,8 @@ class SelfAwareness:
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
-                for line in result.stdout.splitlines():
+                # Reverse to match compute GPU (highest ID), same as model name
+                for line in reversed(result.stdout.splitlines()):
                     if "Total" in line and "Memory" in line:
                         # Parse "VRAM Total Memory (B): 21474836480"
                         parts = line.split(":")
@@ -342,6 +348,15 @@ class SelfAwareness:
         # Add non-skill capabilities the LLM should know about
         lines.append(f"{len(capabilities) + 1}. web_research: Search the web, fetch pages, synthesize answers (a moment)")
         lines.append(f"{len(capabilities) + 2}. general_knowledge: Answer questions from training data (instant)")
+
+        # Explicit negatives so the LLM doesn't hallucinate unavailable features
+        lines.append("")
+        lines.append("YOU CANNOT currently:")
+        lines.append("- Send or read email")
+        lines.append("- Sync with CalDAV calendars")
+        lines.append("- Make phone calls or send SMS")
+        lines.append("- Control smart-home devices")
+        lines.append("If asked about these, say the feature is not yet available.")
 
         self._cached_manifest = "\n".join(lines)
         logger.info(f"Capability manifest built: {len(capabilities)} skills, "

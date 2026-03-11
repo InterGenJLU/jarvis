@@ -1901,6 +1901,12 @@ class ConversationRouter:
         r'list .{1,20}(movies?|films?|shows?)|'
         r'every .{0,20}(movies?|films?|shows?|episodes?|seasons?))\b', re.IGNORECASE)
 
+    # Gaming opinion/review queries — force web search so the LLM doesn't
+    # punt on "which has the best reviews" style follow-ups.
+    _GAMING_OPINION = re.compile(
+        r'\b(best|top|highest.{0,10}rated|reviews?|scores?|ratings?|'
+        r'rank|recommend|worth.{0,10}(buying|playing|getting))\b', re.IGNORECASE)
+
     # NOTE: New domain regexes omit trailing \b so stem-matches work
     # (e.g. "vaccin" matches "vaccination", "nanotechnol" matches "nanotechnology").
     # Leading \b still ensures matches start at a word boundary.
@@ -2287,6 +2293,9 @@ class ConversationRouter:
         if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
             result.force_web_search = True
             logger.debug("P4-LLM: force_web_search=True (entertainment listing)")
+        if category == "gaming" and self._GAMING_OPINION.search(command):
+            result.force_web_search = True
+            logger.debug("P4-LLM: force_web_search=True (gaming opinion/review)")
         result.intent = "tool_calling"
 
         tool_names = [t["function"]["name"] for t in tools]

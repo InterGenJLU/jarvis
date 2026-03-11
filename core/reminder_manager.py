@@ -386,9 +386,19 @@ class ReminderManager:
 
         return True
 
+    # Stop-words excluded from token overlap matching
+    _CANCEL_STOP_WORDS = frozenset({
+        "the", "a", "an", "about", "my", "one", "that", "this", "for", "to",
+        "of", "and", "in", "on", "at", "is", "it", "me", "do", "with",
+    })
+
     def cancel_by_title(self, title_fragment: str,
                         created_by: str = None) -> Optional[Dict]:
         """Cancel the first pending reminder whose title contains the fragment.
+
+        Uses exact substring first, then falls back to token overlap
+        (≥2 meaningful words in common) to handle natural phrasing like
+        "cancel the one about oil changes" matching "check the oil change schedule".
 
         Returns the cancelled reminder dict, or None if not found.
         """
@@ -397,11 +407,36 @@ class ReminderManager:
         # Also check fired (unacked) reminders
         pending.extend(self.list_reminders("fired", limit=100, created_by=created_by))
 
+        # Pass 1: exact substring (original behavior)
         for r in pending:
             if fragment_lower in r["title"].lower():
                 self.cancel_reminder(r["id"])
                 self.logger.info(f"Cancelled reminder #{r['id']}: {r['title']}")
                 return r
+
+        # Pass 2: token overlap — strip stop-words, match stems via prefix
+        frag_tokens = {w for w in re.split(r'\W+', fragment_lower)
+                       if w and w not in self._CANCEL_STOP_WORDS and len(w) > 2}
+        if len(frag_tokens) < 2:
+            return None
+
+        best_match = None
+        best_overlap = 0
+        for r in pending:
+            title_tokens = {w for w in re.split(r'\W+', r["title"].lower())
+                            if w and w not in self._CANCEL_STOP_WORDS and len(w) > 2}
+            # Count overlapping tokens (prefix match handles plurals: "change" ∈ "changes")
+            overlap = sum(1 for ft in frag_tokens
+                          if any(ft.startswith(tt[:4]) or tt.startswith(ft[:4])
+                                 for tt in title_tokens))
+            if overlap >= 2 and overlap > best_overlap:
+                best_overlap = overlap
+                best_match = r
+
+        if best_match:
+            self.cancel_reminder(best_match["id"])
+            self.logger.info(f"Cancelled reminder #{best_match['id']} (token overlap={best_overlap}): {best_match['title']}")
+            return best_match
         return None
 
     def _update_status(self, reminder_id: int, status: str, **extra):
