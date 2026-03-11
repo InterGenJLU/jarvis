@@ -631,6 +631,14 @@ class FileEditorSkill(BaseSkill):
     # Intent: create_presentation
     # ------------------------------------------------------------------
 
+    # Patterns that indicate modification of an existing presentation
+    _EDIT_SIGNAL_RE = re.compile(
+        r'\b(add\s+a\s+slide|add\s+another\s+slide|append\s+a\s+slide|'
+        r'insert\s+a\s+slide|add\s+slide|remove\s+slide|delete\s+slide|'
+        r'swap\s+slide|move\s+slide|reorder\s+slide|edit\s+slide|'
+        r'change\s+slide|update\s+slide|modify\s+slide|make\s+slide|'
+        r'rewrite\s+slide|add\s+a\s+new\s+slide)\b', re.IGNORECASE)
+
     def create_presentation(self, entities: dict) -> str:
         """Create a PPTX presentation via multi-step pipeline:
         parse request → optional web research → LLM synthesis → slide generation."""
@@ -640,6 +648,20 @@ class FileEditorSkill(BaseSkill):
         _dbg = get_debug_logger()
         _dbg.log_skill_event("file_editor", "create_presentation_entry",
                              {"user_text": user_text[:200]})
+
+        # Cache-aware redirect: if a live pipeline cache exists and the
+        # request looks like a modification, route to edit_presentation
+        # instead of creating a brand-new presentation (V36 fix).
+        if (self._pipeline_cache and not self._pipeline_cache.is_expired()
+                and self._EDIT_SIGNAL_RE.search(user_text)):
+            self.logger.info("[file_editor] Redirecting to edit_presentation "
+                             "(active cache + edit signal detected)")
+            _dbg.log_skill_event("file_editor", "create_to_edit_redirect", {
+                "user_text": user_text[:200],
+                "cache_filename": self._pipeline_cache.filename,
+                "cache_age_s": round(time.time() - self._pipeline_cache.created_at, 1),
+            })
+            return self.edit_presentation(entities)
 
         # Step 1: Parse the request
         params = self._parse_document_request(user_text)
