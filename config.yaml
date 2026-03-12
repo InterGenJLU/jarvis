@@ -338,7 +338,7 @@ vision:
 web:
   port: 8088
   host: "0.0.0.0"
-  auth_token: "QIj5fqyQ91HZ_SzAcOFJTaPB7Lu3Z570pxcrXIE944w"
+  auth_token: "I5ck6KNwxPC3dzhm-zTssuMThON4hj3Bwo8t08jGVyg"
   tls:
     enabled: true
     cert: ".certs/ts.crt"
