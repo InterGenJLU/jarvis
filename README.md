@@ -1,26 +1,29 @@
-# JARVIS — GPU-Accelerated Voice Assistant
+# JARVIS — Local Voice Assistant on AMD ROCm
 
-A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speech recognition, and a local LLM. No cloud required for core operation.
+A fully local, GPU-accelerated voice assistant with fine-tuned speech recognition, LLM-driven tool calling, computer vision, self-managing memory, and streaming TTS — all running on consumer AMD hardware. No cloud required for core operation.
 
 **Built on:** Ubuntu 24.04 | Python 3.12 | ROCm 7.2 | AMD RX 7900 XT
 
 ---
 
-## Highlights
+## By the Numbers
 
-- **0.1-0.2s speech recognition** — Fine-tuned Whisper v2 (198 phrases, 94%+ accuracy) on AMD GPU via CTranslate2 + ROCm
-- **LLM-centric tool calling** — Qwen3.5-35B-A3B (MoE, 3B active params) decides which of 8 tools to call per query, 100% accuracy across 1,200+ trials. Adding a new tool = create one Python file
-- **Natural blended voice** — Kokoro TTS with custom voice blend (fable + george), gapless streaming playback
-- **Conversational flow engine** — Persona module (24 response pools, ~90 templates), adaptive conversation windows (4-7s), contextual acknowledgments, turn tracking
-- **Self-awareness + task planning** — capability manifest, system state injection, compound request detection, LLM plan generation, sequential execution with per-step evaluation, pause/resume/cancel
-- **Social introductions** — "Meet my niece Arya" triggers butler-style multi-turn introduction flow with name confirmation, pronunciation checks, and persistent people database
-- **Always-on listening** — Porcupine wake word + WebRTC VAD + ambient wake word filter + multi-turn conversation windows
-- **11 skills + 8 LLM tools** — weather, system info, filesystem, developer tools, reminders, news, web search, memory recall (LLM tools) + file editor, desktop control, social introductions (skill-only). Time/date handled by TimeInfoSkill (instant response via semantic matching)
-- **Interaction artifact cache** — 5-phase typed cache with reference resolution, sub-item navigation, hierarchical decomposition, memory promotion, and cross-session retrieval
-- **MCP Bridge** — bidirectional Model Context Protocol support: expose JARVIS tools to external clients (Claude Code) and consume external MCP servers as native tools
-- **Self-managing memory** — MemGPT-pattern per-turn fact extraction + LLM-driven memory recall. 6-requirement CMA: importance scoring, retrieval-driven mutation, associative linking, consolidation & abstraction
-- **Three frontends** — voice (production), console (debug/hybrid), web UI (browser-based chat with streaming + sessions)
-- **Privacy by design** — everything runs locally; Claude API is a last-resort quality fallback only
+| What | How Much |
+|------|----------|
+| **Codebase** | ~66,000 lines of Python across ~40 modules |
+| **LLM** | Qwen3.5-35B-A3B (MoE, 3B active) — Q3_K_M on 20GB VRAM |
+| **Tool calling accuracy** | 100% across 1,200+ trials (local LLM, no cloud) |
+| **LLM tools** | 11 auto-discovered (one-file plugin system) |
+| **Routing layers** | 18-layer shared priority chain, one router for 3 frontends |
+| **Domain synthesis** | 17-domain classifier feeds 14 specialized anti-hallucination prompts |
+| **Persona templates** | 38 response pools, ~184 templates, style-tagged ack cache |
+| **Unit tests** | 314/314 passing (4 tiers) |
+| **Conversation tests** | 62-conversation behavioral suite |
+| **STT accuracy** | 94%+ (fine-tuned Whisper on Southern accent, 198 phrases) |
+| **STT latency** | 0.1-0.2s (CTranslate2 on GPU) |
+| **End-to-end** | 2-4s first spoken word (streaming LLM + streaming TTS) |
+| **VRAM usage** | ~19.5 / 20 GB (RX 7900 XT, 32K context) |
+| **Vision** | Desktop webcam + mobile camera relay + face enrollment |
 
 ---
 
@@ -45,6 +48,14 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 ![JARVIS Web UI — Session Sidebar](images/JARVIS_WEBUI_3.png)
 *Session sidebar with conversation history, auto-detected sessions, and rename support*
 
+### Vision — "What do you see through the webcam?"
+![JARVIS Vision](images/JARVIS_VISION.png)
+*JARVIS describes the scene through the desktop webcam — identifying objects, clothing (including a favorite band shirt), furniture, and room layout. Qwen3.5 multimodal via mmproj, fully local.*
+
+### Mobile Web UI + Vision
+![JARVIS Mobile Vision](images/JARVIS_MOBILE_VISION.png)
+*Same vision capability from an iPhone over Tailscale VPN — webcam frame relayed via WebSocket, analyzed by the local LLM, response streamed back to mobile.*
+
 ### Console Mode
 ![JARVIS Console](images/JARVIS_CONSOLE.png)
 *Terminal interface with rich stats panel showing match layer, skill routing, confidence, and timing*
@@ -55,6 +66,8 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 
 - [Demo](#demo)
 - [Architecture](#architecture)
+- [How Requests Flow](#how-requests-flow)
+- [Key Subsystems](#key-subsystems)
 - [Skills & Capabilities](#skills--capabilities)
 - [Hardware Requirements](#hardware-requirements)
 - [Installation](#installation)
@@ -73,66 +86,81 @@ A fully local, privacy-first voice assistant built on AMD ROCm, fine-tuned speec
 ## Architecture
 
 ```
-                          ┌─────────────────────┐
-                          │   Porcupine Wake    │
-                          │   Word Detection    │
-                          └──────────┬──────────┘
-                                     │ "Jarvis"
-                          ┌──────────▼──────────┐
-                          │  Ambient Filter     │
-                          │  (position, copula, │
-                          │  threshold, length) │
-                          └──────────┬──────────┘
-                                     │ verified wake word
-                          ┌──────────▼──────────┐
-                          │  WebRTC VAD +       │
-                          │ Continuous Listener │
-                          │  (speech detection) │
-                          └──────────┬──────────┘
-                                     │ audio frames
-                          ┌──────────▼──────────┐
-                          │  Whisper STT v2     │
-                          │  (CTranslate2/GPU)  │
-                          │  198 phrases, 94%+  │
-                          └──────────┬──────────┘
-                                     │ text
-                  ┌──────────────────▼───────────────────┐
-                  │      ConversationRouter              │
-                  │  Shared priority chain (16 layers):  │
-                  │  P1-P2.8: Confirmations/dismissals   │
-                  │  P3: Memory / introductions          │
-                  │  P3.5: Artifact reference resolution │
-                  │  Pre-P4: Task planner, self-hw, conf │
-                  │  ★ P4-LLM: Tool calling (8 tools)    │
-                  │    semantic pruner → Qwen3.5 decides │
-                  │  P4: Skill routing (stateful skills) │
-                  │  P5+: LLM fallback (Qwen → Claude)   │
-                  └──────┬──────────────┬────────────────┘
-                         │              │
-              ┌──────────▼───┐   ┌──────▼──────────┐
-              │  Skill       │   │  LLM Router     │
-              │  Handler     │   │  Qwen → Claude  │
-              │  (3 skills)  │   │  + 8 LLM Tools  │
-              └──────────┬───┘   └──────┬──────────┘
-                         │              │
-                  ┌──────▼──────────────▼────────-┐
-                  │   Persona + Contextual Acks   │
-                  │   (24 pools, style-tagged)    │
-                  └──────────────┬────────────────┘
-                                │
-                  ┌──────────────▼────────────────┐
-                  │        Kokoro TTS             │
-                  │   StreamingAudioPipeline      │
-                  │   (gapless multi-sentence)    │
-                  └──────────────┬────────────────┘
-                                │ PCM audio
-                          ┌─────▼──────┐
-                          │   aplay    │
-                          │  (ALSA)    │
-                          └────────────┘
+                        ┌──────────────────────┐
+                        │   Porcupine Wake     │
+                        │   Word Detection     │
+                        └──────────┬───────────┘
+                                   │ "Jarvis"
+                        ┌──────────▼───────────┐
+                        │  Ambient Filter      │
+                        │  (position, copula,  │
+                        │  threshold, length)  │
+                        └──────────┬───────────┘
+                                   │ verified wake word
+                        ┌──────────▼───────────┐
+                        │  WebRTC VAD +        │
+                        │  Continuous Listener  │
+                        │  (speech detection)  │
+                        └──────────┬───────────┘
+                                   │ audio frames
+                        ┌──────────▼───────────┐
+                        │  Speaker ID          │
+                        │  (resemblyzer        │
+                        │  d-vectors)          │
+                        └──────────┬───────────┘
+                                   │ user identity
+                        ┌──────────▼───────────┐
+                        │  Whisper STT v2      │
+                        │  (CTranslate2/GPU)   │
+                        │  198 phrases, 94%+   │
+                        └──────────┬───────────┘
+                                   │ text
+                ┌──────────────────▼────────────────────┐
+                │       ConversationRouter              │
+                │  Shared 18-layer priority chain:      │
+                │                                       │
+                │  P0:     Delivery mode (read/display) │
+                │  P1-2.8: Confirmations, dismissals,   │
+                │          intros, reminders, acks      │
+                │  P3:     Memory / recall / forget     │
+                │  P3.1-3.7: Readback, artifacts, news  │
+                │  Pre-P4: Task planner (compound       │
+                │          detection, LLM plan gen)     │
+                │  Pre-P4b: Self-hardware queries       │
+                │                                       │
+                │  ★ P4-LLM: Tool calling (11 tools)    │
+                │    semantic pruner → Qwen3.5 decides  │
+                │    domain classifier → 14 synthesis   │
+                │    prompts (anti-hallucination)        │
+                │                                       │
+                │  P4: Skill routing (stateful skills)  │
+                │  P5+: LLM fallback (Qwen → Claude)    │
+                └──────┬──────────────┬─────────────────┘
+                       │              │
+            ┌──────────▼───┐   ┌──────▼──────────┐
+            │  Skill       │   │  LLM Router     │
+            │  Handler     │   │  Qwen → Claude  │
+            │  (3 skills)  │   │  + 11 LLM Tools │
+            └──────────┬───┘   └──────┬──────────┘
+                       │              │
+                ┌──────▼──────────────▼─────────┐
+                │   Persona + Contextual Acks   │
+                │   (38 pools, ~184 templates)  │
+                └──────────────┬────────────────┘
+                               │
+                ┌──────────────▼────────────────┐
+                │        Kokoro TTS             │
+                │   StreamingAudioPipeline      │
+                │   (gapless multi-sentence)    │
+                └──────────────┬────────────────┘
+                               │ PCM audio
+                        ┌──────▼──────┐
+                        │   aplay     │
+                        │   (ALSA)    │
+                        └─────────────┘
 ```
 
-The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS workers. The LLM response streams token-by-token, is chunked into sentences, and each sentence is synthesized and played as it arrives — so the user hears the first sentence while the LLM is still generating the rest.
+The system uses an **event-driven pipeline** with a Coordinator managing STT/TTS workers. The LLM response streams token-by-token, is chunked into sentences, and each sentence is synthesized and played as it arrives — the user hears the first sentence while the LLM is still generating the rest.
 
 ### Tools vs Skills
 
@@ -140,36 +168,80 @@ JARVIS has two extension mechanisms. The distinction matters:
 
 | | **LLM Tools** | **Skills** |
 |---|---|---|
-| **What they are** | Stateless query→response functions the LLM calls | Stateful modules with multi-turn flows, confirmations, or desktop control |
+| **What they are** | Stateless query->response functions the LLM calls | Stateful modules with multi-turn flows, confirmations, or desktop control |
 | **Who decides** | Qwen3.5 selects which tool to call based on the user's query | Priority chain routes to the skill before the LLM sees the query |
 | **How to add one** | Create one `.py` file in `core/tools/` — auto-discovered | Create a skill directory with `skill.py` + `metadata.yaml` |
-| **Examples** | get_weather, find_files, developer_tools, recall_memory | app_launcher (desktop verbs), file_editor (doc gen + confirmation), social_introductions (multi-turn) |
-| **Count** | 8 tools (6 domain + web_search + recall_memory) | 3 skill-only + 7 with companion tools |
+| **Examples** | get_weather, find_files, developer_tools, recall_memory, take_screenshot | app_launcher (desktop verbs), file_editor (doc gen + confirmation), social_introductions (multi-turn) |
+| **Count** | 11 tools (6 domain + 5 always-included) | 3 skill-only + 8 with companion tools |
 
 Most functionality lives in **tools** now. Skills remain for things that need deterministic state machines, desktop integration, or nested LLM pipelines — things where "let the LLM decide" isn't reliable enough.
 
-### Key Subsystems
+---
+
+## How Requests Flow
+
+Every request — voice, console, or web — hits the same `ConversationRouter.route()` method. The 18-layer priority chain evaluates top-to-bottom and returns on the first match:
+
+1. **P0-P2.8** — Fast deterministic checks: delivery mode commands, rundown acceptance, task planner interrupts, reminder acks, memory forget confirms, introduction state machine, dismissal detection, bare ack filtering. Zero LLM involvement, sub-10ms.
+
+2. **P3-P3.7** — Memory and artifact layers: recall/forget/transparency, structured readback (next/previous/section N), artifact reference resolution ("the second result", "that recipe"), news article pull-up.
+
+3. **Pre-P4** — Compound request detection (22 regex signals like "and then", "after that") triggers the task planner, which generates a multi-step LLM plan and executes steps sequentially with per-step evaluation, pause/resume/cancel voice interrupts, and predictive timing announcements.
+
+4. **P4-LLM** — The primary path. A semantic pruner scores all 11 tools against the query using sentence-transformer embeddings, selects the top 4, and hands them to Qwen3.5 with a dynamically-built system prompt. The LLM decides which tool to call (or none). After the tool returns data, a 17-domain classifier (math, medical, legal, sports, programming, etc.) selects one of 14 domain-specific synthesis prompts with tailored anti-hallucination constraints. The LLM then streams a natural language answer.
+
+5. **P4-Skill** — Non-migrated stateful skills (app_launcher, file_editor, social_introductions) get their turn via 5-layer semantic intent matching.
+
+6. **Fallback** — Pure LLM conversation: Qwen3.5 streams a response with quality gating. If gibberish, retries with a nudge. If still bad, falls back to Claude API.
+
+---
+
+## Key Subsystems
+
+### Self-Managing Memory
+
+MemGPT-pattern per-turn fact extraction: after every exchange, the LLM extracts durable facts and stores them in SQLite. The `recall_memory` tool (always available to the LLM) performs text + FAISS semantic search across stored facts. CMA 6/6 (Consolidation, Mapping, Abstraction) handles importance scoring, retrieval-driven mutation, associative linking between related facts, and episode-to-semantic knowledge promotion.
+
+### Interaction Artifact Cache
+
+5-phase typed cache system. Every tool result is stored as a typed artifact (weather, search, reminder, news, system, file, dev_tools, memory) in hot/warm/cold tiers. Phase 2 adds reference resolution — "the second result", "that recipe", "repeat that" all resolve to the correct cached artifact. Phase 3 adds sub-item navigation with on-demand LLM decomposition. Phase 4 promotes artifacts to long-term memory at session end. Phase 5 enables cross-session retrieval via FAISS semantic search across cold-tier artifacts.
+
+### Vision Pipeline
+
+Desktop webcam capture via ffmpeg MJPEG singleton (v4l2, 1280x720, 15fps, auto-start/stop with 30s idle shutdown). Mobile camera relay via WebSocket — the server sends a `frame_request`, the browser captures from `getUserMedia`, and returns a base64 JPEG `frame_response`. Both paths feed through PIL downscale and into the Qwen3.5 multimodal pipeline (mmproj-F16.gguf, CPU inference, 90s timeout). `take_screenshot` captures the desktop via gnome-screenshot with optional window cropping. `enroll_face` adds face recognition for presence-based greetings.
+
+### Domain-Aware Response Synthesis
+
+When the LLM calls a tool and gets results back, a 17-domain regex classifier categorizes the query (math, veterinary, medical, nutrition, finance, legal, gaming, sports, automotive, real estate, programming, science/tech, history, travel, factual, geo). This feeds into one of 14 domain-specific synthesis prompt blocks injected into `continue_after_tool_call()`. Each domain has tailored anti-hallucination constraints — medical responses disclaim, legal responses cite jurisdictions, programming responses specify versions. Domains without specialized prompts (math, factual, geo) use the generic synthesis template.
+
+### Task Planner
+
+22 conjunctive regex patterns detect compound requests ("check the weather and then create a packing list"). The LLM generates a JSON plan (max 4 steps), which executes sequentially with direct skill routing per step. Each step gets LLM evaluation (continue/adjust/stop). Voice interrupts (cancel, skip, pause, resume) work via an event queue checked between steps. Predictive timing announcements ("2 steps, about a few seconds") and error-aware planning (unreliable skill warnings) round it out.
+
+### Persona Engine
+
+38 response pool categories with ~184 templates, style-tagged contextual acknowledgments (10 pre-synthesized phrases: neutral, checking, working, research), dynamic honorific injection ("sir" for primary user, "ma'am"/"Ms. Guest" for secondary), domain-specific dry-humor disclaimers for hallucination-prone topics (medical, legal). Guest mode activates a security boundary with HAL 9000 easter egg greetings and restricted tool access (`get_weather` and `web_search` only).
+
+### Additional Subsystems
 
 | Subsystem | What It Does |
 |-----------|-------------|
-| **Conversation Router** | 16-layer shared priority chain for voice/console/web — one router, three frontends |
+| **Conversation Router** | 18-layer shared priority chain for voice/console/web — one router, three frontends |
 | **Tool Registry** | Auto-discovers `core/tools/*.py`, builds schemas, injects dependencies — adding a tool = one file |
-| **Interaction Artifact Cache** | 5-phase typed cache: reference resolution, sub-item navigation, hierarchical decomposition, memory promotion, cross-session retrieval |
-| **MCP Bridge** | Bidirectional MCP: outbound server exposes JARVIS tools to external clients; inbound client consumes external MCP servers as native tools |
-| **Self-Managing Memory** | MemGPT-pattern per-turn LLM extraction + `recall_memory` tool. 6-requirement CMA: importance scoring, retrieval-driven mutation, associative linking, consolidation & abstraction |
-| **Self-Awareness** | Capability manifest + system state injected into LLM context — JARVIS knows what it can do |
-| **Task Planner** | Compound request detection (22 signals), LLM plan generation, sequential execution with per-step LLM evaluation, pause/resume/cancel/skip voice interrupts, predictive timing, error-aware planning |
-| **Structured Readback** | LLM-parsed section navigation with voice control (next/previous/section N) + delivery modes (read/display/print/browse) |
-| **Persona Engine** | 24 response pools (~90 templates), system prompts, honorific injection, style-tagged ack selection |
-| **People Manager** | SQLite-backed contacts database with relationship tracking, TTS pronunciation overrides, LLM context injection for known people |
-| **Conversation State** | Turn counting, intent history, question detection, research context tracking |
-| **Ambient Filter** | Multi-signal wake word validation: position, copula, threshold (0.80), length — blocks ambient mentions |
-| **Conversation Windows** | Adaptive follow-up windows (4-7s), extends with conversation depth, timeout cleanup |
-| **Web Research** | Qwen3.5-35B-A3B calls DuckDuckGo + trafilatura to search and synthesize answers from live web sources |
-| **Conversational Memory** | SQLite fact store + FAISS semantic search — remembers facts across sessions, surfaces them proactively |
-| **Context Window** | Topic-segmented working memory with relevance-scored assembly across sessions |
+| **MCP Bridge** | Bidirectional MCP: outbound server exposes JARVIS tools to external clients (Claude Code); inbound client consumes external MCP servers as native tools |
+| **Self-Awareness** | Capability manifest + system state injected into LLM context — JARVIS knows what it can do, its current error rates, VRAM usage, and uptime |
+| **Speaker ID** | Resemblyzer d-vector enrollment — identifies who's speaking and adjusts honorifics, tool access, and memory scope dynamically |
+| **Multi-Speaker Tracking** | Per-speaker history labels, rapid-switch detection (3 switches in 60s triggers a retort), participant-aware LLM context |
+| **Context Window** | Topic-segmented working memory with relevance-scored assembly, 24K token budget, cross-session persistence |
 | **Streaming TTS** | `StreamingAudioPipeline` — single persistent aplay process, background Kokoro generation, gapless playback |
-| **Speaker ID** | Resemblyzer d-vector enrollment — identifies who's speaking and adjusts honorifics dynamically |
+| **TTS Normalizer** | 22-pass text normalization: markdown, heteronyms, IPs, ports, CPU/GPU names, model nomenclature, quant strings, years, file sizes, timestamps, currencies, fractions, measurements, temperatures, URLs, paths, and more |
+| **Structured Readback** | LLM-parsed section navigation with voice control (next/previous/section N) + delivery modes (read/display/print/browse) |
+| **People Manager** | SQLite contacts database with relationship tracking, TTS pronunciation overrides, LLM context injection for known people |
+| **Web Research** | DuckDuckGo + trafilatura, 5min TTL cache, parallel page fetching, multi-source synthesis |
+| **Google Calendar** | Two-way sync with dedicated JARVIS calendar, OAuth, incremental sync, background polling, multi-notification composite keys |
+| **Health Check** | 5-layer system diagnostic (bare metal, services, internals, data stores, self-assessment) with ANSI terminal report + voice summary |
+| **GNOME Desktop Bridge** | Custom GNOME Shell extension providing Wayland-native window management via D-Bus, with wmctrl fallback for XWayland |
+| **Ambient Filter** | Multi-signal wake word validation: position, copula, threshold (0.80), length — blocks ambient mentions like "I was just telling Jarvis about..." |
 
 ---
 
@@ -177,18 +249,21 @@ Most functionality lives in **tools** now. Skills remain for things that need de
 
 ### LLM Tools (Qwen3.5 decides when to call)
 
-These are stateless query→response functions. The LLM receives the user's query, selects the right tool, calls it, and synthesizes a natural language answer from the result.
+Stateless query->response functions. The LLM receives the user's query, selects the right tool, calls it, and synthesizes a natural language answer from the result.
 
 | Tool | Examples | What It Does |
 |------|---------|-------------|
 | **get_weather** | "What's the weather?" / "Will it rain?" | OpenWeatherMap API — current conditions, forecast, rain check |
 | **get_system_info** | "What CPU do I have?" / "How much RAM?" | 8 sub-handlers: cpu, memory, disk, gpu, network, processes, uptime, all |
-| **find_files** | "Find my config file" / "Count lines in main.py" | File search, line counting, directory listing |
-| **developer_tools** | "Search codebase for TODO" / "Git status" / "Show me the network" | 13 actions: codebase search, git multi-repo, system admin, general shell, visual output, 3-tier safety |
+| **find_files** | "Find my config file" / "Show recent files" | 11 actions: search, count, list, dir sizes, disk usage, file info, tree, large files, package info |
+| **developer_tools** | "Git status" / "Search codebase for TODO" | 13 actions: codebase search, git multi-repo, system admin, general shell, visual output, 3-tier safety |
 | **manage_reminders** | "Remind me at 3pm" / "What's on my schedule?" | 5 actions: add, list, cancel, acknowledge, snooze. Priority tones, nag behavior |
-| **get_news** | "Read me the headlines" / "Any cybersecurity news?" | 16 RSS feeds, urgency classification, semantic dedup, category/priority filtering |
-| **web_search** | "Who won the Super Bowl?" / "How far is NYC from London?" | DuckDuckGo + trafilatura → multi-source synthesis (always available) |
-| **recall_memory** | "What's my favorite color?" / proactive context | Searches stored facts (text + FAISS semantic), returns relevant memories (always available) |
+| **get_news** | "Read me the headlines" / "Cybersecurity news?" | 16 RSS feeds, urgency classification, semantic dedup, category/priority filtering |
+| **web_search** | "Who won the Super Bowl?" | DuckDuckGo + trafilatura multi-source synthesis (always available) |
+| **recall_memory** | "What's my favorite color?" | SQLite text + FAISS semantic search across stored facts (always available) |
+| **take_screenshot** | "What's on my screen?" | gnome-screenshot + optional window crop, LANCZOS downscale, base64 to LLM vision |
+| **capture_webcam** | "What do you see?" / "What am I holding?" | Desktop webcam or mobile camera relay, PIL downscale, base64 to Qwen3.5 mmproj |
+| **enroll_face** | "Learn my face" / "Remember what I look like" | Face detection + embedding storage for presence-based greetings |
 
 ### Skills (Deterministic routing — state machines and desktop control)
 
@@ -196,22 +271,15 @@ These handle things that need multi-turn flows, confirmations, or direct desktop
 
 | Skill | Examples | How It Works |
 |-------|---------|-------------|
-| **File Editor** | "Write a script that..." / "Edit my config file" / "Delete temp.txt" | 5 intents: write, edit, read, delete + list. Two-stage LLM content generation, confirmation flow for destructive ops |
+| **File Editor** | "Write a script that..." / "Create a presentation about..." | 5 intents: write, edit, read, delete + list. Two-stage LLM content generation. Document generation: PPTX/DOCX/PDF with web research integration and Pexels stock images. Confirmation flow for destructive ops |
 | **Desktop Control** | "Open Chrome" / "Volume up" / "Switch to workspace 2" | 16 intents: app launch/close, window management, volume, workspaces, focus, clipboard via GNOME Shell extension D-Bus bridge |
-| **Social Introductions** | "Meet my niece Arya" / "Who is Arya?" / "Forget Arya" | Multi-turn butler-style introduction flow: name confirmation, pronunciation check, fact gathering, persistent people database with TTS pronunciation overrides |
+| **Social Introductions** | "Meet my niece Arya" / "Who is Arya?" | Multi-turn butler-style introduction flow: name confirmation, pronunciation check, fact gathering, persistent people database with TTS pronunciation overrides |
 
 **Conversation** (greetings, small talk, "how are you?") is handled directly by the LLM — no dedicated skill needed.
 
-### Additional Systems
+### Document Generation
 
-- **GNOME Desktop Bridge** — Custom GNOME Shell extension providing Wayland-native window management, with wmctrl fallback for XWayland
-- **Google Calendar** — Two-way sync with dedicated JARVIS calendar, OAuth, incremental sync, background polling, multi-notification support
-- **Daily & Weekly Rundowns** — Interactive state machine: offered → re-asked → deferred → retry → pending mention
-- **Health Check** — 5-layer system diagnostic (GPU, LLM, STT, TTS, skills) with ANSI terminal report + voice summary
-- **Memory & System Health Dashboard** — Web page at `/memory` with summary cards, per-user charts, health sparklines, fact CRUD editor
-- **User Profiles** — Speaker identification via resemblyzer d-vectors, dynamic honorifics, voice enrollment, active user selection (web + console)
-- **People Manager** — SQLite contacts database, relationship tracking, TTS pronunciation overrides, LLM context injection
-- **MCP Bridge** — Outbound server (expose tools to Claude Code) + inbound client (consume external MCP servers as native tools)
+JARVIS generates PPTX, DOCX, and PDF documents through a two-stage LLM pipeline. Stage 1 gathers content (optionally via web research). Stage 2 structures it into the target format. Presentations pull stock images from the Pexels API. Generated documents land in a shared folder and can be opened on the desktop via "open it" or read back via "read it to me" with structured section navigation.
 
 ---
 
@@ -232,13 +300,14 @@ These handle things that need multi-turn flows, confirmations, or direct desktop
 | Component | Spec |
 |-----------|------|
 | CPU | AMD Ryzen 9 5900X (24 threads) |
-| GPU | AMD RX 7900 XT (20GB VRAM) |
-| RAM | 16GB+ |
+| GPU (compute) | AMD RX 7900 XT (20GB VRAM) — STT + LLM |
+| GPU (display) | AMD RX 7600 — compositor only |
+| RAM | 64GB |
 | Microphone | USB condenser mic (FIFINE K669B tested) |
 | OS | Ubuntu 24.04 LTS |
 | ROCm | 7.2.0 |
 
-> **GPU acceleration is optional but transformative.** CPU-only Whisper takes 0.3-0.5s per transcription. With GPU: 0.1-0.2s. The local LLM (Qwen3.5-35B-A3B) also benefits from GPU offloading via llama.cpp.
+> **GPU acceleration is optional but transformative.** CPU-only Whisper takes 0.3-0.5s per transcription. With GPU: 0.1-0.2s. The local LLM (Qwen3.5-35B-A3B) runs via llama.cpp with full GPU offload at ~48-63 tok/s. Dual GPU setup dedicates the RX 7900 XT entirely to compute while the RX 7600 handles the desktop compositor.
 
 ---
 
@@ -390,7 +459,7 @@ huggingface-cli download unsloth/Qwen3.5-35B-A3B-GGUF \
     Qwen3.5-35B-A3B-Q3_K_M.gguf --local-dir /path/to/models/llm
 ```
 
-The LLM runs via llama.cpp as a server process. The systemd service `llama-server.service` manages it. Qwen3.5-35B-A3B is a MoE model (256 experts, 8+1 active, ~3B active params) with native tool calling for web research. Vision available via mmproj but not loaded by default.
+The LLM runs via llama.cpp as a server process. The systemd service `llama-server.service` manages it. Qwen3.5-35B-A3B is a MoE model (256 experts, 8+1 active, ~3B active params) with native tool calling. At Q3_K_M quantization, it fits in ~19.5GB VRAM with 32K context, leaving headroom on a 20GB card. IFEval 91.9, SWE-bench 69.2.
 
 ### Kokoro TTS (Primary Voice)
 
@@ -420,7 +489,7 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_
 
 | Model | Source | Purpose |
 |-------|--------|---------|
-| **all-MiniLM-L6-v2** | [sentence-transformers](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Intent matching, memory search |
+| **all-MiniLM-L6-v2** | [sentence-transformers](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Intent matching, memory search, tool pruning |
 
 Auto-downloads on first use. Set `cache_dir` in config.yaml to control where it's stored.
 
@@ -486,7 +555,7 @@ We evaluated several TTS engines:
 
 | Engine | Verdict | Notes |
 |--------|---------|-------|
-| **Kokoro 82M** | Primary | Best quality-to-speed ratio. CPU-only avoids GPU contention with STT. 82M params loads in <2s. |
+| **Kokoro 82M** | Primary | Best quality-to-speed ratio. CPU-only avoids GPU contention with STT/LLM. 82M params loads in <2s. |
 | **Piper** | Fallback | Good but more robotic. ONNX format, subprocess-based. Used when Kokoro fails to initialize. |
 | **StyleTTS 2** | Rejected | Superior quality but 10x slower, required GPU (competing with STT), and PyTorch dependency conflicts. |
 
@@ -520,7 +589,8 @@ Say the wake word ("Jarvis") followed by your command:
 - *"Jarvis, read me the tech headlines"*
 - *"Jarvis, create a presentation about renewable energy"*
 - *"Jarvis, open Chrome"*
-- *"Jarvis, volume up"*
+- *"Jarvis, what's on my screen?"*
+- *"Jarvis, check the weather and then create a packing list document"*
 
 After JARVIS responds, you have a **conversation window** (4-7 seconds, adaptive) to ask follow-up questions without repeating the wake word. The window extends with conversation depth and when JARVIS asks a question.
 
@@ -546,112 +616,95 @@ The console displays a stats panel after each command showing match layer, skill
 python3 jarvis_web.py
 
 # Then open http://127.0.0.1:8088 in your browser
+# HTTPS available at https://0.0.0.0:8443 (Tailscale certs)
 ```
 
-The web UI provides the same full skill pipeline with streaming LLM responses, markdown rendering, drag/drop file handling, web research, conversation history with session sidebar, health check HUD, and an optional voice toggle for spoken output.
+The web UI provides the same full pipeline with streaming LLM responses, markdown rendering, drag/drop file handling, web research, image upload + webcam/mobile camera for vision queries, conversation history with session sidebar, health check HUD, memory dashboard at `/memory`, and LLM metrics at `/metrics`.
 
 ---
 
 ## Project Structure
 
 ```
-jarvis/
-├── jarvis_continuous.py          # Production entry point (voice mode)
-├── jarvis_console.py             # Console/debug entry point
-├── jarvis_web.py                 # Web UI entry point (browser-based chat)
-├── config.yaml                   # Main configuration
-├── .env                          # API keys (not in repo — see .env.example)
-├── requirements.txt              # Python dependencies
+jarvis/                              # ~66,000 lines of Python
+├── jarvis_continuous.py             # Voice mode entry point (~994 lines)
+├── jarvis_console.py                # Console entry point (~1,495 lines)
+├── jarvis_web.py                    # Web UI entry point (~3,875 lines)
+├── config.yaml                      # Main configuration
+├── .env                             # API keys (not in repo)
 │
-├── core/                         # Core modules
-│   ├── stt.py                    # Speech-to-text (faster-whisper + CTranslate2)
-│   ├── tts.py                    # Text-to-speech (Kokoro + Piper)
-│   ├── llm_router.py             # LLM routing (Qwen → quality gate → Claude fallback)
-│   ├── tool_registry.py          # Auto-discovery registry for tool definitions
-│   ├── tool_executor.py          # Tool dispatch (backward-compat shim)
-│   ├── tools/                    # One-file tool definitions (7 tools)
-│   │   ├── get_weather.py        # Weather conditions + forecast
-│   │   ├── get_system_info.py    # CPU, memory, disk, GPU, processes
-│   │   ├── find_files.py         # File search, line counting
-│   │   ├── developer_tools.py    # Git, codebase search, shell (13 actions)
-│   │   ├── manage_reminders.py   # Reminder CRUD (5 actions)
-│   │   ├── get_news.py           # News headlines (read/count)
-│   │   ├── web_search.py         # Web research (always included, frontend-dispatched)
-│   │   └── recall_memory.py     # Memory recall (always included, LLM-driven)
-│   ├── web_research.py           # DuckDuckGo + trafilatura web fetching
-│   ├── pipeline.py               # Event-driven Coordinator + STT/TTS workers
-│   ├── persona.py                # Response pools, system prompts, honorific injection
-│   ├── conversation_state.py     # Turn tracking, intent history, question detection
-│   ├── conversation_router.py    # Shared priority chain (voice/console/web)
-│   ├── skill_manager.py          # Skill loading + semantic routing
-│   ├── semantic_matcher.py       # Sentence transformer intent matching
-│   ├── continuous_listener.py    # VAD + wake word + ambient filter + conversation windows
-│   ├── tts_normalizer.py         # Text normalization for natural speech
-│   ├── conversation.py           # History, cross-session memory, follow-up logic
-│   ├── memory_manager.py         # Conversational memory (SQLite + FAISS)
-│   ├── context_window.py         # Topic-segmented working memory
-│   ├── reminder_manager.py       # Reminders, rundowns, calendar sync
-│   ├── google_calendar.py        # Google Calendar OAuth + sync
-│   ├── news_manager.py           # RSS monitoring + classification
-│   ├── desktop_manager.py        # GNOME D-Bus bridge + wmctrl fallback + volume/clipboard
-│   ├── self_awareness.py         # Capability manifest + system state for LLM context
-│   ├── task_planner.py           # Compound request detection, LLM plan generation, execution
-│   ├── people_manager.py         # People database, TTS pronunciation, LLM context injection
-│   ├── metrics_tracker.py        # LLM metrics tracking (latency, tokens, errors)
-│   ├── health_check.py           # System diagnostics
-│   ├── user_profile.py           # User profiles + speaker ID
-│   ├── speaker_id.py             # Resemblyzer d-vector enrollment
-│   ├── honorific.py              # Dynamic honorific resolution
-│   ├── interaction_cache.py      # Artifact cache (hot/warm/cold tiers, readback)
-│   ├── mcp_client.py             # Inbound MCP bridge (external server consumer)
-│   ├── mcp_server.py             # Outbound MCP server (expose tools to clients)
-│   ├── config.py                 # Configuration loader
-│   ├── logger.py                 # Logging setup
-│   └── base_skill.py             # Skill base class
+├── core/                            # Core modules (~32,700 lines)
+│   ├── conversation_router.py       # 18-layer shared priority chain (~3,003 lines)
+│   ├── llm_router.py                # LLM routing, tool calling, domain synthesis (~1,814 lines)
+│   ├── interaction_cache.py         # 5-phase artifact cache (~1,993 lines)
+│   ├── pipeline.py                  # Event-driven Coordinator + workers (~2,054 lines)
+│   ├── task_planner.py              # Compound detection + LLM plan execution (~1,097 lines)
+│   ├── tts_normalizer.py            # 22-pass text normalization (~1,072 lines)
+│   ├── skill_manager.py             # 5-layer intent matching (~931 lines)
+│   ├── health_check.py              # 5-layer system diagnostic (~908 lines)
+│   ├── continuous_listener.py       # VAD + wake word + ambient filter (~885 lines)
+│   ├── tts.py                       # Kokoro + Piper, streaming pipeline (~722 lines)
+│   ├── persona.py                   # 38 response pools, system prompts (~726 lines)
+│   ├── memory_manager.py            # SQLite facts + FAISS + CMA 6/6
+│   ├── context_window.py            # Topic-segmented working memory
+│   ├── self_awareness.py            # Capability manifest + system state
+│   ├── conversation.py              # History, cross-session, multi-speaker
+│   ├── reminder_manager.py          # Reminders, rundowns, calendar sync
+│   ├── desktop_manager.py           # GNOME D-Bus + wmctrl + volume
+│   ├── people_manager.py            # People DB, TTS pronunciation
+│   ├── webcam_manager.py            # ffmpeg MJPEG + mobile camera relay
+│   ├── speaker_id.py                # Resemblyzer d-vector enrollment
+│   ├── stt.py                       # faster-whisper CTranslate2/GPU
+│   ├── tool_registry.py             # Auto-discovery, schema assembly
+│   ├── awareness.py                 # Unified context assembly
+│   ├── mcp_client.py / mcp_server.py  # Bidirectional MCP bridge
+│   └── tools/                       # 11 one-file tool definitions
+│       ├── get_weather.py
+│       ├── get_system_info.py
+│       ├── find_files.py
+│       ├── developer_tools.py
+│       ├── manage_reminders.py
+│       ├── get_news.py
+│       ├── web_search.py
+│       ├── recall_memory.py
+│       ├── take_screenshot.py
+│       ├── capture_webcam.py
+│       └── enroll_face.py
 │
-├── skills/                       # Skill implementations (stateful skills + tool companions)
+├── skills/                          # Skill implementations
 │   ├── system/
-│   │   ├── time_info/            # Time and date (semantic matching, instant response)
-│   │   ├── weather/              # Weather forecasts (companion to get_weather tool)
-│   │   ├── system_info/          # CPU, RAM, disk info (companion to get_system_info tool)
-│   │   ├── filesystem/           # File search, line counting (companion to find_files tool)
-│   │   ├── file_editor/          # File write, edit, read, delete + document generation
-│   │   ├── developer_tools/      # Codebase search, git, shell (companion to developer_tools tool)
-│   │   ├── app_launcher/         # Desktop control (16 intents: apps, windows, volume, workspaces, clipboard)
-│   │   └── web_navigation/       # Web search + browsing
+│   │   ├── time_info/               # Instant time/date (semantic matching)
+│   │   ├── weather/                 # Companion to get_weather tool
+│   │   ├── system_info/             # Companion to get_system_info tool
+│   │   ├── filesystem/              # Companion to find_files tool
+│   │   ├── file_editor/             # Doc gen (PPTX/DOCX/PDF) + file CRUD
+│   │   ├── developer_tools/         # Companion to developer_tools tool
+│   │   ├── app_launcher/            # 16-intent desktop control
+│   │   └── web_navigation/          # Playwright web browsing
 │   └── personal/
-│       ├── conversation/         # DISABLED — LLM handles conversation natively
-│       ├── reminders/            # Voice reminders + calendar (companion to manage_reminders tool)
-│       ├── news/                 # RSS headline delivery (companion to get_news tool)
-│       └── social_introductions/ # Butler-style introductions + people database
+│       ├── reminders/               # Voice reminders + Google Calendar
+│       ├── news/                    # 16-feed RSS delivery
+│       └── social_introductions/    # Multi-turn butler-style introductions
 │
-├── web/                          # Web UI frontend
-│   ├── index.html                # Chat layout
-│   ├── style.css                 # Dark theme
-│   └── app.js                    # WebSocket client + rendering
-├── images/                       # Screenshots
-├── extensions/                   # GNOME Shell extensions
-│   └── jarvis-desktop@jarvis/    # Desktop Bridge (D-Bus service for window/workspace control)
-├── assets/                       # Audio cues (generate your own .wav files)
-├── scripts/                      # Utility scripts
-│   ├── install_desktop_extension.sh  # Install GNOME Shell extension
-│   ├── test_edge_cases.py            # Automated test suite (273+ tests: unit + routing)
-│   ├── test_tool_calling.py          # Tool-calling harness (175+ queries, 10-category taxonomy, --sweep mode)
-│   ├── unit_tests.sh                 # Test runner wrapper
-│   ├── test_router.py                # Router test suite (38 tests)
-│   ├── test_desktop_manager.py       # Test desktop manager module
-│   ├── test_tool_artifacts.py        # Tool artifact wiring tests (175 tests)
-│   ├── test_manage_memory.py         # Memory management tests (39 tests)
-│   ├── enroll_speaker.py             # Speaker voice enrollment
-│   ├── init_profiles.py              # User profile initialization
+├── web/                             # Web UI frontend (~1,927 lines JS)
+│   ├── index.html
+│   ├── style.css
+│   └── app.js                       # WebSocket client, webcam, file browser
+├── extensions/
+│   └── jarvis-desktop@jarvis/       # GNOME Shell extension (D-Bus bridge)
+├── scripts/                         # Test suites + utilities
+│   ├── unit_tests.sh                # 314 tests across 4 tiers
+│   ├── test_conversations.py        # 62-conversation behavioral suite
+│   ├── test_tool_calling.py         # 175+ queries, 10-category taxonomy
+│   ├── test_tool_artifacts.py       # 175 artifact wiring tests
+│   ├── test_vision.py               # 180 vision pipeline tests
+│   ├── test_web_handler.py          # 61 web handler tests
+│   ├── test_manage_memory.py        # 43 memory tests
 │   └── ...
-├── docs/                         # Documentation
-│   ├── SETUP_GUIDE.md            # Detailed installation
-│   ├── SKILL_DEVELOPMENT.md      # How to create tools and skills
-│   ├── SEMANTIC_INTENT_MATCHING.md
-│   ├── VOICE_TRAINING_GUIDE.md   # Whisper fine-tuning
-│   └── ...
-└── tools/                        # Backup, restore, and maintenance utilities
+└── docs/
+    ├── SKILL_DEVELOPMENT.md         # How to create tools and skills
+    ├── VOICE_TRAINING_GUIDE.md      # Whisper fine-tuning
+    └── ...
 ```
 
 ---
@@ -678,9 +731,9 @@ llm:
   local:
     model_path: /path/to/models/llm/Qwen3.5-35B-A3B-Q3_K_M.gguf
     context_size: 32768
-    gpu_layers: 999          # Offload all layers to GPU (if available)
+    gpu_layers: 999          # Offload all layers to GPU
     temperature: 0.6
-    tool_calling: true       # Enable LLM tool calling (7 tools)
+    tool_calling: true       # Enable LLM tool calling (11 tools)
   api:
     provider: anthropic      # Fallback LLM
     model: claude-sonnet-4-20250514
@@ -805,7 +858,7 @@ The base Whisper model struggles with:
 ### Process
 
 1. **Record training data** — 198 utterances covering problem words, domain vocabulary, and natural speech patterns
-2. **Train** — Fine-tune from the base Whisper model using HuggingFace Transformers
+2. **Train** — Fine-tune from the base Whisper model using HuggingFace Transformers (89 seconds on RX 7900 XT, fp16)
 3. **Convert** — Export to CTranslate2 format for GPU-accelerated inference
 4. **Deploy** — Update `config.yaml` to point to the new model
 
@@ -843,7 +896,7 @@ def handler(args):               # Execute and return result string
     return "result"
 ```
 
-That's it — no wiring changes, no imports to update, no registry edits.
+That's it — no wiring changes, no imports to update, no registry edits. The tool registry auto-discovers `.py` files in `core/tools/`, builds the OpenAI-compatible schema, injects runtime dependencies, and makes it available to the LLM.
 
 **Path 2: Skill** (stateful, multi-turn, desktop control, or nested LLM flows)
 
@@ -856,13 +909,25 @@ skills/system/your_skill/
 
 Skills register semantic intents (natural language examples) and the sentence-transformer model matches user speech against them.
 
+### Test Suites
+
+| Suite | Tests | What It Validates |
+|-------|-------|-------------------|
+| **Unit tests** (`unit_tests.sh`) | 314 | 4 tiers: edge cases, routing, tool calling, LLM quality |
+| **Conversation tests** (`test_conversations.py`) | 62 conversations, 270+ turns | End-to-end behavioral validation via WebSocket |
+| **Tool artifact tests** (`test_tool_artifacts.py`) | 175 | Tool result -> artifact cache wiring |
+| **Vision tests** (`test_vision.py`) | 180 | Frame parsing, webcam lifecycle, screenshot, mobile relay, presence |
+| **Web handler tests** (`test_web_handler.py`) | 61 | WebSocket dispatch, mobile routing, client detection |
+| **Memory tests** (`test_manage_memory.py`) | 43 | Fact extraction, recall, registry integration |
+
 ### Architecture Principles
 
 1. **Privacy first** — Everything runs locally. Claude API is a quality fallback, not a dependency.
 2. **LLM-centric** — Qwen3.5 decides which tools to call. Skills exist for things that need deterministic state machines.
 3. **Streaming everything** — LLM tokens stream to TTS, TTS streams to audio. No waiting for full responses.
-4. **Graceful degradation** — GPU fails? Fall back to CPU. Kokoro fails? Fall back to Piper. Local LLM fails? Fall back to Claude API.
-5. **Defensive conventions** — If something caused 18 hours of debugging once, we keep the guard rails even after fixing the root cause.
+4. **Graceful degradation** — GPU fails? Fall back to CPU. Kokoro fails? Fall back to Piper. Local LLM fails? Fall back to Claude API. Webcam fails? Fall back to mobile camera.
+5. **One router, three frontends** — Voice, console, and web all hit the same 18-layer priority chain. No routing duplication.
+6. **One-file extensibility** — Adding a tool is one Python file. Adding a skill is one directory. No wiring changes anywhere.
 
 ---
 
@@ -889,6 +954,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 4.0.0
+**Version:** 5.0.0
 **Status:** Production — actively developed
-**Last Updated:** March 4, 2026
+**Last Updated:** March 11, 2026
