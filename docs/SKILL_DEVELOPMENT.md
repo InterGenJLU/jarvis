@@ -1,7 +1,7 @@
 # Extending JARVIS — Tools & Skills Development Guide
 
 > **For:** Anyone adding new functionality to JARVIS
-> **Updated:** February 27, 2026
+> **Updated:** March 12, 2026
 
 ---
 
@@ -220,6 +220,10 @@ python3 -u scripts/test_tool_calling.py --runs 1 --verbose > /tmp/test_output.tx
 core/tools/
 ├── __init__.py          # Package docstring
 ├── web_search.py        # Web search (ALWAYS_INCLUDED, handler=None)
+├── recall_memory.py     # Memory search via self-managing memory (ALWAYS_INCLUDED)
+├── take_screenshot.py   # Screen capture for voice mode (ALWAYS_INCLUDED)
+├── capture_webcam.py    # Desktop webcam frame capture (ALWAYS_INCLUDED)
+├── enroll_face.py       # Face enrollment for presence detection (ALWAYS_INCLUDED)
 ├── get_system_info.py   # CPU, memory, disk, hardware info
 ├── find_files.py        # File search, line counting, directory listing
 ├── get_weather.py       # Current weather, forecast, rain check
@@ -227,6 +231,8 @@ core/tools/
 ├── developer_tools.py   # Git, codebase search, system admin, shell execution
 └── get_news.py          # News headline reading and counting
 ```
+
+11 tools total: 6 domain (skill-gated) + 5 always-included.
 
 ---
 
@@ -439,7 +445,7 @@ P7:      LLM fallback — no tool or skill matched
 
 | Test Suite | Command | What It Tests |
 |-----------|---------|---------------|
-| Edge cases | `python3 -u scripts/test_edge_cases.py --verbose` | 266 routing + unit tests across 9 phases |
+| Edge cases | `python3 -u scripts/test_edge_cases.py --verbose` | 314 routing + unit tests across 4 tiers |
 | Tool calling | `python3 -u scripts/test_tool_calling.py --runs 1 --verbose` | 175 queries, verifies LLM selects correct tool |
 | Voice pipeline | `python3 scripts/test_voice_pipeline.py --verbose` | 25 TTS→STT round-trip pronunciation tests |
 
@@ -449,12 +455,11 @@ P7:      LLM fallback — no tool or skill matched
 
 ## Feature Ideas (Not Yet Implemented)
 
-- **Email (Gmail)** — voice-composed email via Gmail API + OAuth
+- **IMAP Email via MCP** — read, search, archive email by voice/web/mobile (config stub + MCP bridge ready)
 - **Google Keep** — shared grocery/todo lists
 - **Audio Recording** — voice memos, meeting notes
 - **Music Control** — playlist management via Apple Music
 - **Network Awareness** — device discovery, threat detection
-- **Vision/OCR** — screenshot reading via Tesseract or Qwen3.5 mmproj
 
 See `docs/PRIORITY_ROADMAP.md` for the full prioritized backlog.
 

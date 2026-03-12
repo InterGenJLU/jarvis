@@ -1,95 +1,97 @@
 # TODO — Next Session
 
-**Updated:** March 4, 2026 (session 154)
+**Updated:** March 12, 2026 (session 252)
 
 ---
 
 ## Current State
 
-- **8 LLM tools** active (7 domain + web_search), tool-connector plugin system, MCP bridge (bidirectional)
-- **16-layer priority chain** in conversation_router.py (P0 through LLM fallback)
+- **11 LLM tools** active (6 domain + 5 always-included), tool-connector plugin system, MCP bridge (bidirectional)
+- **18-layer priority chain** in conversation_router.py (P0 through LLM fallback)
 - **Self-managing memory** — per-turn extraction + recall_memory tool (MemGPT pattern)
 - **CMA 6/6** — Consolidation & Abstraction + Associative Linking complete
 - **Interaction artifact cache** — 5 phases (hot/warm/cold), structured readback, delivery modes
 - **Dual GPU** — RX 7600 display, RX 7900 XT compute, ctx-size 32768
-- **Session 152 codebase audit** — verified outstanding items at `memory/verified_outstanding_items.md`
-- **Session 153-154** — documentation refresh (10 docs updated)
+- **Vision complete** (all 7 phases) — webcam, mobile camera, presence detection, face recognition. 7c NOT YET LIVE (needs face enrollment)
+- **314/314 unit tests pass** (Tier 1: 122, Tier 2: 151, Tier 3: 13, Tier 4: 28)
+- **62 conversation tests** (V2 suite) — 27 categories, 231 turns
+- **Docs refreshed** — README v5.0.0, PROJECT_OVERVIEW rewrite (Mar 11)
 
 ---
 
 ## Owner-Directed Priority Queue
 
-Work these in sequence (from `verified_outstanding_items.md`):
+Work these in sequence (strategic direction: cross-platform utility — desktop + mobile force multipliers):
 
-### 1. Profile-Aware Skill Routing (#12)
-**Status:** PARTIAL — speaker ID works, skills ignore `current_user`
-**What:** Skills need to check who's speaking and load the correct user's data (calendar, reminders, preferences)
+### 1. Vision 7c Live Test
+**Status:** Code complete, NOT YET LIVE
+**What:** Enroll faces, enable `vision.presence.enabled: true`, validate presence detection + greetings
 
-### 2. Mobile iOS App (#60)
-**Status:** NOT STARTED — plan exists (6 phases)
+### 2. IMAP Email via MCP
+**Status:** Config stub at `config.yaml:299-318` + MCP bridge infrastructure ready
+**What:** Email access for both users (the user=Gmail, secondary=AOL)
+
+### 3. Mobile iOS App (#60)
+**Status:** Phase 1 DONE (web UI responsive). Native iOS = 6 phases, not started
 **Plan:** `memory/plan_mobile_ios_app.md`
 **Prereqs:** Apple Developer account ($99/yr) + Mac with Xcode
 
-### 3. Secondary User Integration
-- **CalDAV calendar** — DB column exists (`caldav_event_id`), zero CalDAV code. Blocked on credentials
-- **Dual-model STT (#46)** — single model only, enrollment infrastructure ready
-- **Concurrent multi-user (#61)** — single global `current_user`, no session isolation
+### 4. CalDAV Calendar (Secondary User)
+**Status:** BLOCKED — waiting on app-specific password
+**What:** Apple Calendar integration. DB column exists (`caldav_event_id`), zero CalDAV code
 
-### 4. "Onscreen Please" (#11)
-**Status:** NOT STARTED
-**What:** Buffer last raw output, display on command — bridge voice-to-visual gap
+### 5. Concurrent Multi-User (#61)
+**Status:** NOT STARTED — depends on #60
+**What:** Handle two simultaneous mobile users. Needs per-user history, STT/TTS queuing
 
-### 5. IMAP Email via MCP
-**Status:** Config stub at `config.yaml:299-318` only. MCP bridge infrastructure done
-**What:** Email access for both users (the user=Gmail, secondary=AOL)
-
-### 6. Vision Phase 3 Wiring
-**Status:** mmproj model downloaded, zero code for image input in console/web/LLM router
-**What:** Activate mmproj, add image input paths
+### 6. "Onscreen Please" (#11)
+**Status:** PARTIAL — opens generated docs. Retroactive visual display of arbitrary artifacts NOT implemented
 
 ---
 
-## Open Bug
+## Open Bugs
 
 | # | Severity | Item |
 |---|----------|------|
 | B2 | Low | Batch extraction (Phase 4) untested — needs 25+ messages to trigger |
+| B8 | Medium | EventTTSProxy `speak()` returns None — causes reminder retry false positives. Nag cap mitigates |
+| B9 | Low | Speaker ID no accuracy benchmarks — threshold 0.75, no dedicated tests |
 
 ---
 
 ## Test Gaps
 
-- Routing integration tests — exist but no adversarial/conflict coverage
-- Web UI automation — zero automated tests for WebSocket flows
-- Skill execution tests — edge case suite has no skill handler execution tests
+| Item | Status | Notes |
+|------|--------|-------|
+| Skill execution tests | OPEN | Tier 3-4 routing tested, no actual handler execution |
+| EventTTSProxy tests | OPEN | Zero tests for speak() return value / timeout behavior |
+| Batch extraction tests | OPEN | Feature implemented, zero coverage |
+| Speaker ID tests | OPEN | No dedicated tests, no accuracy benchmarks |
+
+---
+
+## Pending Investigations
+
+- **Search backend logging** — not visible in journald from web frontend
+- **LLM model comparison** — Q4_K_S vs 27B Dense vs current Q3_K_M (not urgent)
+- **Reboot validation** — mic retry (18s), SQLite WAL, delayed startup health check (30s)
+- **Watch & Notify concept** — discussed, not yet added to roadmap
 
 ---
 
 ## Session History (Recent)
 
-### Sessions 153-154 (Mar 4) — Documentation Refresh
-Updated 10 documents: CHANGELOG, README, CLAUDE.md, codebase_cheat_sheet, PRIORITY_ROADMAP, DEVELOPMENT_VISION, TODO_NEXT_SESSION, priority_development_roadmap (memory), PROJECT_OVERVIEW
+### Sessions 245-252 (Mar 11-12) — Documentation & Testing
+README v5.0.0 rewrite, PROJECT_OVERVIEW rewrite, vision screenshots, token exposure remediation (auth_token rotated, image scrubbed from git history), conversation test suite attempts (run 037 in progress)
 
-### Session 152 (Mar 4) — Codebase Audit
-5-agent sweep + manual spot-checks. Verified all outstanding items. Ground truth: `memory/verified_outstanding_items.md`
+### Sessions 205-244 (Mar 8-10) — Vision Phase 7 & Testing
+Vision Phase 7a-7c (webcam, mobile camera, presence detection), web handler test suite (61 tests), mobile routing fixes A-D, HUD context %, memory extraction improvements, conversation test runs 033-036
 
-### Session 151 (Mar 3) — MCP Bridge Phase 2
-Inbound MCP client consuming external servers as native tools
+### Sessions 155-204 (Mar 4-7) — Vision Phases 1-6 & Roadmap
+Vision Phases 1-6 (multimodal LLM through thumbnails), profile-aware routing (#12), dual-model STT (#46), priority roadmap validation sweep (session 190), test coverage to 314/314
 
-### Session 150 (Mar 3) — MCP Bridge Phase 1
-Outbound MCP server exposing 7 native tools
+### Sessions 147-154 (Mar 3-4) — Memory, MCP, Documentation
+Self-managing memory (MemGPT), CMA 6/6, MCP bridge Phases 1-2, interaction artifact cache, documentation refresh (10 docs)
 
-### Sessions 147-149 (Mar 3) — Self-Managing Memory + CMA 6/6
-Per-turn extraction, recall_memory tool, consolidation & abstraction, associative linking
-
-### Sessions 140-146 (Mar 3) — Artifact Cache + Readback + Delivery Modes
-5-phase interaction artifact cache, structured readback, delivery modes, tool artifact wiring, Kokoro G2P
-
-### Sessions 130-139 (Mar 2) — Multi-User + Memory Dashboard
-Active user selection (#63), multi-user DB migration, memory dashboard, formal address, readback flow, rundown bug fixes, reminder staleness guard
-
-### Sessions 115-120 (Mar 1-2) — Calendar Fixes + Unified Awareness
-Calendar multi-notification support, notification loop fix, unified awareness layer, Phase 4 routing evaluation resolved
-
-### Sessions 105-114 (Feb 28 - Mar 1) — Dual GPU + 32K Context
-RX 7600 display offload, ctx-size 7168→32768, context enrichment, doc gen fix
+### Sessions 130-146 (Mar 2-3) — Multi-User & Artifacts
+Active user selection (#63), multi-user DB migration, memory dashboard, formal address, readback flow, artifact cache 5 phases, Kokoro G2P, rundown bug fixes

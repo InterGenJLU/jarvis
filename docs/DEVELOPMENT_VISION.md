@@ -1,8 +1,8 @@
 # JARVIS Development Vision — LLM-Centric Architecture
 
 **Created:** February 18, 2026
-**Updated:** March 4, 2026
-**Context:** Qwen3.5-35B-A3B in production with 8 LLM tools (Phases 1-2 COMPLETE, Phase 4 RESOLVED, recall_memory added Mar 3), tool-connector plugin system + MCP bridge live
+**Updated:** March 12, 2026
+**Context:** Qwen3.5-35B-A3B in production with 11 LLM tools (Phases 1-4 COMPLETE/RESOLVED, Vision all 7 phases COMPLETE), tool-connector plugin system + MCP bridge live
 
 ---
 
@@ -54,13 +54,13 @@ P3.7:     News article pull-up
 Pre-P4:   Multi-step task planning (compound detection)
 Pre-P4b:  Self-hardware queries ("you/your" + hw keyword → direct LLM answer)
 Pre-P4c:  Pending skill confirmations
-P4-LLM:   ★ TOOL CALLING — semantic pruning → LLM with 8 tools (PRIMARY PATH)
+P4-LLM:   ★ TOOL CALLING — semantic pruning → LLM with 11 tools (PRIMARY PATH)
 P4:       Skill routing — stateful skills (app_launcher, file_editor, social_intros)
 P5:       News continuation
 Fallback:  LLM streaming with tools (Qwen3.5 → quality gate → Claude API)
 ```
 
-**P4-LLM is now the primary routing path** for most queries. The semantic pruner (threshold 0.40, hard cap 4 domain tools) selects relevant tools, then Qwen3.5 decides which to call via `stream_with_tools()`. 8 tools: get_system_info, find_files, get_weather, manage_reminders, developer_tools, get_news, recall_memory, web_search (always included). Time/date queries are handled by the TimeInfoSkill (instant response via semantic matching, no LLM needed).
+**P4-LLM is now the primary routing path** for most queries. The semantic pruner (threshold 0.40, hard cap 4 domain tools) selects relevant tools, then Qwen3.5 decides which to call via `stream_with_tools()`. 11 tools: 6 domain (get_system_info, find_files, get_weather, manage_reminders, developer_tools, get_news) + 5 always-included (web_search, recall_memory, take_screenshot, capture_webcam, enroll_face). Time/date queries are handled by the TimeInfoSkill (instant response via semantic matching, no LLM needed).
 
 P4 skill routing handles 3 stateful skills that require deterministic routing: app_launcher (desktop verbs), file_editor (nested LLM doc gen + confirmation), social_introductions (multi-turn state machine). A skill guard in the pruner ensures these still route correctly.
 
@@ -111,26 +111,22 @@ Phase 4 evaluated whether the priority chain could be simplified. **Decision: hy
 - **file_editor** — nested LLM calls for document generation + destructive confirmation state machine
 - **social_introductions** — multi-turn state machine (may revisit: split data ops as tool, let LLM drive conversation)
 
-### Phase 3: Vision-Enabled (Unblocked — Native in Qwen3.5) — NEXT
+### Phase 3: Vision-Enabled — COMPLETE (Mar 4-7)
 
-Vision is NOT a future dependency — it's available now. Qwen3.5's early-fusion multimodal architecture means the model already running in production can process images when the mmproj file is loaded.
+All 7 vision phases implemented. Qwen3.5's early-fusion multimodal architecture processes images via mmproj with `--no-mmproj-offload` (CPU, preserving GPU VRAM for LLM).
 
-**Web Navigation with Vision**
-- Currently uses per-site CSS selectors and structured scraping
-- With mmproj loaded: screenshot the page, let the LLM see it, decide what to click
-- Replaces brittle CSS selectors with visual understanding
-- VRAM cost: +900MB when active (requires display offload or dynamic loading)
+**Completed vision capabilities:**
+- **Phase 1-3:** Multimodal LLM + web/mobile image upload
+- **Phase 4:** Console `/image` + `/screenshot` commands
+- **Phase 5:** `take_screenshot` LLM tool for voice mode
+- **Phase 6:** Image thumbnails in web chat with lightbox + session persistence
+- **Phase 7a:** Desktop webcam capture (ffmpeg MJPEG + `capture_webcam` tool)
+- **Phase 7b:** Mobile camera capture (WS relay + getUserMedia)
+- **Phase 7c:** Presence detection + face recognition greetings (`enroll_face` tool, PresenceDetector). Code complete, NOT YET LIVE — needs face enrollment
 
-**Screen Reading / OCR**
-- "What does this say?" → screenshot active window → LLM describes content
-- "Read this chart" → screenshot → structured data extraction
-- Tesseract as fast CPU fallback for simple text extraction (~1-3s, zero VRAM)
-- Full VLM path via mmproj for complex images (~3-6s with model cached)
-
-**IoT Camera Integration (Future)**
-- Security camera feeds processed by the same model handling conversation
-- "Is anyone at the front door?" — LLM sees the camera frame directly
-- No separate vision pipeline needed — same mmproj handles all image tasks
+**Future vision work:**
+- Web navigation with vision — screenshot pages, let LLM decide what to click (replaces brittle CSS selectors)
+- IoT camera integration — security camera feeds processed by the same model
 
 ### Phase 4: Routing Layer Evaluation — RESOLVED (Mar 1, 2026)
 
@@ -360,8 +356,10 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 ### Next Steps
 1. ~~**RX 7600 display offload** (Feb 28)~~ — **DONE.** Dual GPU active, ctx-size 32768, compositor on RX 7600
 2. ~~**Live testing**~~ — **DONE.** Tool-calling verified end-to-end via voice/console/web
-3. **Phase 3 (vision)** — activate mmproj (~900MB), add vision tools (screen reading, web nav, image understanding). mmproj smoke-tested at server level, needs console/web input wiring
+3. ~~**Phase 3 (vision)**~~ — **DONE (Mar 4-7).** All 7 phases complete. 11 tools total (6 domain + 5 always-included). mmproj runs on CPU via `--no-mmproj-offload`
 4. ~~**Phase 4 (routing evaluation)**~~ — **RESOLVED Mar 1.** Hybrid architecture retained — skills and tools coexist by design
+
+**All migration phases complete.** The LLM-centric architecture is in production.
 
 ### VRAM Budget With Display Offload (Active)
 - Tool schema budget: 8 tools consume ~800-1,600 tokens. Dynamic pruning keeps active set to 4-5 tools per query
@@ -370,4 +368,4 @@ These criteria were defined before migration and met by both Phase 1 and Phase 2
 
 ---
 
-*Originally discussed February 18, 2026. Updated March 4, 2026 — Phases 1-2 COMPLETE, Phase 4 RESOLVED (hybrid retained), 8 tools (recall_memory added Mar 3), tool-connector plugin system + MCP bridge live, dual GPU active, ctx-size 32768.*
+*Originally discussed February 18, 2026. Updated March 12, 2026 — All phases COMPLETE (1-2 tool migration, 3 vision, 4 routing evaluation). 11 tools (6 domain + 5 always-included), tool-connector plugin system + MCP bridge live, dual GPU active, ctx-size 32768. Vision all 7 phases complete (webcam, mobile camera, presence detection).*

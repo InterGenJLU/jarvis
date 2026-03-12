@@ -1,39 +1,9 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 7, 2026 (session 190 — validated full sweep: Vision complete, test gaps identified)
+**Updated:** March 12, 2026 (session 254 — restructured: completed work collapsed, active items lead)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
-
----
-
-## Tier 0: Quick Wins — All Complete
-
-*Nothing remaining. See Completed Items below.*
-
----
-
-## Tier 1: High ROI, Low-Medium Effort — All Complete
-
-*Nothing remaining. See Completed Items below.*
-
----
-
-## TOP PRIORITY: LLM-Centric Architecture Migration
-
-*ALL other development is deprioritized behind this. Promoted from Tier 4 (session 82, Feb 26).*
-
-| # | Item | Effort | ROI | Notes |
-|---|------|--------|-----|-------|
-| 20 | **LLM-centric architecture migration** — skills become tools, not destinations. Qwen3.5 receives every request, decides which tools to call | 20-40 hours (4 phases) | Eliminates fragile routing, unlocks full Qwen3.5 capabilities (coding, vision, reasoning), solves conversation constraints | DEVELOPMENT_VISION.md. Research plan: `memory/research_qwen35_prompt_control.md`. **No longer waiting for smaller model** — Qwen3.5-35B-A3B has coding (SWE-bench 69.2) + vision + tool calling proven |
-
-**Blocking research:** COMPLETE. See `memory/research_qwen35_prompt_control.md` (72 sources, Sections A-O).
-
-**Phase sequence (from DEVELOPMENT_VISION.md):**
-1. ~~Phase 1: Low-stakes skills as tools (system_info, filesystem, time)~~ — **COMPLETE Feb 26.** 100% accuracy (600/600 trials), 822ms avg latency, 266/266 existing tests pass. Commit `06dd741`.
-2. ~~Phase 2: API-backed + complex skills as tools~~ — **COMPLETE Feb 27.** 7 tools total (6 domain + web_search). 1,200+ trials, 100% on domain categories, 99.6% overall (523/525). Tool-connector plugin system built (`ba80e5a`). Sub-phases: 2.1a weather (`1be0cb1`), 2.1b reminders (`49eca5c`), 2.2 conversation disabled (`aa2f524`), 2.3 developer_tools (`a6ae616`), 2.4 news (`578e3c9`). get_time removed post-Phase 2 (time/date handled by TimeInfoSkill via semantic matching). recall_memory added Mar 3 (8th tool).
-3. ~~Phase 3: Vision-enabled (mmproj activation, screen reading, web nav with vision)~~ — **COMPLETE Mar 4.** Phases 1-5 done (multimodal LLM, web/mobile upload, console /image + /screenshot, voice take_screenshot tool). Phase 6 (thumbnails) + Phase 7 (webcam) remaining.
-4. ~~Phase 4: Routing layer evaluation~~ — **RESOLVED Mar 1.** Hybrid architecture retained — skills and tools coexist by design.
 
 ---
 
@@ -44,20 +14,12 @@
 
 | # | Item | Effort | Status | Notes |
 |---|------|--------|--------|-------|
-| 20P3 | ~~**Vision Phases 1-3**~~ — multimodal LLM + web/mobile image upload | — | **DONE** | — |
-| 20P4 | ~~**Vision Phase 4**~~ — console `/image` + `/screenshot` commands | — | **DONE** | — |
-| 20P5 | ~~**Vision Phase 5**~~ — `take_screenshot` LLM tool for voice mode | — | **DONE** | — |
-| 20P6 | ~~**Vision Phase 6**~~ — Image thumbnails in web chat responses | — | **DONE** | Thumbnails + lightbox + session persistence |
-| 20P7a | ~~**Vision Phase 7a**~~ — Desktop webcam capture (ffmpeg MJPEG + LLM tool) | — | **DONE** | WebcamManager + capture_webcam tool + web endpoints |
-| 20P7b | ~~**Vision Phase 7b**~~ — Mobile camera capture (WS relay + getUserMedia) | — | **DONE** | MobileCameraRelay + auto-routing |
-| 20P7c | ~~**Vision Phase 7c**~~ — Presence detection + face recognition greetings | — | **DONE (code)** | PresenceDetector + enroll_face tool + 180 tests. NOT YET LIVE — needs face enrollment |
-| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | **NEXT** | Config stub + MCP bridge ready. the user=Gmail, secondary=AOL |
+| 20P7c | **Vision 7c live test** — enroll faces, enable presence detection + greetings | 1-2 hours | **NEXT** | Code complete + 180 tests. Enable `vision.presence.enabled: true` |
+| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | NOT STARTED | Config stub + MCP bridge ready. the user=Gmail, secondary=AOL |
 | 60 | **Mobile app** — web UI phase 1 done. Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** | Plan: `memory/plan_mobile_ios_app.md` |
 | — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | DB column exists (`caldav_event_id`), zero CalDAV code |
 | 61 | **Concurrent multi-user support** — handle two simultaneous mobile users | 4-8 hours | NOT STARTED | Depends on #60. Needs `--parallel 2`, per-user history, STT/TTS queuing |
 | 11 | **"Onscreen please" — retroactive visual display** | 2-3 hours | PARTIAL | Opens generated docs. Retroactive display of arbitrary artifacts NOT implemented |
-| 12 | ~~**Profile-aware skill routing**~~ | — | **DONE** (session 158) | — |
-| 46 | ~~**Dual-model STT**~~ | — | **DONE** (session 159) | — |
 
 ---
 
@@ -69,8 +31,6 @@
 | 44 | **Reminder snooze in P2 chain** — distinguish "got it" (ack) vs "snooze 10 min" (snooze) vs "what reminder" (query) | 2-3 hours | Currently blanket ack — loses snooze/query intent | Zero snooze references in conversation_router.py |
 | 54 | **Reduce `_open_aplay` 150ms sleep** — PipeWire device-ready wait may be reducible to 50ms | 1-2 hours | Saves 150ms per aplay open (300ms with ack + response) | Still `time.sleep(0.15)` at `tts.py:387`. Risk: too short causes broken audio |
 | 7 | **Inject user facts into web search** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Memory context passed to LLM for response gen, NOT injected into search queries |
-| — | ~~**IMAP email via MCP**~~ — **PROMOTED to Tier 1** | — | — | See Tier 1 |
-| — | ~~**Vision Phase 3 wiring**~~ — **PROMOTED to Tier 1 as #20P3** | — | — | See Tier 1 |
 
 ---
 
@@ -79,16 +39,12 @@
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
 | 43 | **Mid-rundown interruption** — item-by-item delivery with "continue"/"skip"/"stop"/"defer" | 4-6 hours | Currently `deliver_rundown()` blocks on single TTS call | Needs item-at-a-time loop + active listener |
-| 49 | **Document refinement follow-ups** — cache last structure/research, `refine_document` intent | 3-4 hours | "Make slide 3 more detailed" stumps JARVIS — no pipeline state | `_generate_structure()` makes fresh LLM call every time, no cache |
 | 53 | **Merge ack + response into single audio stream** — one aplay lifecycle | 3-4 hours | Saves ~150ms + eliminates audible gap | Challenges: timing, lock contention, quality gate |
-| 51 | **Vision/OCR — Phase 1 Tesseract** — "read this" / "what does this say" | 1-2 days | CPU-only, 95-98% accuracy, 0.5-2s/page | Proposed: `skills/system/vision/`. 4 intents |
-| 52 | **Vision/OCR — Phase 2-3 Qwen3-VL** — full image understanding via mmproj | 3-5 days | Chart reading, visual Q&A, web UI file upload | Dynamic mmproj loading (~0.6GB) only for image tasks |
 | 55 | **Network awareness skill** — device discovery, anomaly detection, threat alerts | 4-8 hours | Fits threat hunting background | Natural skill: `skills/system/network/` |
 | 50 | **AI image generation (FLUX.1-schnell)** — local image gen for doc gen, hybrid with Pexels | 4-6 hours | Pexels fails for tech/abstract topics | Research complete. FLUX FP8 fits 20GB VRAM, ~12-20s/image |
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility | Shared access with secondary user |
 | 13 | **Audio recording skill** — voice-triggered recording, date-based playback, 6 intents | 4-6 hours | Meeting notes, voice memos, dictation | skills/personal/audio_recording/ |
 | 14 | **Music control (Apple Music)** — playlist learning, volume via pactl | 6-10 hours | Entertainment integration | Per-user playlists. Apple Music web interface finicky |
-| 15 | **Screenshot via GNOME extension** — add screenshot D-Bus method, bypass portal dialog | 2-3 hours | Developer tools "show me" integration | PARTIAL: uses D-Bus for monitor detection, still shells out to `gnome-screenshot` |
 
 ---
 
@@ -96,7 +52,6 @@
 
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
-| 20 | ~~**LLM-centric architecture migration**~~ — **PROMOTED to TOP PRIORITY** | — | — | See TOP PRIORITY section above |
 | 21 | **Skill editing system** — "edit the weather skill" → LLM code gen, review, apply with backup | 10-15 hours (5 phases) | Voice-controlled code modification | Full design at SKILL_EDITING_SYSTEM.md. Note: VS Code + Claude Code is faster in practice |
 | 22 | **Automated skill generation** — Q&A, build, test, review, deploy | 15-20 hours | End-to-end skill creation by voice. Depends on #21 | MASTER_DESIGN.md |
 | 23 | **Backup automation skill** — voice-triggered, SHA256 checksums, manifest, rotation | 6-8 hours | "Jarvis, backup the system." Automated 2 AM daily | MASTER_DESIGN.md |
@@ -162,6 +117,22 @@
 
 ## Completed Items
 
+### LLM-Centric Architecture Migration (#20) — ALL PHASES COMPLETE
+- **Phase 1** (Feb 26): 3 skills as tools (system_info, filesystem, time). 100% accuracy (600/600), 822ms avg. Commit `06dd741`
+- **Phase 2** (Feb 27): 7 tools total (6 domain + web_search). 1,200+ trials, 99.6% overall. Tool-connector plugin system (`ba80e5a`). Sub-phases: weather, reminders, conversation (disabled), developer_tools, news. Now 11 tools (6 domain + 5 always-included)
+- **Phase 3** (Mar 4-7): Vision complete — all 7 phases (multimodal LLM, web/mobile upload, console /image + /screenshot, voice take_screenshot, thumbnails + lightbox, webcam + mobile camera, presence detection + face recognition)
+- **Phase 4** (Mar 1): RESOLVED — hybrid architecture retained, skills and tools coexist by design
+- **Research:** `memory/research_qwen35_prompt_control.md` (72 sources, Sections A-O)
+
+### Vision (Phases 1-7) — ALL COMPLETE
+- 20P3: Vision Phases 1-3 — multimodal LLM + web/mobile image upload (Mar 4)
+- 20P4: Vision Phase 4 — console `/image` + `/screenshot` commands (Mar 4)
+- 20P5: Vision Phase 5 — `take_screenshot` LLM tool for voice mode (Mar 4)
+- 20P6: Vision Phase 6 — image thumbnails in web chat with lightbox + session persistence (Mar 5)
+- 20P7a: Vision Phase 7a — desktop webcam capture, WebcamManager ffmpeg MJPEG, web endpoints (Mar 6)
+- 20P7b: Vision Phase 7b — mobile camera capture, MobileCameraRelay WS protocol, auto-routing (Mar 6)
+- 20P7c: Vision Phase 7c — presence detection + face recognition greetings, PresenceDetector, enroll_face tool, 180 tests (Mar 6). NOT YET LIVE — needs face enrollment
+
 ### Tier 0 (Quick Wins)
 - Rotate OpenWeather API key (Feb 19)
 - Qwen sampling params — top_p=0.8, top_k=20 (Feb 19)
@@ -174,6 +145,8 @@
 - Keyword routing improvements — all 5 skills updated (Feb 18-19)
 - Topic shift threshold tuning — 0.35 confirmed (Feb 19)
 - News urgency filtering (Feb 19)
+- #12: Profile-aware skill routing (Mar 4, session 158)
+- #46: Dual-model STT (Mar 4, session 159)
 
 ### Tier 2 (Medium Effort)
 - #8: Minimize web search latency — parallel fetches, embedding cache (Feb 19-20)
@@ -182,12 +155,6 @@
 - #45: Qwen3-VL-8B model upgrade — ROCm rebuild, self-quantized Q5_K_M, 80.2 tok/s (Feb 22)
 - #59: Social introductions — butler-style greeting, PeopleManager + SQLite contacts, TTS pronunciation overrides (Feb 25)
 - #63: Active user selection — console `--user` flag + web UI `<select>` + WebSocket `set_user` (Mar 2)
-
-### TOP PRIORITY (LLM-Centric Migration)
-- #20 Phase 1: LLM-centric tool calling — 3 skills (time, system, filesystem) as tools, tool_executor, P4-LLM routing, 100% accuracy (600/600), 822ms avg (Feb 26)
-- #20 Phase 2: API-backed + complex skills — weather, reminders, conversation (disabled), developer_tools, news. 7 tools total (6 domain + web_search), 1,200+ trials, 99.6% overall. 5-6 tool cliff DEBUNKED (Feb 26-27). get_time later removed (time/date handled by TimeInfoSkill)
-- #20 Tool-connector plugin system — one-file tool definitions in `core/tools/`, auto-discovery registry, dependency injection. `tool_executor.py` 1,057→27 lines. Adding a new tool = create one file (Feb 27)
-- #20 Phase 4 RESOLVED — hybrid architecture retained, skills and tools coexist by design (Mar 1)
 
 ### Post-Phase 20 (Feb 27 — Mar 3)
 - Dual GPU display offload — RX 7600 display, RX 7900 XT dedicated compute (Feb 28)
@@ -213,10 +180,6 @@
 - Context window Phase 3 — background Qwen summarization (`context_window.py:610-663`) (verified Mar 4)
 - Context window Phase 4 — SQLite persistence (`context_window.py:385-549`) (verified Mar 4)
 - Memory _pending_forget Phase 6 — full confirm/cancel at P2.5 (verified Mar 4)
-- #20P6: Vision Phase 6 — image thumbnails in web chat with lightbox + session persistence (Mar 5)
-- #20P7a: Vision Phase 7a — desktop webcam capture, WebcamManager ffmpeg MJPEG, web endpoints (Mar 6)
-- #20P7b: Vision Phase 7b — mobile camera capture, MobileCameraRelay WS protocol, auto-routing (Mar 6)
-- #20P7c: Vision Phase 7c — presence detection + face recognition greetings, PresenceDetector, enroll_face tool, 180 tests (Mar 6). NOT YET LIVE — needs face enrollment
 - Mobile routing fixes A-D — web_navigation semantic tightening, web_search guardrails, mobile skill/tool filtering, always-on tool fallback, pre-exec skill blocking (Mar 5)
 
 ### Other Completed (non-roadmap enhancements)
@@ -241,6 +204,9 @@
 
 ### Tier 3
 - #40: News headline trimming — 25 per category (Feb 20)
+- #15: Screenshot via GNOME — `gnome-screenshot` integration with monitor/window/all targets, D-Bus monitor detection (Feb-Mar)
+- #49: Document refinement follow-ups — `_pipeline_cache` stores structure/research/images, `edit_presentation` handler for "make slide 3 more detailed" type edits (Mar)
+- #51/#52: Vision/OCR — superseded by Qwen3.5 mmproj vision (Phases 1-7). Image understanding, text reading, chart analysis all handled natively via multimodal LLM (Mar 4-6)
 
 ### Tier 5
 - #29: Console logging fix (Feb 19)

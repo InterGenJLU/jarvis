@@ -1,7 +1,7 @@
 # Semantic Intent Matching System
 
 **Created:** February 2026
-**Updated:** February 27, 2026
+**Updated:** March 12, 2026
 **Status:** Production — used for non-migrated skill routing (3 skills). Most queries now route via LLM tool calling (P4-LLM).
 
 ---
@@ -14,7 +14,7 @@ With the LLM-centric migration (Phases 1-2, Feb 26-27), semantic matching now se
 1. **Skill routing** — matching queries to the 3 non-migrated skills (app_launcher, file_editor, social_introductions)
 2. **Tool pruning** — the semantic pruner in `conversation_router.py` selects which LLM tools are relevant for each query
 
-For the 7 tools (system_info, filesystem, weather, reminders, developer_tools, news, web_search), Qwen3.5 handles tool selection natively via `stream_with_tools()`. Time/date queries are handled by the TimeInfoSkill directly (instant response via semantic matching, no LLM tool call needed).
+For the 11 tools (6 domain: system_info, filesystem, weather, reminders, developer_tools, news + 5 always-included: web_search, recall_memory, take_screenshot, capture_webcam, enroll_face), Qwen3.5 handles tool selection natively via `stream_with_tools()`. Time/date queries are handled by the TimeInfoSkill directly (instant response via semantic matching, no LLM tool call needed).
 
 ---
 
@@ -118,9 +118,9 @@ The semantic pruner in `conversation_router.py` (`_handle_tool_calling()`) deter
 3. **Threshold: 0.40** — sweep-tested across 56 queries at 7 thresholds (0.30-0.60). 0.40 = zero cliff risk + zero false negatives
 4. **Hard cap: 4 domain tools** — safety net (never fires at 0.40 but guards future tool additions)
 5. **Skill guard** — if a stateful skill (app_launcher, file_editor, social_introductions) scores higher than any tool, defer to skill routing
-6. **web_search always included** — marked `ALWAYS_INCLUDED=True` in tool definition
+6. **Always-included tools** — 5 tools marked `ALWAYS_INCLUDED=True`: web_search, recall_memory, take_screenshot, capture_webcam, enroll_face
 
-The pruner reduces token cost by only including relevant tool schemas in the LLM prompt, rather than sending all 7 tools for every query.
+The pruner reduces token cost by only including relevant domain tool schemas in the LLM prompt, rather than sending all 6 domain tools for every query. The 5 always-included tools are sent regardless.
 
 ---
 

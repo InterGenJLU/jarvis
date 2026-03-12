@@ -2,77 +2,89 @@
 
 ## Git Repository Structure
 
-JARVIS uses **three separate Git repositories** for organization:
+JARVIS uses **four separate Git repositories**:
 
 ### 1. Core Repository: `~/jarvis`
-**Tracks:** Core code, configuration, documentation
+**Tracks:** Core code, configuration, documentation, tests
 ```bash
 cd ~/jarvis
 git status
 ```
 
-**Contents:**
-- `core/` - Main application code
-- `tools/` - Utility scripts
-- `docs/` - Documentation
-- `config.yaml` - Configuration
-- `README.md`, `CHANGELOG.md`
+**Key directories:**
+- `core/` — Main application code (32K+ lines)
+- `core/tools/` — LLM tool definitions (auto-discovered)
+- `scripts/` — Test suites and utilities
+- `docs/` — Documentation
+- `config.yaml` — Configuration (gitignored)
 
 ### 2. Skills Repository: `/mnt/storage/jarvis/skills`
-**Tracks:** Skill implementations
+**Tracks:** Skill implementations (symlinked into `~/jarvis/skills/`)
 ```bash
 cd /mnt/storage/jarvis/skills
 git status
 ```
 
 **Contents:**
-- `system/` - System skills
-- `personal/` - Personal skills
-- Individual skill directories with `skill.py`, `metadata.yaml`
+- `system/` — app_launcher, developer_tools, file_editor, filesystem, system_info, time_info, weather, web_navigation
+- `personal/` — conversation (DISABLED), news, reminders, social_introductions
 
 ### 3. Models Repository: `/mnt/models`
-**Tracks:** Training data, dataset metadata (NOT models themselves)
+**Tracks:** Training data, dataset metadata (NOT model files themselves)
 ```bash
 cd /mnt/models
 git status
 ```
 
-**Contents:**
-- `voice_training/` - Training datasets, scripts
-- `.gitignore` - Excludes large model files
+Large model files (`.gguf`, `.bin`, `.onnx`) are excluded via `.gitignore`.
 
-**Note:** Large model files (`.gguf`, `.bin`, `.onnx`) are NOT tracked by git.
-
-## Making Changes
-
-**Core code changes:**
+### 4. Public Repository: `~/jarvis-public`
+**Tracks:** Redacted copy of main repo, published to GitHub
 ```bash
-cd ~/jarvis
-# Make changes
-git add .
-git commit -m "Description"
+cd ~/jarvis-public
+git status
 ```
 
-**Skill changes:**
+Published via `./scripts/publish/publish.sh --auto` after each commit to main.
+
+## Adding New Functionality
+
+### Tools (Stateless, LLM-called)
+Create one Python file in `core/tools/`. The tool registry auto-discovers it at import time. No wiring changes needed.
+
+Required exports: `TOOL_NAME`, `SKILL_NAME`, `SCHEMA`, `SYSTEM_PROMPT_RULE`, and `handler(args)`.
+
+### Skills (Stateful, Multi-turn)
+Create a directory in `skills/system/` or `skills/personal/` with `skill.py` and `metadata.yaml`.
+
+**Full guide:** `docs/SKILL_DEVELOPMENT.md` — covers both tools and skills with real examples.
+
+## Running Tests
+
 ```bash
-cd /mnt/storage/jarvis/skills
-# Make changes
-git add .
-git commit -m "Description"
+# Unit/routing tests (314 tests, no LLM needed for Tier 1-2)
+scripts/unit_tests.sh --all --verbose
+
+# Conversation tests (62 conversations, requires jarvis-web running)
+python3 scripts/test_conversations.py --verbose --save tests/iterative_results/run_NNN_results.json
+
+# Voice pipeline tests (25 TTS→STT round-trip tests)
+python3 scripts/test_voice_pipeline.py --verbose
 ```
 
-**Training data changes:**
-```bash
-cd /mnt/models
-# Add training phrases, datasets
-git add voice_training/
-git commit -m "Description"
-```
+**Important:** Never run tests in parallel — all test scripts hit llama-server sequentially.
+
+## Entry Points
+
+| Command | Mode | Notes |
+|---------|------|-------|
+| `python3 jarvis_continuous.py` | Voice | Wake word + mic, systemd service |
+| `python3 jarvis_console.py` | Console | Text input, `--hybrid` for voice output |
+| `python3 jarvis_web.py` | Web | Browser chat on port 8088/8443, systemd service |
 
 ## Why Multiple Repos?
 
-- **Separation of concerns** - Code vs data vs skills
-- **Easier backups** - Can backup/restore independently
-- **Size management** - Keep repos small, exclude huge model files
-- **Flexibility** - Can share skills repo without sharing personal training data
-
+- **Separation of concerns** — code vs data vs skills
+- **Size management** — keep repos small, exclude model files
+- **Independent backups** — can backup/restore each independently
+- **Privacy** — public repo gets redacted copy only

@@ -18,7 +18,48 @@ python3 jarvis_console.py --speech     # Launches full voice mode
 | `/append` | Append text to the existing buffer (multi-line mode) |
 | `/context` | Show what's currently loaded — source, token count, preview |
 | `/clear` | Clear the document buffer |
+| `/image <path>` | Attach an image for the LLM to analyze |
+| `/screenshot` | Capture screen and attach for analysis (`monitor`, `window`, or `all`) |
+| `/webcam` | Capture a webcam frame and attach for analysis |
 | `/help` | List all available commands |
+
+## Vision Commands
+
+JARVIS supports multimodal input — you can attach images, screenshots, or webcam frames for the LLM to analyze.
+
+**Attach an image** — `/image <path>`:
+
+```
+You > /image ~/photos/diagram.png
+Attached image: diagram.png (1920×1080)
+You > what does this diagram show?
+```
+
+Supports PNG, JPG, JPEG, GIF, BMP, WEBP. The image stays attached until you `/clear` it.
+
+**Capture your screen** — `/screenshot [target]`:
+
+```
+You > /screenshot            # Primary monitor (default)
+You > /screenshot window     # Active window only
+You > /screenshot all        # All monitors stitched together
+```
+
+The screenshot is captured via GNOME D-Bus and attached automatically.
+
+**Capture webcam** — `/webcam`:
+
+```
+You > /webcam
+Captured webcam frame (1280×720)
+You > what do you see?
+```
+
+Captures a single frame from the desktop webcam via ffmpeg MJPEG.
+
+All vision commands work with the document buffer — ask follow-up questions naturally after attaching. Drag-and-drop also auto-detects image files and loads them via `/image`.
+
+---
 
 ## Document Ingestion
 

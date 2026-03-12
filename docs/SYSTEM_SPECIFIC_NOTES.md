@@ -55,7 +55,7 @@ Fallback base model (CPU only):
 - Port 8080, ROCm backend, GPU offload, `--parallel 1`
 - `systemctl status llama-server` to check
 - Qwen3.5 supports native tool calling (web research) and thinking mode (disabled via `--reasoning-budget 0`)
-- mmproj vision encoder downloaded but not loaded (future)
+- mmproj vision encoder (mmproj-F16.gguf) available for vision queries via `--no-mmproj-offload` (CPU). Vision is fully operational across all 7 phases
 
 **Fallback:** Claude API (Anthropic) — used when local quality gate fails
 
@@ -93,7 +93,7 @@ When updating `config.yaml`, always verify:
 - [ ] All paths use correct username (your_username, not generic)
 - [ ] Model paths point to `/mnt/models/`
 - [ ] Skills/storage paths point to `/mnt/storage/jarvis/`
-- [ ] Audio devices are correct (plughw:0,0 for output)
+- [ ] Audio output device is `default` (PipeWire routing)
 - [ ] llama-server systemd service is running
 
 ## Common Mistakes to Avoid
@@ -109,5 +109,5 @@ When updating `config.yaml`, always verify:
 
 ---
 
-**Last Updated:** February 24, 2026
+**Last Updated:** March 12, 2026
 **System:** ubuntu2404 (the user's workstation)
