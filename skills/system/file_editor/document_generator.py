@@ -238,6 +238,7 @@ class DocumentGenerator:
         "data_table": "_add_data_table_slide",
         "full_bleed_image": "_add_full_bleed_image_slide",
         "image_text_reversed": "_add_image_text_reversed_slide",
+        "comparison": "_add_comparison_slide",
         "closing": "_add_closing_slide",
     }
 
@@ -387,7 +388,7 @@ class DocumentGenerator:
         """Pattern: rotated 45-degree square partially off right edge."""
         s = slide.shapes.add_shape(
             MSO_SHAPE.RECTANGLE,
-            Inches(10.8), Inches(2.0), Inches(4.0), Inches(4.0))
+            Inches(9.8), Inches(2.0), Inches(3.5), Inches(3.5))
         s.rotation = 45.0
         s.fill.solid()
         s.fill.fore_color.rgb = theme["accent"]
@@ -502,6 +503,7 @@ class DocumentGenerator:
             })
 
             for i, slide_data in enumerate(slides_data):
+              try:
                 self._current_slide_idx = i
                 slide_title = slide_data.get("title", f"Slide {i + 1}")
                 bullets = slide_data.get("bullets", [])
@@ -612,6 +614,17 @@ class DocumentGenerator:
                 # Slide number (skip title slide)
                 if i > 0:
                     self._add_slide_number(slide, i + 1, total_slides, prs)
+
+              except Exception as slide_err:
+                self.logger.error(
+                    f"[doc_gen] Slide {i} ({slide_type}) failed: {slide_err}")
+                _dbg.log_skill_event("doc_gen", "slide_render_error", {
+                    "slide_index": i,
+                    "slide_type": slide_type,
+                    "slide_title": slide_title,
+                    "error": str(slide_err),
+                })
+                continue
 
             # Save
             output_path = SHARE_DIR / filename
@@ -861,7 +874,8 @@ class DocumentGenerator:
 
         return slide
 
-    def _add_comparison_slide(self, prs, title, slide_data, theme):
+    def _add_comparison_slide(self, prs, title, slide_data, theme,
+                              image_path=None):
         """Add a two-column comparison slide."""
         _dbg = get_debug_logger()
         _dbg.log_skill_event("doc_gen", "render_comparison_slide", {

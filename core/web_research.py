@@ -11,7 +11,7 @@ import os
 import re
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Optional
 
 from core.logger import get_logger
@@ -41,6 +41,36 @@ class _TTLCache:
     def clear(self):
         with self._lock:
             self._data.clear()
+
+
+def _fetch_page_worker(url: str, max_chars: int = 4000,
+                       timeout: float = 4.0) -> Optional[tuple[str, str]]:
+    """Fetch and extract page content in a subprocess (process-safe).
+
+    Returns (url, extracted_text) on success, or None on failure.
+    Must be a module-level function for ProcessPoolExecutor pickling.
+    """
+    try:
+        import requests as _req
+        import trafilatura
+
+        resp = _req.get(url, timeout=timeout, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; research-bot/1.0)",
+        })
+        resp.raise_for_status()
+        html = resp.text
+        if not html:
+            return None
+
+        text = trafilatura.extract(html, include_links=False,
+                                   include_tables=True,
+                                   include_comments=False)
+        if not text:
+            return None
+
+        return (url, text[:max_chars])
+    except Exception:
+        return None
 
 
 class WebResearcher:
@@ -262,12 +292,12 @@ class WebResearcher:
         page_sections = []
         start = time.time()
 
-        # Don't use context manager — its __exit__ calls shutdown(wait=True)
-        # which blocks until ALL threads finish, defeating the timeout.
-        pool = ThreadPoolExecutor(max_workers=len(urls))
+        # ProcessPoolExecutor: each fetch runs in its own process to avoid
+        # lxml/trafilatura SEGV from concurrent C-extension parsing in threads.
+        pool = ProcessPoolExecutor(max_workers=len(urls))
         try:
             future_to_info = {
-                pool.submit(self.fetch_page, url, max_chars, timeout - 1):
+                pool.submit(_fetch_page_worker, url, max_chars, timeout - 1):
                     (title, url)
                 for title, url in urls
             }
@@ -276,11 +306,15 @@ class WebResearcher:
                 for future in as_completed(future_to_info, timeout=timeout):
                     title, url = future_to_info[future]
                     try:
-                        page_text = future.result(timeout=0.5)
-                        if page_text and len(page_text) >= min_chars:
-                            page_sections.append(
-                                f"[{title}] ({url}):\n{page_text}"
-                            )
+                        result = future.result(timeout=0.5)
+                        if result:
+                            fetched_url, page_text = result
+                            if len(page_text) >= min_chars:
+                                # Cache in parent process
+                                self._page_cache.put(fetched_url, page_text)
+                                page_sections.append(
+                                    f"[{title}] ({url}):\n{page_text}"
+                                )
                     except Exception as e:
                         self.logger.debug(f"Page fetch skipped ({url}): {e}")
             except TimeoutError:
@@ -290,7 +324,6 @@ class WebResearcher:
                     f"continuing with {len(page_sections)} collected"
                 )
         finally:
-            # cancel_futures=True kills pending; wait=False doesn't block on running
             pool.shutdown(wait=False, cancel_futures=True)
 
         elapsed = time.time() - start

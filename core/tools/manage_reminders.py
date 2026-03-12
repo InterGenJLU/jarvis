@@ -76,8 +76,11 @@ SYSTEM_PROMPT_RULE = (
     "For reminder requests (set, list, cancel, snooze, "
     "acknowledge), call manage_reminders. Extract the title and "
     "time from the user's words. "
-    "Examples: 'remind me to call Mom at 3pm' → add, 'what reminders do I have?' → list, "
-    "'cancel the dentist reminder' → cancel. "
+    "Examples: 'remind me to call Mom at 3pm' → add with title='call Mom', time_text='3pm'. "
+    "'set a reminder for 3pm to call the dentist' → add with title='call the dentist', time_text='3pm'. "
+    "'what reminders do I have?' → list. "
+    "'cancel the dentist reminder' → cancel with cancel_fragment='dentist'. "
+    "The title is WHAT to be reminded about. The time_text is WHEN. Both are required for add. "
     "NOT for: calendar events, alarms, timers, scheduling meetings."
 )
 

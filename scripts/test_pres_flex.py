@@ -993,7 +993,38 @@ def main():
         "--output-dir",
         default=os.path.expanduser("~/jarvis/tests/iterative_results"),
         help="Directory for test output files")
+    parser.add_argument(
+        "--sequences",
+        default=None,
+        help="Comma-separated sequence letters to run (e.g. A,C or B). "
+             "Default: all sequences.")
+    parser.add_argument(
+        "--turns",
+        default=None,
+        help="Comma-separated turn labels to run (e.g. C1-Create,C2-Edit). "
+             "Default: all turns in selected sequences.")
     args = parser.parse_args()
+
+    # Filter sequences/turns based on CLI args
+    global SEQUENCES
+    if args.sequences:
+        selected = {s.strip().upper() for s in args.sequences.split(",")}
+        SEQUENCES = [seq for seq in SEQUENCES
+                     if seq["name"][0] in selected]
+        if not SEQUENCES:
+            print(f"ERROR: No sequences matched '{args.sequences}'. "
+                  f"Available: A, B, C")
+            sys.exit(1)
+
+    if args.turns:
+        selected_turns = {t.strip() for t in args.turns.split(",")}
+        for seq in SEQUENCES:
+            seq["turns"] = [(label, msg) for label, msg in seq["turns"]
+                            if label in selected_turns]
+        SEQUENCES = [seq for seq in SEQUENCES if seq["turns"]]
+        if not SEQUENCES:
+            print(f"ERROR: No turns matched '{args.turns}'.")
+            sys.exit(1)
 
     # Verify jarvis-web is running
     result = subprocess.run(

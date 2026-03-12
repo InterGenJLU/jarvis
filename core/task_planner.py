@@ -145,13 +145,15 @@ RULES — follow EXACTLY:
 5. Steps execute in order. Later steps receive earlier results as context.
 6. Include a human-readable description for each step (spoken to the user).
 7. For general knowledge synthesis that no specific skill handles, use skill "llm_synthesis".
+8. For creating documents (DOCX, reports, lists, comparisons), use skill "create_document". Do NOT use file_editor for new document creation.
+9. The "input" field MUST be natural language (a phrase the user would say). NEVER use function names, tool names, or code-like strings. Good: "create a packing list document". Bad: "write_file", "create_document".
 
 Respond with ONLY a JSON array (no markdown, no explanation) or the word SINGLE.
 
 JSON format:
 [
-  {{"step": 1, "skill": "skill_name", "input": "what to tell the skill", "description": "Searching for X"}},
-  {{"step": 2, "skill": "skill_name", "input": "what to tell the skill", "description": "Creating Y"}}
+  {{"step": 1, "skill": "skill_name", "input": "create a document with the packing list", "description": "Creating the document"}},
+  {{"step": 2, "skill": "skill_name", "input": "search the web for flight prices", "description": "Looking up flights"}}
 ]"""
 
 
@@ -364,6 +366,7 @@ class TaskPlanner:
         # Add pseudo-skills that we handle internally
         valid_skills.add("llm_synthesis")
         valid_skills.add("web_research")
+        valid_skills.add("create_document")
 
         steps = []
         for i, raw in enumerate(steps_raw[:4]):  # Max 4 steps
@@ -372,11 +375,21 @@ class TaskPlanner:
                 logger.warning(f"Plan step {i+1} references unknown skill '{skill}' — skipping")
                 continue
 
+            input_text = raw.get("input", command)
+            # Normalize terse/code-like input to natural language
+            # If input has no spaces or looks like a function name, use description
+            if input_text and (' ' not in input_text or '_' in input_text.split()[0]):
+                description = raw.get("description", "")
+                if description and ' ' in description:
+                    logger.debug("Plan step %d: normalizing terse input '%s' → '%s'",
+                                 i + 1, input_text, description)
+                    input_text = description
+
             steps.append(PlanStep(
                 step_id=i + 1,
                 description=raw.get("description", f"Step {i+1}"),
                 skill_name=skill,
-                input_text=raw.get("input", command),
+                input_text=input_text,
             ))
 
         if len(steps) < 2:
@@ -788,6 +801,21 @@ class TaskPlanner:
             step._routing_method = "pseudo_web_research"
             _dbg.log_plan_step_routing(step.step_id, step.skill_name, "pseudo_web_research")
             return self._web_research(enriched_text, step)
+
+        if step.skill_name == "create_document":
+            # Route to file_editor's create_document handler directly
+            step._routing_method = "pseudo_create_document"
+            _dbg.log_plan_step_routing(step.step_id, step.skill_name, "pseudo_create_document")
+            fe = self._skill_manager.get_skill("file_editor")
+            if fe and hasattr(fe, 'create_document'):
+                try:
+                    response = fe.create_document(entities={'original_text': enriched_text})
+                    if response:
+                        from core.honorific import resolve_honorific
+                        return resolve_honorific(response)
+                except Exception as e:
+                    logger.warning(f"create_document pseudo-skill failed: {e}")
+            return self._llm_synthesis(enriched_text)
 
         # --- Direct skill routing by step.skill_name ---
         # The plan LLM already identified the correct skill. Get it by name

@@ -294,6 +294,11 @@ class ConversationRouter:
             if result:
                 return result
 
+            # --- Pre-P4-LLM: Unavailable capability guard ---
+            result = self._handle_unavailable_capabilities(command)
+            if result:
+                return result
+
         # --- P4-LLM: Tool-calling path ---
         # Guests get filtered tools (weather + web_search only).
         if not (doc_buffer and doc_buffer.active):
@@ -774,7 +779,8 @@ class ConversationRouter:
         r'\b(?:'
         r'repeat\s+that|say\s+(?:that|it)\s+again|'
         r'what\s+(?:did\s+you|you)\s+(?:just\s+)?sa(?:y|id)|'
-        r'(?:can\s+you\s+)?repeat\s+(?:that|what\s+you\s+said)'
+        r'(?:can\s+you\s+)?repeat\s+(?:that|what\s+you\s+said)|'
+        r'read\s+(?:it|that|this)\s+(?:back\s+)?to\s+me'
         r')\b', re.I,
     )
 
@@ -807,6 +813,17 @@ class ConversationRouter:
     _NAV_DRILL_OUT_PATTERNS = re.compile(
         r'\b(?:go\s+back\s+to\s+(?:the\s+)?sections|show\s+(?:me\s+)?(?:the\s+)?sections|'
         r'back\s+to\s+(?:the\s+)?overview|section\s+list|list\s+sections)\b', re.I,
+    )
+
+    # Pre-LLM guard: capabilities not yet implemented
+    _UNAVAILABLE_CAPABILITY_PATTERNS = re.compile(
+        r'\b(?:e-?mail\s+(?:that|this|it|them|him|her)|'
+        r'send\s+(?:a\s+)?(?:e-?mail|text|sms|message)|'
+        r'text\s+(?:that|this|it|them|him|her)|'
+        r'forward\s+(?:that|this|it)\s+(?:to|via)|'
+        r'call\s+(?:them|him|her|that\s+number)|'
+        r'make\s+a\s+(?:phone\s+)?call|'
+        r'dial\b)', re.I,
     )
 
     def _handle_artifact_reference(self, command: str) -> RouteResult | None:
@@ -1323,15 +1340,17 @@ class ConversationRouter:
         wid = self.conv_state.window_id
         cache = get_interaction_cache()
 
-        # Try cache for latest synthesis
+        # Try cache for latest synthesis, then document
         text = None
         if cache and wid:
             art = cache.get_latest(wid, artifact_type="synthesis")
+            if not art:
+                art = cache.get_latest(wid, artifact_type="document")
             if art:
                 text = art.content
                 cache.record_access(art.artifact_id, "recency_reference")
-                logger.info("Recency ref: returning cached synthesis %s",
-                            art.artifact_id)
+                logger.info("Recency ref: returning cached %s %s",
+                            art.artifact_type, art.artifact_id)
 
         # Fallback: conv_state.last_response_text
         if not text:
@@ -1381,8 +1400,8 @@ class ConversationRouter:
                      matched_art.artifact_type)
 
         # For search_result_set, re-present with LLM context
-        # For synthesis, just return the content
-        if matched_art.artifact_type == "synthesis":
+        # For synthesis and document, return content verbatim
+        if matched_art.artifact_type in ("synthesis", "document"):
             return RouteResult(
                 text=matched_art.content, intent="artifact_reference",
                 source="cache", handled=True,
@@ -1614,6 +1633,17 @@ class ConversationRouter:
                     handled=True,
                 )
 
+        return None
+
+    def _handle_unavailable_capabilities(self, command: str) -> RouteResult | None:
+        """Pre-LLM guard: catch requests for unimplemented features (email, SMS, phone)."""
+        if self._UNAVAILABLE_CAPABILITY_PATTERNS.search(command):
+            from core import persona
+            return RouteResult(
+                text=persona.pick("feature_unavailable"),
+                intent="unavailable_capability",
+                source="guard", handled=True,
+            )
         return None
 
     def _handle_skill_pending_confirmation(self, command: str) -> RouteResult | None:
@@ -2902,7 +2932,7 @@ class ConversationRouter:
             # Inject tool result data for anaphoric follow-ups.
             if self.conv_state.last_tool_result_text:
                 prior_lines.append(
-                    f"[tool_data] {self.conv_state.last_tool_result_text[:800]}"
+                    f"[tool_data] {self.conv_state.last_tool_result_text[:1200]}"
                 )
 
             # Fall back to conv_state if session_history is empty

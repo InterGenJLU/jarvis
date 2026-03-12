@@ -699,6 +699,18 @@ class MemoryManager:
         except (ValueError, TypeError):
             return phrase
 
+    @staticmethod
+    def _fix_verb_conjugation(text: str) -> str:
+        """Fix third-person verbs after 'User' → 'you' substitution."""
+        import re as _re
+        for third, second in [('owns', 'own'), ('has', 'have'), ('is', 'are'),
+                              ('drives', 'drive'), ('likes', 'like'),
+                              ('favors', 'favor'), ('prefers', 'prefer'),
+                              ('uses', 'use'), ('works', 'work'),
+                              ('plays', 'play'), ('lives', 'live')]:
+            text = _re.sub(rf'\byou {third}\b', f'you {second}', text, flags=_re.I)
+        return text
+
     def _fact_to_phrase(self, fact: dict) -> Optional[str]:
         """Convert a stored fact into a natural spoken phrase."""
         category = fact.get("category", "general")
@@ -733,8 +745,17 @@ class MemoryManager:
                 return f"you live in {content}"
             elif "workspace" in subject or "current_setting" in subject or "desk" in subject:
                 return None  # Suppress transient per_turn observations
+            # Fallback: detect full sentences (subject+verb) to avoid
+            # garbled "you live in User owns a Jeep Wrangler"
+            import re as _re
+            if _re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, _re.I):
+                return self._fix_verb_conjugation(_re.sub(r'\bUser\b', 'you', content))
             return f"you live in {content}"  # fallback
         elif category == "preference":
+            # Detect full sentences to avoid "you prefer User owns a black chair"
+            import re as _re
+            if _re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, _re.I):
+                return self._fix_verb_conjugation(_re.sub(r'\bUser\b', 'you', content))
             return f"you prefer {content}"
         elif category == "work":
             return f"you work {content}"
@@ -747,6 +768,8 @@ class MemoryManager:
             # Convert first-person to second-person for natural delivery
             import re as _re
             phrase = content
+            phrase = _re.sub(r"\bUser\b", "you", phrase)  # third-person "User" → "you"
+            phrase = self._fix_verb_conjugation(phrase)
             phrase = _re.sub(r"\bmy\b", "your", phrase, flags=_re.IGNORECASE)
             phrase = _re.sub(r"\bI am\b", "you are", phrase, flags=_re.IGNORECASE)
             phrase = _re.sub(r"\bI'm\b", "you're", phrase, flags=_re.IGNORECASE)

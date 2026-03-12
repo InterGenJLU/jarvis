@@ -180,6 +180,8 @@ SYSTEM_PROMPT_RULE = (
     "'is ffmpeg installed' → package_info, "
     "'what version of python do I have' → package_info. "
     "Use list_files when the user asks to see/list/show the files in a directory. "
+    "'show me the 5 most recent files in downloads' → list_files with directory=downloads, sort_by=modified, limit=5. "
+    "'what are the newest files on my desktop' → list_files with directory=desktop, sort_by=modified. "
     "NOT for: reading file contents, editing files, web downloads."
 )
 

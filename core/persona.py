@@ -358,6 +358,13 @@ _POOLS = {
         "This is general information, not legal advice. I lack both a law degree "
         "and the ability to look disappointed over reading glasses.",
     ],
+
+    "feature_unavailable": [
+        "That one's not live yet, {h}. It's on the roadmap, though.",
+        "I can't do that just yet, {h} — but it's on my list.",
+        "That feature isn't available yet, {h}. It's planned for a future update.",
+        "Not yet in my wheelhouse, {h}, but it's coming.",
+    ],
 }
 
 

@@ -1315,13 +1315,15 @@ class FileEditorSkill(BaseSkill):
         _dbg = get_debug_logger()
 
         phase2_timeout = max(30, len(layout) * 5)
-        raw = self._llm.generate(content_prompt, max_tokens=6144,
+        scaled_max_tokens = max(4096, len(layout) * 768)
+        raw = self._llm.generate(content_prompt, max_tokens=scaled_max_tokens,
                                  temperature=CONTENT_TEMPERATURE,
                                  timeout=phase2_timeout)
         raw = self._strip_markdown_fences(raw)
 
         _dbg.log_skill_event("file_editor", "phase2_llm_response", {
             "temperature": CONTENT_TEMPERATURE,
+            "max_tokens": scaled_max_tokens,
             "raw_len": len(raw),
             "raw_preview": raw[:1000],
         })
@@ -1329,6 +1331,20 @@ class FileEditorSkill(BaseSkill):
         structure = self._parse_json_response(raw)
 
         if not structure or 'slides' not in structure:
+            # Attempt JSON repair for truncated LLM output
+            repaired = self._repair_truncated_slides_json(raw)
+            if repaired and 'slides' in repaired:
+                salvaged = len(repaired['slides'])
+                requested = len(layout)
+                self.logger.warning(
+                    f"[file_editor] JSON truncated — salvaged {salvaged}/{requested} slides"
+                )
+                _dbg.log_skill_event("file_editor", "phase2_json_repair", {
+                    "salvaged": salvaged,
+                    "requested": requested,
+                    "raw_len": len(raw),
+                })
+                return repaired
             self.logger.error(f"[file_editor] Content gen failed: {raw[:200]}")
             return None
 
@@ -1428,6 +1444,56 @@ class FileEditorSkill(BaseSkill):
                 pass
 
         return None
+
+    def _repair_truncated_slides_json(self, raw: str) -> Optional[dict]:
+        """Attempt to recover slides from truncated JSON output.
+
+        Finds the last complete slide object and closes the JSON structure.
+        Returns parsed dict with however many slides survived, or None.
+        """
+        # Find "slides" array start
+        slides_match = re.search(r'"slides"\s*:\s*\[', raw)
+        if not slides_match:
+            return None
+
+        # Walk backwards from end to find last complete slide object.
+        # Each slide ends with '}' possibly followed by ',' before the next.
+        # Find all top-level slide objects by matching balanced braces.
+        arr_start = slides_match.end()
+        depth = 0
+        last_complete_end = -1
+        i = arr_start
+
+        while i < len(raw):
+            ch = raw[i]
+            if ch == '"':
+                # Skip string contents (handle escaped quotes)
+                i += 1
+                while i < len(raw) and raw[i] != '"':
+                    if raw[i] == '\\':
+                        i += 1  # skip escaped char
+                    i += 1
+            elif ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    last_complete_end = i + 1
+            i += 1
+
+        if last_complete_end <= arr_start:
+            return None
+
+        # Build repaired JSON: everything up to last complete slide, then close
+        repaired = raw[:last_complete_end] + ']}'
+        try:
+            # Wrap if we started mid-object — find the root '{'
+            root_start = raw.find('{')
+            if root_start >= 0 and root_start < slides_match.start():
+                repaired = raw[root_start:last_complete_end] + ']}'
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            return None
 
     def _fetch_images(self, structure: dict, temp_dir: str) -> dict:
         """Fetch images for each slide that has an image_query.
