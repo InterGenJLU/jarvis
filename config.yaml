@@ -179,6 +179,18 @@ people:
 health_check:
   run_on_startup: true
 
+# Internal watchdog — proactive self-healing for stuck pipeline
+watchdog:
+  enabled: true
+  check_interval: 10            # seconds between check cycles
+  listener_stuck_threshold: 60  # seconds of no transcription while IDLE
+  command_hung_threshold: 120   # seconds for a single command to complete
+  queue_backlog_threshold: 10   # audio_queue items before drain
+  llm_health_interval: 30      # seconds between llama-server health pings
+  recovery_cooldown: 300        # minimum seconds between same recovery type
+  announce_failures: true       # speak via TTS when recovery fails
+  max_announcements_per_hour: 3
+
 # Event pipeline (Phase 4 latency refactor)
 pipeline:
   event_mode: true              # true = coordinator + workers; false = legacy callbacks

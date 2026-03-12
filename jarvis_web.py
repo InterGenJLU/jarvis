@@ -3705,7 +3705,7 @@ async def generate_image_handler(request):
                 resp = req.post(
                     "http://127.0.0.1:8190/img2img",
                     json={"prompt": prompt, "image": source_image, "strength": strength, "steps": steps},
-                    timeout=180,
+                    timeout=300,
                 )
             else:
                 resp = req.post(
@@ -3763,7 +3763,10 @@ async def gpu_status_handler(request):
 
 def create_app(config) -> web.Application:
     """Create and configure the aiohttp application."""
-    app = web.Application(middlewares=[auth_middleware])
+    app = web.Application(
+        middlewares=[auth_middleware],
+        client_max_size=20 * 1024 * 1024,  # 20MB — iPhone photos base64-encoded for img2img
+    )
 
     web_dir = Path(__file__).parent / 'web'
 

@@ -940,6 +940,17 @@ class TTSNormalizer:
             r"\bFt\.\s": "Fort ",
             r"\bPt\.\s": "Point ",
 
+            # Title abbreviations (Kokoro mispronounces "Ms." as "ahz")
+            r"\bMs\.\s": "miss ",
+            r"\bMrs\.\s": "missus ",
+            r"\bMr\.\s": "mister ",
+            r"\bDr\.\s": "doctor ",
+
+            # Honorific pronunciation (Kokoro mispronounces "ma'am";
+            # comma removal prevents over-emphasis on the pause)
+            r",\s*\bmum\b": " mom",
+            r"\bmum\b": "mom",
+
             # Full words
             r"\betc\b": "etcetera",
             r"\be\.g\.\b": "for example",

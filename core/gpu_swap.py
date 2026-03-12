@@ -24,7 +24,7 @@ SERVICES = {
     "llama": {
         "unit": "llama-server.service",
         "health_url": "http://127.0.0.1:8080/health",
-        "startup_timeout": 60,  # Qwen 3.5-35B needs ~40s to load
+        "startup_timeout": 90,  # Qwen 3.5-35B needs ~40-60s to load from SSD
     },
     "flux": {
         "unit": "flux-server.service",
@@ -102,7 +102,7 @@ class GPUSwapManager:
                 if r.status_code == 200:
                     data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
                     status = data.get("status", "ready")
-                    if status == "ready":
+                    if status in ("ready", "ok"):
                         return True
                     logger.debug("Health check %s: status=%s", url, status)
             except (requests.ConnectionError, requests.Timeout):

@@ -207,13 +207,13 @@ class TTSWorker(threading.Thread):
                     data={"source": "tts", "error": str(e)},
                     source="tts_worker",
                 ))
-
-            # Emit finished
-            self.event_queue.put(Event(EventType.SPEECH_FINISHED, source="tts_worker"))
-
-            # Signal synchronous callers (EventTTSProxy)
-            if done_event is not None:
-                done_event.set()
+            finally:
+                # Always emit finished and signal synchronous callers,
+                # even on exception — prevents stuck speaking flags and
+                # EventTTSProxy.speak() hanging on done_event.wait().
+                self.event_queue.put(Event(EventType.SPEECH_FINISHED, source="tts_worker"))
+                if done_event is not None:
+                    done_event.set()
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ class EventTTSProxy:
             data={"text": text, "done_event": done},
             source="bg_service",
         ))
-        done.wait(timeout=60)
+        return done.wait(timeout=60)
 
     def speak_ack(self):
         """Play a pre-cached acknowledgment phrase (non-blocking)."""
@@ -537,6 +537,12 @@ class Coordinator:
         self._streaming_active = False
         self._llm_responded = False
 
+        # Watchdog heartbeat timestamps (monotonic, read by core.watchdog)
+        self._last_transcription_ts = time.monotonic()
+        self._last_command_start_ts = 0.0
+        self._last_command_end_ts = time.monotonic()
+        self._last_idle_ts = time.monotonic()
+
         # Beep
         from pathlib import Path
         self.beep_path = Path(__file__).parent.parent / "assets" / "wake_word_detect.wav"
@@ -706,6 +712,7 @@ class Coordinator:
     def _handle_transcription(self, event: Event):
         """Process raw transcription text: validate, check wake word or
         conversation window, and emit COMMAND_DETECTED if appropriate."""
+        self._last_transcription_ts = time.monotonic()
         # Extract text and speaker context from enriched or plain event data
         if isinstance(event.data, dict):
             raw_text = event.data["text"]
@@ -785,6 +792,7 @@ class Coordinator:
 
     def _handle_command(self, event: Event):
         """Route a detected command through the priority chain."""
+        self._last_command_start_ts = time.monotonic()
         full_text = event.data
         in_conversation = self.listener.conversation_window_active
         self.state = PipelineState.PROCESSING_COMMAND
@@ -820,6 +828,7 @@ class Coordinator:
             self.logger.warning("No command extracted")
             self.listener.resume_listening()
             self.state = PipelineState.IDLE
+            self._last_command_end_ts = self._last_idle_ts = time.monotonic()
             return
 
         self.logger.info(f"Command: {repr(command.strip())}")
@@ -880,6 +889,7 @@ class Coordinator:
             self.logger.info("Router: skip (bare ack noise)")
             self.listener.resume_listening()
             self.state = PipelineState.IDLE
+            self._last_command_end_ts = self._last_idle_ts = time.monotonic()
             return
 
         if result.handled:
@@ -955,6 +965,7 @@ class Coordinator:
               f"{stats['session_assistant_messages']} assistant messages\n")
         self.listener.resume_listening()
         self.state = PipelineState.IDLE
+        self._last_command_end_ts = self._last_idle_ts = time.monotonic()
 
     # ----- minimal greeting -----
 
@@ -975,6 +986,7 @@ class Coordinator:
         self.listener.open_conversation_window(self.listener._extended_duration)
         self.listener.resume_listening()
         self.state = PipelineState.IDLE
+        self._last_command_end_ts = self._last_idle_ts = time.monotonic()
 
     # ----- task plan execution -----
 

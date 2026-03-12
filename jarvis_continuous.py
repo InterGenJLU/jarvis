@@ -913,6 +913,20 @@ class JarvisContinuous:
                 import threading
                 threading.Timer(30, self._run_startup_health_check).start()
 
+            # Internal watchdog — proactive self-healing for stuck pipeline
+            if self.config.get("watchdog.enabled", True):
+                from core.watchdog import Watchdog
+                self.watchdog = Watchdog(
+                    config=self.config,
+                    coordinator=self.coordinator,
+                    listener=self.listener,
+                    tts=self.tts,
+                    event_queue=self.event_queue,
+                    audio_queue=self.audio_queue,
+                    tts_queue=self.tts_queue,
+                )
+                self.watchdog.start()
+
             try:
                 # Coordinator event loop runs on main thread
                 self.coordinator.run()

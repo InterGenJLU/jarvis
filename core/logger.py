@@ -39,6 +39,7 @@ _SUBSYSTEM_MAP = {
     'core.google_calendar': 'reminders',
     'core.caldav_calendar': 'reminders',
     'core.web_research': 'research',
+    'core.watchdog': 'watchdog',
     'jarvis.mcp_client': 'mcp',
     'jarvis.mcp_server': 'mcp',
     'jarvis.webcam': 'vision',
