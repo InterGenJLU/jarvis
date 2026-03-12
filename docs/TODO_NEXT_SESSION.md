@@ -1,6 +1,6 @@
 # TODO — Next Session
 
-**Updated:** March 12, 2026 (session 252)
+**Updated:** March 12, 2026 (session 256)
 
 ---
 
@@ -38,7 +38,7 @@ Work these in sequence (strategic direction: cross-platform utility — desktop 
 
 ### 4. CalDAV Calendar (Secondary User)
 **Status:** BLOCKED — waiting on app-specific password
-**What:** Apple Calendar integration. DB column exists (`caldav_event_id`), zero CalDAV code
+**What:** Apple Calendar integration. Full `caldav_calendar.py` exists, DB column exists, config present but `enabled: false`
 
 ### 5. Concurrent Multi-User (#61)
 **Status:** NOT STARTED — depends on #60
@@ -55,7 +55,7 @@ Work these in sequence (strategic direction: cross-platform utility — desktop 
 |---|----------|------|
 | B2 | Low | Batch extraction (Phase 4) untested — needs 25+ messages to trigger |
 | B8 | Medium | EventTTSProxy `speak()` returns None — causes reminder retry false positives. Nag cap mitigates |
-| B9 | Low | Speaker ID no accuracy benchmarks — threshold 0.75, no dedicated tests |
+| B9 | Low | Speaker ID no accuracy benchmarks — threshold 0.75, `test_speaker_id.py` exists but no live benchmarks |
 
 ---
 
@@ -66,7 +66,7 @@ Work these in sequence (strategic direction: cross-platform utility — desktop 
 | Skill execution tests | OPEN | Tier 3-4 routing tested, no actual handler execution |
 | EventTTSProxy tests | OPEN | Zero tests for speak() return value / timeout behavior |
 | Batch extraction tests | OPEN | Feature implemented, zero coverage |
-| Speaker ID tests | OPEN | No dedicated tests, no accuracy benchmarks |
+| Speaker ID tests | **CLOSED** | `test_speaker_id.py` — 5-part suite. No live accuracy benchmarks |
 
 ---
 
@@ -81,8 +81,11 @@ Work these in sequence (strategic direction: cross-platform utility — desktop 
 
 ## Session History (Recent)
 
-### Sessions 245-252 (Mar 11-12) — Documentation & Testing
-README v5.0.0 rewrite, PROJECT_OVERVIEW rewrite, vision screenshots, token exposure remediation (auth_token rotated, image scrubbed from git history), conversation test suite attempts (run 037 in progress)
+### Session 256 (Mar 12) — Memory/Roadmap Cleanup
+CLAUDE.md trimmed (98→68 lines), MEMORY.md trimmed (123→111 lines), 47 old handoff files archived, full development idea inventory (64+ items validated against codebase), 20 items confirmed complete, roadmap updated (#53/#54/#25 moved to Completed, Speaker ID tests closed, CalDAV notes corrected)
+
+### Sessions 245-255 (Mar 11-12) — Documentation, Testing & Routing Fix
+README v5.0.0 rewrite, PROJECT_OVERVIEW rewrite, vision screenshots, token exposure remediation (auth_token rotated, image scrubbed from git history), run 037 complete (62/62 PASS), routing confidence bypass fix
 
 ### Sessions 205-244 (Mar 8-10) — Vision Phase 7 & Testing
 Vision Phase 7a-7c (webcam, mobile camera, presence detection), web handler test suite (61 tests), mobile routing fixes A-D, HUD context %, memory extraction improvements, conversation test runs 033-036

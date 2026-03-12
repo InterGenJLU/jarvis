@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 12, 2026 (session 254 — restructured: completed work collapsed, active items lead)
+**Updated:** March 12, 2026 (session 256 — validated 20 completed items against codebase, moved #53/#54/#25 to Completed)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -17,7 +17,7 @@
 | 20P7c | **Vision 7c live test** — enroll faces, enable presence detection + greetings | 1-2 hours | **NEXT** | Code complete + 180 tests. Enable `vision.presence.enabled: true` |
 | — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | NOT STARTED | Config stub + MCP bridge ready. the user=Gmail, secondary=AOL |
 | 60 | **Mobile app** — web UI phase 1 done. Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** | Plan: `memory/plan_mobile_ios_app.md` |
-| — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | DB column exists (`caldav_event_id`), zero CalDAV code |
+| — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | Full `caldav_calendar.py` exists, DB column exists, config present but `enabled: false` |
 | 61 | **Concurrent multi-user support** — handle two simultaneous mobile users | 4-8 hours | NOT STARTED | Depends on #60. Needs `--parallel 2`, per-user history, STT/TTS queuing |
 | 11 | **"Onscreen please" — retroactive visual display** | 2-3 hours | PARTIAL | Opens generated docs. Retroactive display of arbitrary artifacts NOT implemented |
 
@@ -29,7 +29,7 @@
 |---|------|--------|-----|-------|
 | 17 | **LLM news classification** — activate `_llm_classify()` in news_manager.py | 2-3 hours | Better urgency classification than keyword rules | Dead code at `news_manager.py:393` — never called |
 | 44 | **Reminder snooze in P2 chain** — distinguish "got it" (ack) vs "snooze 10 min" (snooze) vs "what reminder" (query) | 2-3 hours | Currently blanket ack — loses snooze/query intent | Zero snooze references in conversation_router.py |
-| 54 | **Reduce `_open_aplay` 150ms sleep** — PipeWire device-ready wait may be reducible to 50ms | 1-2 hours | Saves 150ms per aplay open (300ms with ack + response) | Still `time.sleep(0.15)` at `tts.py:387`. Risk: too short causes broken audio |
+| ~~54~~ | ~~**Reduce `_open_aplay` sleep**~~ | — | — | **DONE** — already optimized to 0.15s with smart retry. Moved to Completed Items |
 | 7 | **Inject user facts into web search** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Memory context passed to LLM for response gen, NOT injected into search queries |
 
 ---
@@ -39,7 +39,7 @@
 | # | Item | Effort | ROI | Notes |
 |---|------|--------|-----|-------|
 | 43 | **Mid-rundown interruption** — item-by-item delivery with "continue"/"skip"/"stop"/"defer" | 4-6 hours | Currently `deliver_rundown()` blocks on single TTS call | Needs item-at-a-time loop + active listener |
-| 53 | **Merge ack + response into single audio stream** — one aplay lifecycle | 3-4 hours | Saves ~150ms + eliminates audible gap | Challenges: timing, lock contention, quality gate |
+| ~~53~~ | ~~**Merge ack + response audio**~~ | — | — | **DONE** — both serialized through same `_tts_worker()` queue, single persistent aplay. Moved to Completed Items |
 | 55 | **Network awareness skill** — device discovery, anomaly detection, threat alerts | 4-8 hours | Fits threat hunting background | Natural skill: `skills/system/network/` |
 | 50 | **AI image generation (FLUX.1-schnell)** — local image gen for doc gen, hybrid with Pexels | 4-6 hours | Pexels fails for tech/abstract topics | Research complete. FLUX FP8 fits 20GB VRAM, ~12-20s/image |
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility | Shared access with secondary user |
@@ -56,7 +56,7 @@
 | 22 | **Automated skill generation** — Q&A, build, test, review, deploy | 15-20 hours | End-to-end skill creation by voice. Depends on #21 | MASTER_DESIGN.md |
 | 23 | **Backup automation skill** — voice-triggered, SHA256 checksums, manifest, rotation | 6-8 hours | "Jarvis, backup the system." Automated 2 AM daily | MASTER_DESIGN.md |
 | 24 | **Voice authentication for sensitive ops** — re-verify voice before threat hunting, system changes | 4-6 hours | Security layer. Speaker ID Phase 3+ | MASTER_DESIGN.md |
-| 25 | **Web dashboard** — local Flask/FastAPI web UI for JARVIS management | 10-15 hours | Demo/showoff feature. Low daily utility | TODO |
+| ~~25~~ | ~~**Web dashboard**~~ | — | — | **DONE** — `web/dashboard.html`, `dashboard.js`, `dashboard.css` with metrics/charts. Moved to Completed Items |
 | 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption | See `memory/plan_erica_voice_windows_port.md` |
 | 48 | **Windows native port** — full JARVIS on Windows, abstraction layers | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_erica_voice_windows_port.md` |
 | 62 | **Usage data pipeline + CI/CD** — nightly metric extraction → analysis → regression testing | 1-2 days | Automated quality tracking at scale | Metrics tracker records to SQLite, no extraction/reporting. Depends on #60 + #61 |
@@ -98,7 +98,7 @@
 |---|------|----------|-------|
 | B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
 | B8 | EventTTSProxy `speak()` returns None | Medium | `done.wait()` return not captured. Causes reminder retry false positives. Nag cap mitigates. Zero tests |
-| B9 | Speaker ID no accuracy benchmarks | Low | Threshold 0.75, re-enrolled with better clips. No dedicated tests |
+| B9 | Speaker ID no accuracy benchmarks | Low | Threshold 0.75, re-enrolled with better clips. `test_speaker_id.py` now exists (5-part suite) but no live accuracy benchmarks yet |
 
 ---
 
@@ -111,7 +111,7 @@
 | Skill execution tests | **OPEN** | `test_edge_cases.py` Tier 3-4 marked "future" — routing tested but no actual handler execution |
 | EventTTSProxy tests | **OPEN** | Zero tests for speak() return value / timeout behavior |
 | Batch extraction tests | **OPEN** | Feature implemented (Phase 4), zero test coverage |
-| Speaker ID tests | **OPEN** | Zero dedicated tests, no accuracy benchmarks |
+| Speaker ID tests | **CLOSED** | `test_speaker_id.py` — 5-part suite (embedding extraction, enrollment, identification, verification, cache management) |
 
 ---
 
@@ -201,6 +201,11 @@
 - HUD context % — shows usage percentage instead of raw segment/token counts (Mar 7)
 - Memory extraction names — uses real display names (the user/secondary user) instead of "User" (Mar 7)
 - Memory transient filtering — extraction prompts filter transient state ("at desk", "on screen") (Mar 7)
+
+### Validated Complete (session 256, Mar 12)
+- #25: Web dashboard — `web/dashboard.html`, `dashboard.js`, `dashboard.css` with metrics, charts, live WebSocket status (Mar)
+- #53: Merge ack + response audio — both serialized through same `_tts_worker()` queue, single persistent aplay (Mar)
+- #54: Reduce aplay sleep — optimized to 0.15s with smart 5-retry exponential backoff (Mar)
 
 ### Tier 3
 - #40: News headline trimming — 25 per category (Feb 20)
