@@ -2172,7 +2172,7 @@ async def websocket_handler(request):
 
                 elif msg_type == 'slash_command':
                     cmd = data.get('command', '')
-                    await _handle_ws_slash(ws, cmd, data, doc_buffer)
+                    await _handle_ws_slash(ws, cmd, data, doc_buffer, components)
 
                 elif msg_type == 'file_drop':
                     filename = data.get('filename', 'unknown')
@@ -2346,7 +2346,7 @@ def _restart_server():
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
-async def _handle_ws_slash(ws, cmd: str, data: dict, doc_buffer: DocumentBuffer):
+async def _handle_ws_slash(ws, cmd: str, data: dict, doc_buffer: DocumentBuffer, components: dict = None):
     """Handle slash commands received via WebSocket."""
     if cmd == '/paste':
         content = data.get('content', '').strip()
@@ -2440,6 +2440,23 @@ async def _handle_ws_slash(ws, cmd: str, data: dict, doc_buffer: DocumentBuffer)
                 'type': 'info',
                 'content': "Document buffer is empty.",
             })
+
+    elif cmd == '/new':
+        # Start a fresh session — clear conversation history + doc buffer
+        conversation = components.get('conversation') if components else None
+        if conversation:
+            conversation.clear_session_history()
+        old_source, _ = doc_buffer.clear()
+        await ws.send_json({
+            'type': 'doc_status',
+            'active': False,
+            'tokens': 0,
+            'source': '',
+        })
+        await ws.send_json({
+            'type': 'info',
+            'content': "New session started.",
+        })
 
     elif cmd == '/help':
         await ws.send_json({

@@ -125,6 +125,16 @@
         </div>
     </section>
 
+    <script>
+    (function() {
+        var token = new URLSearchParams(location.search).get('token');
+        if (token) {
+            document.querySelectorAll('a.back-link').forEach(function(a) {
+                a.href = a.href.split('?')[0] + '?token=' + encodeURIComponent(token);
+            });
+        }
+    })();
+    </script>
     <script src="/dashboard.js"></script>
 </body>
 </html>

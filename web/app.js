@@ -802,6 +802,27 @@
         historyIndex = -1;
         pendingInput = '';
 
+        // --- Slash command interception ---
+        if (text.charAt(0) === '/') {
+            var cmd = text.toLowerCase().split(/\s+/)[0];
+            if (cmd === '/clearchat') {
+                messagesEl.innerHTML = '';
+                userInput.value = '';
+                return;
+            }
+            if (cmd === '/new') {
+                messagesEl.innerHTML = '';
+                ws.send(JSON.stringify({ type: 'slash_command', command: '/new' }));
+                userInput.value = '';
+                return;
+            }
+            if (cmd === '/clear' || cmd === '/context' || cmd === '/clipboard') {
+                ws.send(JSON.stringify({ type: 'slash_command', command: cmd }));
+                userInput.value = '';
+                return;
+            }
+        }
+
         // Show user message with optional image thumbnail
         if (pendingImageData) {
             addMessageWithImage('user', text, 'data:' + pendingImageMime + ';base64,' + pendingImageData);
