@@ -66,6 +66,19 @@
     const btnClipboard = document.getElementById('btn-clipboard');
     const btnContext = document.getElementById('btn-context');
 
+    // Imagine (AI image generation)
+    const btnImagine = document.getElementById('btn-imagine');
+    const imagineModal = document.getElementById('imagine-modal');
+    const imagineModalClose = document.getElementById('imagine-modal-close');
+    const imagineModalTitle = document.getElementById('imagine-modal-title');
+    const imaginePrompt = document.getElementById('imagine-prompt');
+    const imagineStrength = document.getElementById('imagine-strength');
+    const imagineStrengthVal = document.getElementById('imagine-strength-val');
+    const imagineQuality = document.getElementById('imagine-quality');
+    const imagineImg2imgHint = document.getElementById('imagine-img2img-hint');
+    const imagineCancel = document.getElementById('imagine-cancel');
+    const imagineSubmit = document.getElementById('imagine-submit');
+
     // Image attachment
     const btnImage = document.getElementById('btn-image');
     const imageInput = document.getElementById('image-input');
@@ -943,6 +956,124 @@
     if (imageIndicatorClear) imageIndicatorClear.addEventListener('click', function () {
         clearPendingImage();
         userInput.focus();
+    });
+
+    // --- Imagine (AI image generation) ---
+    if (imagineStrength) {
+        imagineStrength.addEventListener('input', function () {
+            imagineStrengthVal.textContent = (this.value / 100).toFixed(2);
+        });
+    }
+
+    if (btnImagine) btnImagine.addEventListener('click', function () {
+        // Show modal — detect if img2img mode (image attached)
+        const isImg2Img = !!pendingImageData;
+        imagineModalTitle.textContent = isImg2Img ? 'Transform Image' : 'Generate Image';
+        imagineImg2imgHint.classList.toggle('hidden', !isImg2Img);
+        // Show strength slider only for img2img (quality selector always visible)
+        const strengthEl = imagineModal.querySelector('.imagine-option-strength');
+        if (strengthEl) strengthEl.style.display = isImg2Img ? '' : 'none';
+        imaginePrompt.value = '';
+        imagineModal.classList.remove('hidden');
+        imaginePrompt.focus();
+    });
+
+    function closeImagineModal() {
+        imagineModal.classList.add('hidden');
+    }
+
+    if (imagineModalClose) imagineModalClose.addEventListener('click', closeImagineModal);
+    if (imagineCancel) imagineCancel.addEventListener('click', closeImagineModal);
+
+    if (imagineSubmit) imagineSubmit.addEventListener('click', async function () {
+        const prompt = imaginePrompt.value.trim();
+        if (!prompt) return;
+
+        closeImagineModal();
+
+        const isImg2Img = !!pendingImageData;
+        const mode = isImg2Img ? 'img2img' : 'txt2img';
+
+        // Show user message in chat
+        addMessage('user', (isImg2Img ? '[img2img] ' : '[imagine] ') + prompt);
+
+        // Show generating indicator
+        btnImagine.classList.add('generating');
+        const statusMsg = document.createElement('div');
+        statusMsg.className = 'message jarvis';
+        statusMsg.innerHTML = '<div class="message-sender">J.A.R.V.I.S.</div><div class="message-bubble"><em>Generating image... GPU swapping to Flux, this may take a moment.</em></div>';
+        messagesEl.appendChild(statusMsg);
+        scrollToBottom();
+
+        try {
+            const steps = imagineQuality ? parseInt(imagineQuality.value) : 20;
+            const body = { prompt: prompt, steps: steps };
+            if (isImg2Img) {
+                body.image = pendingImageData;
+                body.strength = parseFloat((imagineStrength.value / 100).toFixed(2));
+            } else {
+                body.width = 1024;
+                body.height = 1024;
+            }
+
+            const resp = await fetch(authUrl('/api/generate-image'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await resp.json();
+
+            // Remove status message
+            if (statusMsg.parentNode) statusMsg.parentNode.removeChild(statusMsg);
+
+            if (resp.ok && data.path) {
+                // Extract filename from path and build URL via /generated/ route
+                const filename = data.path.split('/').pop();
+                const imgUrl = authUrl('/generated/' + filename);
+
+                // Show image in chat
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'message jarvis';
+
+                const sender = document.createElement('div');
+                sender.className = 'message-sender';
+                sender.textContent = 'J.A.R.V.I.S.';
+                msgDiv.appendChild(sender);
+
+                const imgWrap = document.createElement('div');
+                imgWrap.className = 'message-image-wrap';
+                const img = document.createElement('img');
+                img.className = 'message-image-thumb';
+                img.style.maxWidth = '512px';
+                img.style.maxHeight = '512px';
+                img.src = imgUrl;
+                img.alt = 'Generated image';
+                img.addEventListener('click', function () { openLightbox(imgUrl); });
+                imgWrap.appendChild(img);
+                msgDiv.appendChild(imgWrap);
+
+                const bubble = document.createElement('div');
+                bubble.className = 'message-bubble';
+                bubble.innerHTML = '<em>Generated in ' + data.elapsed_seconds + 's</em> (seed: ' + data.seed + ')';
+                msgDiv.appendChild(bubble);
+
+                const ts = document.createElement('div');
+                ts.className = 'message-timestamp';
+                ts.textContent = formatTimestamp(Date.now() / 1000);
+                msgDiv.appendChild(ts);
+
+                messagesEl.appendChild(msgDiv);
+                scrollToBottom();
+            } else {
+                addMessage('error', 'Image generation failed: ' + (data.error || 'Unknown error'));
+            }
+        } catch (e) {
+            if (statusMsg.parentNode) statusMsg.parentNode.removeChild(statusMsg);
+            addMessage('error', 'Image generation error: ' + e.message);
+        } finally {
+            btnImagine.classList.remove('generating');
+            if (isImg2Img) clearPendingImage();
+        }
     });
 
     // --- Paste modal ---
@@ -1920,6 +2051,30 @@
         vv.addEventListener('resize', repositionWebcam);
         vv.addEventListener('scroll', repositionWebcam);
     }
+
+    // --- iOS viewport overflow fix ---
+    // Prevent horizontal scroll caused by iOS WebKit layout viewport expansion.
+    // Fires on scroll, resize (keyboard open/close), and orientation change.
+    function iosViewportFix() {
+        if (window.scrollX !== 0) {
+            window.scrollTo(0, window.scrollY);
+        }
+        document.documentElement.scrollLeft = 0;
+        document.body.scrollLeft = 0;
+    }
+    iosViewportFix();
+    window.addEventListener('scroll', iosViewportFix);
+    window.addEventListener('resize', iosViewportFix);
+    window.addEventListener('orientationchange', function () {
+        setTimeout(iosViewportFix, 100);
+    });
+    // Also fix when modals open/close or keyboard appears (focus events)
+    document.addEventListener('focusin', function () {
+        setTimeout(iosViewportFix, 300);
+    });
+    document.addEventListener('focusout', function () {
+        setTimeout(iosViewportFix, 300);
+    });
 
     // --- Init ---
     connect();

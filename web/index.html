@@ -2,14 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="J.A.R.V.I.S.">
     <title>J.A.R.V.I.S.</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="apple-touch-icon" href="/favicon.svg">
-    <link rel="stylesheet" href="/style.css?v=11">
+    <link rel="stylesheet" href="/style.css?v=23">
+    <script>
+    // Early iOS viewport fix — runs before body renders to prevent horizontal shift
+    // in Chrome/Edge on iOS (WebKit wrappers that handle initial layout differently)
+    (function(){
+        var fix = function(){ if(window.scrollX!==0) window.scrollTo(0,window.scrollY); };
+        fix();
+        document.addEventListener('DOMContentLoaded', fix);
+        window.addEventListener('load', function(){ fix(); setTimeout(fix, 50); setTimeout(fix, 200); setTimeout(fix, 500); });
+    })();
+    </script>
 </head>
 <body>
     <!-- Sidebar overlay (mobile) -->
@@ -195,6 +205,16 @@
             <!-- Center: Prompt -->
             <div class="input-col-center">
                 <div class="input-row">
+                    <button id="btn-imagine" class="image-btn" title="Generate AI image (attach image first for img2img)">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <!-- Palette -->
+                            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.6-.7 1.6-1.6 0-.4-.1-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.6 1.6-1.6H16c3.3 0 6-2.7 6-6 0-5.2-4.5-8.6-10-8.6z"/>
+                            <circle cx="7.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="10" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="14.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="17" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </button>
                     <button id="btn-image" class="image-btn" title="Attach image">
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
@@ -352,6 +372,39 @@
         </div>
     </div>
 
-    <script src="/app.js?v=10"></script>
+    <!-- Imagine modal -->
+    <div id="imagine-modal" class="modal hidden">
+        <div class="modal-content modal-imagine">
+            <div class="modal-header">
+                <h2 id="imagine-modal-title">Generate Image</h2>
+                <button class="modal-close" id="imagine-modal-close">&times;</button>
+            </div>
+            <div id="imagine-img2img-hint" class="imagine-hint hidden">
+                Using attached image as source (img2img)
+            </div>
+            <textarea id="imagine-prompt" placeholder="Describe the image you want to create..." rows="3"></textarea>
+            <div class="imagine-options">
+                <label class="imagine-option">
+                    <span>Quality</span>
+                    <select id="imagine-quality">
+                        <option value="20" selected>Standard Quality (@30s)</option>
+                        <option value="35">High Quality (@60s)</option>
+                        <option value="50">Ultra Quality (@90s)</option>
+                    </select>
+                </label>
+                <label class="imagine-option imagine-option-strength">
+                    <span>Strength</span>
+                    <input type="range" id="imagine-strength" min="10" max="100" value="75" step="5">
+                    <span id="imagine-strength-val">0.75</span>
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button id="imagine-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="imagine-submit" class="btn btn-primary">Generate</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js?v=23"></script>
 </body>
 </html>

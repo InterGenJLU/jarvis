@@ -47,6 +47,9 @@ Thumbs.db
 *.bin
 *.onnx
 
+# Generated images (Flux output)
+generated_images/
+
 # Audio files (generated/test artifacts)
 *.wav
 *.mp3

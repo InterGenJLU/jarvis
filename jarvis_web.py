@@ -3587,7 +3587,9 @@ async def dashboard_ws_handler(request):
 
 async def index_handler(request):
     """Serve index.html for the root path."""
-    return web.FileResponse(Path(__file__).parent / 'web' / 'index.html')
+    resp = web.FileResponse(Path(__file__).parent / 'web' / 'index.html')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -3664,10 +3666,11 @@ async def webcam_status_handler(request):
 
 
 async def generate_image_handler(request):
-    """Generate an AI image via GPU swap to Flux.1-schnell.
+    """Generate an AI image via GPU swap to Flux.2 Klein 4B.
 
     POST /api/generate-image
-    Body: {"prompt": "...", "width": 1024, "height": 1024}
+    Body (txt2img): {"prompt": "...", "width": 1024, "height": 1024}
+    Body (img2img): {"prompt": "...", "image": "<base64>", "strength": 0.75}
     """
     if not _check_auth_token(request):
         raise web.HTTPUnauthorized(text='Invalid or missing auth token')
@@ -3681,8 +3684,11 @@ async def generate_image_handler(request):
     if not prompt:
         return web.json_response({'error': 'No prompt provided'}, status=400)
 
+    source_image = data.get('image')  # base64 string or None
     width = data.get('width', 1024)
     height = data.get('height', 1024)
+    steps = data.get('steps', 20)
+    strength = data.get('strength', 0.75)
 
     from core.gpu_swap import get_gpu_swap_manager
     swap = get_gpu_swap_manager()
@@ -3695,11 +3701,18 @@ async def generate_image_handler(request):
         if not swap.swap_to("flux"):
             return {'error': 'GPU swap failed'}, 500
         try:
-            resp = req.post(
-                "http://127.0.0.1:8190/generate",
-                json={"prompt": prompt, "width": width, "height": height},
-                timeout=120,
-            )
+            if source_image:
+                resp = req.post(
+                    "http://127.0.0.1:8190/img2img",
+                    json={"prompt": prompt, "image": source_image, "strength": strength, "steps": steps},
+                    timeout=180,
+                )
+            else:
+                resp = req.post(
+                    "http://127.0.0.1:8190/generate",
+                    json={"prompt": prompt, "width": width, "height": height, "steps": steps},
+                    timeout=300,
+                )
             if resp.status_code == 200:
                 return resp.json(), 200
             return {'error': resp.text}, resp.status_code
@@ -3709,6 +3722,25 @@ async def generate_image_handler(request):
             swap.swap_back()
 
     result, status = await asyncio.to_thread(_generate)
+
+    # Persist to conversation history so it appears in session recall
+    if status == 200 and 'path' in result:
+        try:
+            conversation = request.app.get('components', {}).get('conversation')
+            mode = 'img2img' if source_image else 'imagine'
+            conversation.add_message("user", f"[{mode}] {prompt}")
+            filename = os.path.basename(result['path'])
+            image_url = f"/generated/{filename}"
+            elapsed = result.get('elapsed_seconds', '?')
+            seed = result.get('seed', '?')
+            conversation.add_message(
+                "assistant",
+                f"Generated in {elapsed}s (seed: {seed})",
+                image_url=image_url,
+            )
+        except Exception as e:
+            logger.warning("Failed to persist image generation to history: %s", e)
+
     return web.json_response(result, status=status)
 
 
@@ -3773,6 +3805,10 @@ def create_app(config) -> web.Application:
     _images_dir = Path(get_images_dir())
     _images_dir.mkdir(parents=True, exist_ok=True)
     app.router.add_static('/images', _images_dir)
+    # Serve Flux-generated images
+    _flux_dir = Path('/home/user/jarvis/generated_images')
+    _flux_dir.mkdir(parents=True, exist_ok=True)
+    app.router.add_static('/generated', _flux_dir)
     app.router.add_static('/', web_dir)
 
     return app

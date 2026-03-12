@@ -24,7 +24,7 @@ SERVICES = {
     "llama": {
         "unit": "llama-server.service",
         "health_url": "http://127.0.0.1:8080/health",
-        "startup_timeout": 30,
+        "startup_timeout": 60,  # Qwen 3.5-35B needs ~40s to load
     },
     "flux": {
         "unit": "flux-server.service",
@@ -69,7 +69,7 @@ class GPUSwapManager:
         logger.info("Running: %s", " ".join(cmd))
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
+                cmd, capture_output=True, text=True, timeout=60,
             )
             if result.returncode != 0:
                 logger.error("systemctl %s %s failed: %s", action, unit, result.stderr.strip())
@@ -79,7 +79,7 @@ class GPUSwapManager:
             logger.error("systemctl %s %s timed out", action, unit)
             return False
 
-    def _wait_for_stop(self, unit: str, timeout: int = 15) -> bool:
+    def _wait_for_stop(self, unit: str, timeout: int = 45) -> bool:
         """Wait until a systemd unit is no longer active."""
         deadline = time.time() + timeout
         while time.time() < deadline:

@@ -119,15 +119,15 @@ metrics:
   db_path: /mnt/storage/jarvis/data/metrics.db
   retention_days: 180
 
-# Image generation (FLUX.1-schnell via GPU swap)
+# Image generation (FLUX.2 Klein 4B via GPU swap)
 image_generation:
   enabled: true
-  model_path: /mnt/storage/jarvis/models/flux/FLUX.1-schnell
+  model_path: /mnt/storage/jarvis/models/flux/FLUX.2-klein-4B
   server_port: 8190
-  output_dir: /tmp/jarvis_images
+  output_dir: /home/user/jarvis/generated_images
   default_width: 1024
   default_height: 1024
-  default_steps: 4
+  default_steps: 20
   swap_timeout: 90
 
 semantic_matching:
