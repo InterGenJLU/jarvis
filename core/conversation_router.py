@@ -2638,12 +2638,24 @@ class ConversationRouter:
         response = self.skill_manager.execute_intent(command)
         match_info = self.skill_manager._last_match_info
 
-        # NOTE: No post-execution floor re-check.  The keyword-semantic
-        # layers in skill_manager already enforce their own tiered
-        # thresholds (0.50 direct, 0.20-0.40 relaxed based on keyword
-        # count).  A blanket 0.60 floor here nullifies the relaxed
-        # tiers entirely, breaking multi-keyword compound commands like
-        # "create a PDF report about X" that match via keyword_semantic_relaxed.
+        # Post-execution floor check for keyword-direct disambiguation.
+        # Pre-check (above) can't catch these because confidence is None
+        # at match time — disambiguation only scores during execute_intent.
+        # Scoped to keyword_direct to avoid breaking keyword-semantic
+        # relaxed tiers (0.20-0.40) used by multi-keyword compounds.
+        if response and match_info:
+            post_conf = match_info.get("confidence")
+            post_layer = match_info.get("layer", "")
+            if (post_conf is not None
+                    and post_layer == "keyword_direct"
+                    and post_conf < self._SKILL_CONFIDENCE_FLOOR):
+                logger.info(
+                    "P4: post-exec skill '%s' confidence %.2f < floor %.2f "
+                    "(layer=%s) — discarding, falling through to LLM",
+                    match_info.get("skill_name"), post_conf,
+                    self._SKILL_CONFIDENCE_FLOOR, post_layer,
+                )
+                return None
 
         if response:
             logger.info("Handled by skill")
