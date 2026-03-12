@@ -1,0 +1,19 @@
+[Unit]
+Description=JARVIS Flux Image Generation Server (on-demand)
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+Environment=HSA_OVERRIDE_GFX_VERSION=11.0.0
+Environment=CUDA_VISIBLE_DEVICES=1
+Environment=PYTORCH_ALLOC_CONF=expandable_segments:True
+Environment=FLUX_MODEL_PATH=/mnt/storage/jarvis/models/flux/FLUX.1-schnell
+Environment=FLUX_OUTPUT_DIR=/tmp/jarvis_images
+Environment=PATH=/opt/rocm/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/user/jarvis
+ExecStart=/home/user/.local/bin/uvicorn services.flux_server:app --host 127.0.0.1 --port 8190
+Restart=no
+
+[Install]
+WantedBy=default.target

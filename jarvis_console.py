@@ -122,7 +122,7 @@ class SlashCompleter(Completer):
     """Tab completion for slash commands and /file paths."""
 
     _commands = ["/paste", "/file", "/clipboard", "/append", "/context", "/clear",
-                 "/image", "/screenshot", "/webcam", "/help"]
+                 "/image", "/imagine", "/screenshot", "/webcam", "/help"]
     _path_completer = PathCompleter(expanduser=True)
 
     def get_completions(self, document, complete_event):
@@ -962,6 +962,42 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
             console.print(f"[red]Webcam error:[/red] {e}")
         return True
 
+    elif cmd == "/imagine":
+        prompt = parts[1].strip() if len(parts) > 1 else ""
+        if not prompt:
+            console.print("[yellow]Usage: /imagine <description>[/yellow]")
+            console.print("[dim]Example: /imagine a sunset over mountains in watercolor style[/dim]")
+            return True
+
+        console.print(f"[cyan]Generating image:[/cyan] {prompt}")
+        console.print("[dim]Swapping GPU to Flux.1-schnell... chat paused during generation.[/dim]")
+        try:
+            from core.gpu_swap import get_gpu_swap_manager
+            swap = get_gpu_swap_manager()
+            if not swap.swap_to("flux"):
+                console.print("[red]GPU swap failed — could not start Flux server.[/red]")
+                return True
+            try:
+                import requests as req
+                resp = req.post(
+                    "http://127.0.0.1:8190/generate",
+                    json={"prompt": prompt, "width": 1024, "height": 1024},
+                    timeout=120,
+                )
+                if resp.status_code == 200:
+                    result = resp.json()
+                    console.print(f"[green]Image saved:[/green] {result['path']}")
+                    console.print(f"[dim]Generated in {result['elapsed_seconds']:.1f}s (seed: {result['seed']})[/dim]")
+                else:
+                    console.print(f"[red]Generation failed:[/red] {resp.text}")
+            finally:
+                console.print("[dim]Restoring llama-server...[/dim]")
+                swap.swap_back()
+                console.print("[green]LLM restored.[/green]")
+        except Exception as e:
+            console.print(f"[red]Image generation error:[/red] {e}")
+        return True
+
     elif cmd in ("/help", "/?"):
         help_table = Table(title="Slash Commands", box=box.SIMPLE, show_edge=False)
         help_table.add_column("Command", style="cyan bold", no_wrap=True)
@@ -973,6 +1009,7 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
         help_table.add_row("/context", "Show current document buffer info")
         help_table.add_row("/clear", "Clear document buffer")
         help_table.add_row("/image <path>", "Attach an image for the LLM to analyze")
+        help_table.add_row("/imagine <desc>", "Generate an AI image via FLUX.1-schnell")
         help_table.add_row("/screenshot", "Capture screen and attach [monitor|window|all]")
         help_table.add_row("/webcam", "Capture webcam frame and attach for analysis")
         help_table.add_row("/help", "Show this help")
@@ -1210,7 +1247,7 @@ def run_console(config, mode, user_id="user"):
             )
         if parts:
             return HTML('  '.join(parts))
-        return HTML('<b>/paste</b> load text  <b>/file</b> load file  <b>/image</b> attach image  <b>/help</b> commands')
+        return HTML('<b>/paste</b> load text  <b>/file</b> load file  <b>/image</b> attach  <b>/imagine</b> generate  <b>/help</b> commands')
 
     pt_session = PromptSession(
         history=pt_history,

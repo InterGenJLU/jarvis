@@ -119,6 +119,17 @@ metrics:
   db_path: /mnt/storage/jarvis/data/metrics.db
   retention_days: 180
 
+# Image generation (FLUX.1-schnell via GPU swap)
+image_generation:
+  enabled: true
+  model_path: /mnt/storage/jarvis/models/flux/FLUX.1-schnell
+  server_port: 8190
+  output_dir: /tmp/jarvis_images
+  default_width: 1024
+  default_height: 1024
+  default_steps: 4
+  swap_timeout: 90
+
 semantic_matching:
   enabled: true
   model: all-MiniLM-L6-v2

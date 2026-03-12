@@ -3663,6 +3663,72 @@ async def webcam_status_handler(request):
     })
 
 
+async def generate_image_handler(request):
+    """Generate an AI image via GPU swap to Flux.1-schnell.
+
+    POST /api/generate-image
+    Body: {"prompt": "...", "width": 1024, "height": 1024}
+    """
+    if not _check_auth_token(request):
+        raise web.HTTPUnauthorized(text='Invalid or missing auth token')
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    prompt = data.get('prompt', '').strip()
+    if not prompt:
+        return web.json_response({'error': 'No prompt provided'}, status=400)
+
+    width = data.get('width', 1024)
+    height = data.get('height', 1024)
+
+    from core.gpu_swap import get_gpu_swap_manager
+    swap = get_gpu_swap_manager()
+
+    if swap.is_swapping:
+        return web.json_response({'error': 'GPU swap already in progress'}, status=409)
+
+    def _generate():
+        import requests as req
+        if not swap.swap_to("flux"):
+            return {'error': 'GPU swap failed'}, 500
+        try:
+            resp = req.post(
+                "http://127.0.0.1:8190/generate",
+                json={"prompt": prompt, "width": width, "height": height},
+                timeout=120,
+            )
+            if resp.status_code == 200:
+                return resp.json(), 200
+            return {'error': resp.text}, resp.status_code
+        except Exception as e:
+            return {'error': str(e)}, 500
+        finally:
+            swap.swap_back()
+
+    result, status = await asyncio.to_thread(_generate)
+    return web.json_response(result, status=status)
+
+
+async def gpu_status_handler(request):
+    """Get current GPU swap status.
+
+    GET /api/gpu-status
+    """
+    if not _check_auth_token(request):
+        raise web.HTTPUnauthorized(text='Invalid or missing auth token')
+
+    from core.gpu_swap import get_gpu_swap_manager
+    swap = get_gpu_swap_manager()
+    return web.json_response({
+        'active_service': swap.active_service,
+        'is_llm_available': swap.is_llm_available,
+        'is_swapping': swap.is_swapping,
+    })
+
+
 def create_app(config) -> web.Application:
     """Create and configure the aiohttp application."""
     app = web.Application(middlewares=[auth_middleware])
@@ -3699,6 +3765,8 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/webcam/stream', webcam_stream_handler)
     app.router.add_get('/api/webcam/snapshot', webcam_snapshot_handler)
     app.router.add_get('/api/webcam/status', webcam_status_handler)
+    app.router.add_post('/api/generate-image', generate_image_handler)
+    app.router.add_get('/api/gpu-status', gpu_status_handler)
     app.router.add_get('/', index_handler)
     # Serve tool-generated images (screenshots, webcam, etc.)
     from core.tool_registry import get_images_dir

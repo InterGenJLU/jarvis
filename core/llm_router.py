@@ -95,6 +95,12 @@ class LLMRouter:
         self.fallback_enabled = config.get("semantic_matching.fallback_to_llm", True)
         self.api_call_count = 0
 
+        # Local LLM endpoint (consolidate — was hardcoded in 6 places)
+        self.local_endpoint = "http://127.0.0.1:8080/v1/chat/completions"
+
+        # GPU swap manager (optional — for image gen VRAM sharing)
+        self._gpu_swap = None
+
         self.logger.info(f"LLM Router initialized (fallback={'enabled' if self.fallback_enabled else 'disabled'})")
         if self.local_model_path:
             self.logger.info(f"Local model: {Path(self.local_model_path).name}")
@@ -240,7 +246,7 @@ class LLMRouter:
         start = time.time()
         try:
             response = requests.post(
-                "http://127.0.0.1:8080/v1/chat/completions",
+                self.local_endpoint,
                 json={
                     "messages": [
                         {"role": "system", "content": system_prompt},
@@ -825,7 +831,7 @@ class LLMRouter:
         stream_error = None
         try:
             response = requests.post(
-                "http://127.0.0.1:8080/v1/chat/completions",
+                self.local_endpoint,
                 json={
                     "messages": messages,
                     "temperature": self.temperature,
@@ -855,7 +861,7 @@ class LLMRouter:
                     if len(messages) > 7:
                         messages = [messages[0]] + messages[-6:]
                     response = requests.post(
-                        "http://127.0.0.1:8080/v1/chat/completions",
+                        self.local_endpoint,
                         json={
                             "messages": messages,
                             "temperature": self.temperature,
@@ -1102,7 +1108,7 @@ class LLMRouter:
         stream_error = None
         try:
             response = requests.post(
-                "http://127.0.0.1:8080/v1/chat/completions",
+                self.local_endpoint,
                 json=payload,
                 timeout=30,
                 stream=True,
@@ -1124,7 +1130,7 @@ class LLMRouter:
                         self._tool_call_messages = messages
                     payload["messages"] = messages
                     response = requests.post(
-                        "http://127.0.0.1:8080/v1/chat/completions",
+                        self.local_endpoint,
                         json=payload,
                         timeout=30,
                         stream=True,
@@ -1718,7 +1724,7 @@ class LLMRouter:
 
         try:
             response = requests.post(
-                "http://127.0.0.1:8080/v1/chat/completions",
+                self.local_endpoint,
                 json=payload,
                 timeout=_timeout,
                 stream=True,
