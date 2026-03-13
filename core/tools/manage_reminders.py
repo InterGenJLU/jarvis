@@ -80,6 +80,12 @@ SYSTEM_PROMPT_RULE = (
     "'set a reminder for 3pm to call the dentist' → add with title='call the dentist', time_text='3pm'. "
     "'what reminders do I have?' → list. "
     "'cancel the dentist reminder' → cancel with cancel_fragment='dentist'. "
+    "DISMISSING REMINDERS: If a reminder just fired (was spoken aloud) and the user says "
+    "'cancel that', 'dismiss that', 'you can cancel that notification', 'stop reminding me', "
+    "'never mind', or similar dismissive language → use action='acknowledge' (NOT cancel). "
+    "Acknowledge means 'stop nagging, I heard it'. "
+    "Only use action='cancel' with cancel_fragment when the user names a specific reminder "
+    "unprompted (e.g. 'cancel the dentist reminder'). "
     "The title is WHAT to be reminded about. The time_text is WHEN. Both are required for add. "
     "NOT for: calendar events, alarms, timers, scheduling meetings."
 )

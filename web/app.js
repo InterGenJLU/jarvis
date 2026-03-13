@@ -116,6 +116,7 @@
     const sessionListEl = document.getElementById('session-list');
     const btnViewMore = document.getElementById('btn-view-more');
     const btnHamburger = document.getElementById('btn-hamburger');
+    const btnSessionFilter = document.getElementById('btn-session-filter');
 
     // Webcam panel
     const webcamPanel = document.getElementById('webcam-panel');
@@ -141,6 +142,7 @@
     let sessionOffset = 0;
     let sidebarOpen = false;
     let sessionsHasMore = false;
+    let sessionFilterDevice = localStorage.getItem('jarvis-session-filter') === 'device';
 
     // Command history (persisted per-user in localStorage)
     let commandHistory = [];
@@ -156,6 +158,13 @@
     const isMobileClient = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) || screen.width < 768;
     let mobileStream = null;
     let mobileFacing = localStorage.getItem('jarvis-camera-facing') || 'environment';
+
+    // Per-device client ID (persisted in localStorage, used for session isolation)
+    const clientId = localStorage.getItem('jarvis-client-id') || (() => {
+        const id = crypto.randomUUID();
+        localStorage.setItem('jarvis-client-id', id);
+        return id;
+    })();
 
     // Mobile geolocation state
     let _geoWatchId = null;
@@ -228,6 +237,7 @@
             // Tell server about client type (mobile detection)
             ws.send(JSON.stringify({
                 type: 'client_info',
+                client_id: clientId,
                 user_agent: navigator.userAgent,
                 screen_width: screen.width,
                 screen_height: screen.height,
@@ -1606,7 +1616,11 @@
     }
 
     function fetchSessions(offset) {
-        fetch(authUrl('/api/sessions?offset=' + offset + '&limit=10&user=' + encodeURIComponent(userSelect.value)))
+        var url = '/api/sessions?offset=' + offset + '&limit=10&user=' + encodeURIComponent(userSelect.value);
+        if (sessionFilterDevice) {
+            url += '&client_id=' + encodeURIComponent(clientId);
+        }
+        fetch(authUrl(url))
             .then(function (resp) { return resp.json(); })
             .then(function (data) {
                 if (data.sessions) {
@@ -1648,6 +1662,24 @@
                 badge.textContent = 'LIVE';
                 timeEl.appendChild(badge);
             }
+
+            // Device badges from client_ids metadata
+            if (s.client_ids && s.client_ids.length > 0) {
+                var badgeContainer = document.createElement('span');
+                badgeContainer.className = 'session-device-badges';
+                s.client_ids.forEach(function (cid) {
+                    var db = document.createElement('span');
+                    db.className = 'session-device-badge';
+                    // Map known client_ids to friendly labels
+                    if (cid === 'voice') db.textContent = 'voice';
+                    else if (cid === 'console') db.textContent = 'console';
+                    else if (cid === clientId) db.textContent = 'this device';
+                    else db.textContent = 'other device';
+                    badgeContainer.appendChild(db);
+                });
+                timeEl.appendChild(badgeContainer);
+            }
+
             entry.appendChild(timeEl);
 
             // Name/preview
@@ -1813,6 +1845,21 @@
 
     btnViewMore.addEventListener('click', function () {
         fetchSessions(sessionOffset);
+    });
+
+    // Session filter toggle
+    if (sessionFilterDevice) {
+        btnSessionFilter.classList.add('active');
+        btnSessionFilter.title = 'Filter: This device only';
+    }
+    btnSessionFilter.addEventListener('click', function () {
+        sessionFilterDevice = !sessionFilterDevice;
+        btnSessionFilter.classList.toggle('active', sessionFilterDevice);
+        btnSessionFilter.title = sessionFilterDevice ? 'Filter: This device only' : 'Filter: All devices';
+        localStorage.setItem('jarvis-session-filter', sessionFilterDevice ? 'device' : 'all');
+        sessions = [];
+        sessionOffset = 0;
+        fetchSessions(0);
     });
 
     // --- Webcam panel ---

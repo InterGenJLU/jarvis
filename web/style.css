@@ -1689,7 +1689,7 @@ header h1 {
     }
 
     #user-input {
-        font-size: 0.9rem;
+        font-size: 16px; /* Prevents iOS auto-zoom on input focus */
         padding: 8px 10px;
         min-height: 42px;
     }
@@ -1856,6 +1856,56 @@ header h1 {
     font-size: 0.65rem;
     color: var(--text-dim);
     margin-top: 2px;
+}
+
+/* Device badges on session entries */
+.session-device-badges {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 6px;
+}
+
+.session-device-badge {
+    font-size: 0.55rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--bg-tertiary);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+/* Sidebar header actions */
+.sidebar-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Session filter toggle */
+.session-filter-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 3px 5px;
+    border-radius: 4px;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+}
+
+.session-filter-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.session-filter-btn.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(var(--accent-rgb, 100, 180, 255), 0.1);
 }
 
 /* Rename input */

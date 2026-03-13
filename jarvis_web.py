@@ -138,6 +138,36 @@ def _make_artifact_id() -> str:
 
 
 # ---------------------------------------------------------------------------
+# ConnectionContext — per-WebSocket connection state for session isolation
+# ---------------------------------------------------------------------------
+
+class ConnectionContext:
+    """Per-connection state for WebSocket session isolation.
+
+    Created when a WebSocket connects, garbage-collected on disconnect.
+    Replaces shared ConversationManager fields (current_user, client_type,
+    session_history) with per-connection copies.
+    """
+
+    __slots__ = (
+        'client_id', 'user_id', 'client_type', 'location',
+        'session_history', 'conv_state', 'cmd_lock', '_last_geo',
+    )
+
+    def __init__(self, user_id: str = 'christopher',
+                 client_type: str = 'desktop',
+                 client_id: str | None = None):
+        self.client_id = client_id  # UUID from browser localStorage
+        self.user_id = user_id
+        self.client_type = client_type  # 'desktop' or 'mobile'
+        self.location = None  # Resolved geolocation string
+        self._last_geo = None  # (lat, lon) for movement dedup
+        self.session_history: list[dict] = []
+        self.conv_state = ConversationState()
+        self.cmd_lock = asyncio.Lock()
+
+
+# ---------------------------------------------------------------------------
 # WebTTSProxy — Routes TTS calls to WebSocket + optional real TTS
 # ---------------------------------------------------------------------------
 
@@ -269,6 +299,9 @@ def init_components(config, tts_proxy):
         pm = get_profile_manager(config)
         if pm:
             conversation.set_profile_manager(pm)
+            # Wire up honorific module for per-user lookups (session isolation)
+            from core.honorific import init_profile_manager
+            init_profile_manager(pm)
     except Exception:
         pass
 
@@ -974,17 +1007,27 @@ async def _open_in_browser(ws, conv_state, tts_proxy, config: dict) -> tuple:
 # ---------------------------------------------------------------------------
 
 async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy,
-                          config: dict, ws=None, image_data: str = None) -> dict:
+                          config: dict, ws=None, image_data: str = None,
+                          conn_ctx: 'ConnectionContext | None' = None) -> dict:
     """Process a user command through the shared ConversationRouter.
 
     Returns dict with 'response', 'stats', 'used_llm', 'streamed', etc.
     When ws is provided, LLM responses are streamed token-by-token over WebSocket.
+    conn_ctx provides per-connection identity for session isolation (web path).
     """
     conversation = components['conversation']
     llm = components['llm']
     doc_buffer = components['doc_buffer']
     web_researcher = components['web_researcher']
-    conv_state = components['conv_state']
+    # Use per-connection conv_state when available, else shared
+    conv_state = conn_ctx.conv_state if conn_ctx else components['conv_state']
+
+    # Per-connection add_message kwargs (client_id + target_history)
+    _msg_kwargs = {}
+    if conn_ctx:
+        if conn_ctx.client_id:
+            _msg_kwargs['client_id'] = conn_ctx.client_id
+        _msg_kwargs['target_history'] = conn_ctx.session_history
 
     # Strip wake word prefix (leading only — preserve trailing
     # "Jarvis" so greetings like "Good afternoon, Jarvis" stay intact)
@@ -992,21 +1035,23 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     if not command:
         command = "jarvis_only"
 
+    _user_id = conn_ctx.user_id if conn_ctx else conversation.current_user
+    _client_type = conn_ctx.client_type if conn_ctx else getattr(conversation, 'client_type', None)
     logger.debug("process_command: raw=%r image=%s client_type=%s",
-                 command[:200], bool(image_data), getattr(conversation, 'client_type', None))
+                 command[:200], bool(image_data), _client_type)
 
     from core.debug_logger import get_debug_logger
     _dbg = get_debug_logger()
     _dbg.log_command_received(
-        command, user_id=conversation.current_user,
-        client_type=getattr(conversation, 'client_type', None),
+        command, user_id=_user_id,
+        client_type=_client_type,
         in_conversation=True, image_data=bool(image_data),
     )
 
     if image_data:
-        conversation.add_message("user", f"[Image attached] {command}")
+        conversation.add_message("user", f"[Image attached] {command}", **_msg_kwargs)
     else:
-        conversation.add_message("user", command)
+        conversation.add_message("user", command, **_msg_kwargs)
 
     t_start = time.perf_counter()
     skill_handled = False
@@ -1020,9 +1065,19 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     # enables P3.5 research follow-ups and context augmentation for
     # follow-up queries like "please elaborate".
     router = components['router']
+    # Build per-connection RouteContext for thread-safe identity resolution
+    _route_ctx = None
+    if conn_ctx:
+        from core.conversation_router import RouteContext
+        _route_ctx = RouteContext(
+            user_id=conn_ctx.user_id,
+            client_type=conn_ctx.client_type,
+            client_id=conn_ctx.client_id,
+            location=conn_ctx.location,
+        )
     result = await asyncio.to_thread(
         router.route, command, in_conversation=True, doc_buffer=doc_buffer,
-        image_data=image_data,
+        image_data=image_data, route_ctx=_route_ctx,
     )
     t_match = time.perf_counter()
     logger.debug("route result: handled=%s intent=%s skip=%s has_tools=%s match=%s",
@@ -1192,10 +1247,10 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 force_web_search=result.force_web_search,
                 memory_manager=components.get('memory_manager'),
                 raw_command=command,
-                user_id=conversation.current_user,
+                user_id=_user_id,
                 conv_state=conv_state,
                 image_data=result.image_data,
-                client_type=conversation.client_type,
+                client_type=_client_type,
             )
         else:
             response = await _llm_fallback(
@@ -1216,7 +1271,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
 
     t_end = time.perf_counter()
 
-    _add_kwargs = {}
+    _add_kwargs = dict(_msg_kwargs)  # includes client_id + target_history when conn_ctx set
     if _resp_image_url:
         _add_kwargs['image_url'] = _resp_image_url
     conversation.add_message("assistant", response, **_add_kwargs)
@@ -1244,7 +1299,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 ttft_ms=info.get('ttft_ms'),
                 skill=match_info.get('skill_name') if match_info else None,
                 intent=match_info.get('handler') if match_info else None,
-                input_method='web',
+                input_method=f'web:{_client_type}' if _client_type else 'web',
                 quality_gate=info.get('quality_gate', False),
                 is_fallback=info.get('is_fallback', False),
                 error=info.get('error'),
@@ -1974,7 +2029,7 @@ def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end,
 # Chat message handler (runs as background task so WS loop stays free)
 # ---------------------------------------------------------------------------
 
-async def _handle_chat_message(ws, cmd_lock, components, tts_proxy, config,
+async def _handle_chat_message(ws, conn_ctx, components, tts_proxy, config,
                                doc_buffer, content, msg_image_data):
     """Process a chat message as a background task.
 
@@ -1982,14 +2037,14 @@ async def _handle_chat_message(ws, cmd_lock, components, tts_proxy, config,
     receiving other message types (e.g. frame_response for mobile camera)
     while the LLM / tool pipeline executes.
     """
-    logger.info("User: %s%s (client_type=%s)", content[:200],
+    logger.info("User: %s%s (client_type=%s client_id=%s)", content[:200],
                 " [+image]" if msg_image_data else "",
-                getattr(components.get('conversation'), 'client_type', 'unknown'))
-    async with cmd_lock:
+                conn_ctx.client_type, conn_ctx.client_id)
+    async with conn_ctx.cmd_lock:
         try:
             result = await process_command(
                 content, components, tts_proxy, config,
-                ws=ws, image_data=msg_image_data,
+                ws=ws, image_data=msg_image_data, conn_ctx=conn_ctx,
             )
             # Drain announcements queued during command processing
             # (skills call tts_proxy.speak() which would duplicate
@@ -2074,8 +2129,11 @@ async def websocket_handler(request):
     components = app['components']
     tts_proxy = app['tts_proxy']
     config = app['config']
-    cmd_lock = app['cmd_lock']
     doc_buffer = components['doc_buffer']
+
+    # Per-connection state — isolates user, client_type, session history,
+    # conversation state, and command lock per WebSocket connection.
+    conn_ctx = ConnectionContext()
 
     # Announcement pump task
     async def announcement_pump():
@@ -2096,8 +2154,8 @@ async def websocket_handler(request):
         conversation = components['conversation']
         all_messages = await asyncio.to_thread(conversation.load_full_history)
 
-        # Filter by current user (matches set_user behaviour)
-        uid = conversation.current_user or 'christopher'
+        # Filter by current user (per-connection)
+        uid = conn_ctx.user_id
         all_messages = [m for m in all_messages if m.get('user_id', 'christopher') == uid]
 
         sessions = _detect_sessions(all_messages)
@@ -2166,13 +2224,14 @@ async def websocket_handler(request):
                     # Run as background task so the WS read loop stays free
                     # to receive frame_response messages during tool execution
                     asyncio.create_task(_handle_chat_message(
-                        ws, cmd_lock, components, tts_proxy, config,
+                        ws, conn_ctx, components, tts_proxy, config,
                         doc_buffer, content, msg_image_data,
                     ))
 
                 elif msg_type == 'slash_command':
                     cmd = data.get('command', '')
-                    await _handle_ws_slash(ws, cmd, data, doc_buffer, components)
+                    await _handle_ws_slash(ws, cmd, data, doc_buffer, components,
+                                           conn_ctx=conn_ctx)
 
                 elif msg_type == 'file_drop':
                     filename = data.get('filename', 'unknown')
@@ -2210,7 +2269,8 @@ async def websocket_handler(request):
 
                 elif msg_type == 'set_user':
                     uid = data.get('user_id', 'christopher')
-                    conversation.current_user = uid
+                    conn_ctx.user_id = uid
+                    conversation.current_user = uid  # shared state (backward compat)
                     # Update context window user for segment scoping
                     cw = components.get('context_window')
                     if cw:
@@ -2264,15 +2324,17 @@ async def websocket_handler(request):
                         logger.exception("Failed to reload history after user switch")
 
                 elif msg_type == 'client_info':
+                    conn_ctx.client_id = data.get('client_id') or conn_ctx.client_id
                     ua = data.get('user_agent', '')
                     sw = data.get('screen_width', 9999)
                     # Mobile heuristic: UA contains mobile keywords OR narrow screen
                     _mobile_kw = ('iPhone', 'iPad', 'Android', 'Mobile')
                     _ua_match = [k for k in _mobile_kw if k in ua]
                     is_mobile = bool(_ua_match) or sw < 768
-                    conversation.client_type = "mobile" if is_mobile else "desktop"
-                    logger.info("Client detected: type=%s screen_width=%d ua_keywords=%s",
-                                conversation.client_type, sw, _ua_match or 'none')
+                    conn_ctx.client_type = "mobile" if is_mobile else "desktop"
+                    conversation.client_type = conn_ctx.client_type  # shared (backward compat)
+                    logger.info("Client detected: type=%s client_id=%s screen_width=%d ua_keywords=%s",
+                                conn_ctx.client_type, conn_ctx.client_id, sw, _ua_match or 'none')
                     # Register mobile client for camera relay
                     if is_mobile:
                         relay = request.app.get('mobile_relay')
@@ -2285,15 +2347,17 @@ async def websocket_handler(request):
                     lat = data.get('lat')
                     lon = data.get('lon')
                     if lat is not None and lon is not None:
-                        prev = getattr(conversation, '_last_geo', None)
+                        prev = getattr(conn_ctx, '_last_geo', None)
                         if prev and abs(lat - prev[0]) < 0.008 and abs(lon - prev[1]) < 0.008:
                             pass  # Hasn't moved significantly (~0.5 miles)
                         else:
-                            conversation._last_geo = (lat, lon)
+                            conn_ctx._last_geo = (lat, lon)
                             resolved = await _reverse_geocode(lat, lon)
-                            conversation.current_location = resolved or f"{lat:.4f}\u00b0N, {lon:.4f}\u00b0W"
+                            location = resolved or f"{lat:.4f}\u00b0N, {lon:.4f}\u00b0W"
+                            conn_ctx.location = location
+                            conversation.current_location = location  # shared (backward compat)
                             logger.info("Mobile location: %s (%.4f, %.4f)",
-                                        conversation.current_location, lat, lon)
+                                        location, lat, lon)
 
                 elif msg_type == 'frame_response':
                     # Mobile browser sending a captured camera frame
@@ -2329,13 +2393,10 @@ async def websocket_handler(request):
             relay.clear_ws()
             logger.info("Mobile camera relay disconnected")
 
-        # Reset conversation state and session history to prevent
-        # tool data / history bleeding into the next WS session
-        conv_state = components['conv_state']
-        conv_state.close_window()
-        conversation = components['conversation']
-        conversation.clear_session_history()
-        logger.info("WS disconnect: conv_state and session history reset")
+        # Per-connection state is garbage-collected with conn_ctx.
+        # No shared session_history to clear — each connection owns its own.
+        conn_ctx.conv_state.close_window()
+        logger.info("WS disconnect: conn_ctx released (client_id=%s)", conn_ctx.client_id)
 
     return ws
 
@@ -2346,7 +2407,8 @@ def _restart_server():
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
-async def _handle_ws_slash(ws, cmd: str, data: dict, doc_buffer: DocumentBuffer, components: dict = None):
+async def _handle_ws_slash(ws, cmd: str, data: dict, doc_buffer: DocumentBuffer,
+                           components: dict = None, conn_ctx: 'ConnectionContext | None' = None):
     """Handle slash commands received via WebSocket."""
     if cmd == '/paste':
         content = data.get('content', '').strip()
@@ -2442,10 +2504,15 @@ async def _handle_ws_slash(ws, cmd: str, data: dict, doc_buffer: DocumentBuffer,
             })
 
     elif cmd == '/new':
-        # Start a fresh session — clear conversation history + doc buffer
-        conversation = components.get('conversation') if components else None
-        if conversation:
-            conversation.clear_session_history()
+        # Start a fresh session — clear per-connection history + doc buffer
+        if conn_ctx:
+            conn_ctx.session_history.clear()
+            conn_ctx.conv_state.close_window()
+        else:
+            # Fallback for non-isolated calls (shouldn't happen in practice)
+            conversation = components.get('conversation') if components else None
+            if conversation:
+                conversation.clear_session_history()
         old_source, _ = doc_buffer.clear()
         await ws.send_json({
             'type': 'doc_status',
@@ -2518,12 +2585,21 @@ async def _load_file_into_buffer(ws, doc_buffer, file_path):
 
 SESSION_GAP_SECONDS = 1800  # 30 minutes
 
-def _detect_sessions(messages: list[dict], gap_seconds: int = SESSION_GAP_SECONDS) -> list[dict]:
+def _detect_sessions(messages: list[dict], gap_seconds: int = SESSION_GAP_SECONDS,
+                     client_id: str | None = None) -> list[dict]:
     """Detect session boundaries from timestamp gaps in message history.
 
+    Args:
+        messages: Full message history (already filtered by user_id).
+        gap_seconds: Minimum gap between messages to split sessions.
+        client_id: When provided, pre-filter messages to this device only.
+
     Returns list of sessions (most recent first), each with:
-        id, start_ts, end_ts, message_count, preview
+        id, start_ts, end_ts, message_count, preview, client_ids
     """
+    if client_id:
+        messages = [m for m in messages if m.get('client_id') == client_id]
+
     if not messages:
         return []
 
@@ -2557,12 +2633,19 @@ def _build_session(msgs: list[dict]) -> dict:
         if m.get('role') == 'user':
             preview = m.get('content', '')[:80]
             break
+    # Collect unique client_ids for device badges
+    client_ids = list({m.get('client_id') for m in msgs if m.get('client_id')})
+    # Map well-known client_ids to device types for display
+    _KNOWN_TYPES = {'voice': 'voice', 'console': 'console'}
+    client_types = {cid: _KNOWN_TYPES.get(cid, 'web') for cid in client_ids}
     return {
         'id': str(start_ts),
         'start_ts': start_ts,
         'end_ts': end_ts,
         'message_count': len(msgs),
         'preview': preview,
+        'client_ids': client_ids,
+        'client_types': client_types,
     }
 
 
@@ -2611,8 +2694,9 @@ async def sessions_handler(request):
 
     all_messages = await asyncio.to_thread(conversation.load_full_history)
     user_filter = request.query.get('user', conversation.current_user or 'christopher')
+    client_id_filter = request.query.get('client_id', None)
     filtered = [m for m in all_messages if m.get('user_id', 'christopher') == user_filter]
-    sessions = _detect_sessions(filtered)
+    sessions = _detect_sessions(filtered, client_id=client_id_filter)
     meta = _load_sessions_meta(config)
 
     # Apply custom names

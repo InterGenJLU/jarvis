@@ -141,7 +141,9 @@ class ConversationManager:
 
     def add_message(self, role: str, content: str, user_id: Optional[str] = None,
                     speaker_confidence: Optional[float] = None,
-                    image_url: Optional[str] = None):
+                    image_url: Optional[str] = None,
+                    client_id: Optional[str] = None,
+                    target_history: Optional[list] = None):
         """
         Add message to conversation history
 
@@ -151,6 +153,8 @@ class ConversationManager:
             user_id: Optional user identifier
             speaker_confidence: Optional speaker identification confidence (0.0-1.0)
             image_url: Optional image URL for tool-generated images (e.g. screenshots)
+            client_id: Optional per-device client identifier for session isolation
+            target_history: Optional list to append to instead of self.session_history
         """
         message = {
             "timestamp": time.time(),
@@ -162,14 +166,19 @@ class ConversationManager:
             message["speaker_confidence"] = speaker_confidence
         if image_url is not None:
             message["image_url"] = image_url
+        if client_id is not None:
+            message["client_id"] = client_id
 
         # Track session participants (user messages only)
         if role == "user" and message["user_id"]:
             self.session_participants.add(message["user_id"])
-        
-        # Add to session history
-        self.session_history.append(message)
-        
+
+        # Add to session history (per-connection or shared)
+        if target_history is not None:
+            target_history.append(message)
+        else:
+            self.session_history.append(message)
+
         # Persist to disk
         self._append_to_history_file(message)
 

@@ -18,6 +18,7 @@ Design principles:
 
 import re
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -26,6 +27,31 @@ from core.conversation_state import ConversationState
 from core.honorific import set_honorific
 
 logger = logging.getLogger("jarvis.router")
+
+# Thread-local storage for per-request RouteContext.
+# Set at the start of route(), cleared in finally.
+# Allows properties (_user_id, _is_mobile, _is_guest) to resolve
+# per-connection values without changing 30+ internal method signatures.
+_router_thread_ctx = threading.local()
+
+
+# ---------------------------------------------------------------------------
+# Route context (per-request identity for session isolation)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RouteContext:
+    """Per-request identity passed from the frontend to the router.
+
+    When provided, the router resolves user_id / client_type from this
+    context instead of reading shared ConversationManager state.
+    Voice and console paths pass None (backward compat — reads from
+    self.conversation as before).
+    """
+    user_id: str | None = None
+    client_type: str | None = None  # 'desktop' or 'mobile'
+    client_id: str | None = None    # UUID from browser localStorage
+    location: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +161,14 @@ class ConversationRouter:
 
     @property
     def _user_id(self) -> str:
-        """Current user ID, defaulting to 'christopher'."""
+        """Current user ID, defaulting to 'christopher'.
+
+        When a RouteContext is active (set by route()), resolves from
+        the per-connection context instead of shared conversation state.
+        """
+        ctx = getattr(_router_thread_ctx, 'ctx', None)
+        if ctx and ctx.user_id:
+            return ctx.user_id
         return getattr(self.conversation, 'current_user', None) or "primary_user"
 
     @property
@@ -145,13 +178,20 @@ class ConversationRouter:
 
     @property
     def _is_mobile(self) -> bool:
-        """True when the session is from a mobile client."""
+        """True when the session is from a mobile client.
+
+        When a RouteContext is active, resolves from per-connection context.
+        """
+        ctx = getattr(_router_thread_ctx, 'ctx', None)
+        if ctx and ctx.client_type:
+            return ctx.client_type == "mobile"
         return getattr(self.conversation, 'client_type', 'desktop') == "mobile"
 
     def route(self, command: str, *,
               in_conversation: bool = False,
               doc_buffer=None,
-              image_data: str = None) -> RouteResult:
+              image_data: str = None,
+              route_ctx: 'RouteContext | None' = None) -> RouteResult:
         """Route a command through the priority chain.
 
         Priority order:
@@ -178,10 +218,30 @@ class ConversationRouter:
             doc_buffer: DocumentBuffer instance (or None). When active,
                         skill routing is skipped and LLM gets document context.
             image_data: Base64-encoded image for multimodal queries.
+            route_ctx: Per-connection identity (web). None for voice/console.
 
         Returns:
             RouteResult with response text, metadata, and side-effect signals.
         """
+        # Install per-request context for thread-safe property + honorific resolution
+        from core.honorific import set_thread_user, clear_thread_user
+        _router_thread_ctx.ctx = route_ctx
+        if route_ctx and route_ctx.user_id:
+            set_thread_user(route_ctx.user_id)
+        try:
+            return self._route_inner(command,
+                                     in_conversation=in_conversation,
+                                     doc_buffer=doc_buffer,
+                                     image_data=image_data)
+        finally:
+            _router_thread_ctx.ctx = None
+            clear_thread_user()
+
+    def _route_inner(self, command: str, *,
+                     in_conversation: bool = False,
+                     doc_buffer=None,
+                     image_data: str = None) -> RouteResult:
+        """Internal routing logic — called from route() with thread-local ctx set."""
         guest = self._is_guest
         logger.debug("route: command=%.80s user=%s guest=%s in_conv=%s",
                       command, self._user_id, guest, in_conversation)

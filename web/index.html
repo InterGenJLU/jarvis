@@ -29,7 +29,14 @@
     <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
             <h2>Sessions</h2>
-            <button id="sidebar-close" class="sidebar-close" title="Close sidebar">&times;</button>
+            <div class="sidebar-header-actions">
+                <button id="btn-session-filter" class="session-filter-btn" title="Filter: All devices">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="21" x2="8" y2="3"/><line x1="16" y1="21" x2="16" y2="3"/>
+                    </svg>
+                </button>
+                <button id="sidebar-close" class="sidebar-close" title="Close sidebar">&times;</button>
+            </div>
         </div>
         <div id="session-list" class="session-list"></div>
         <button id="btn-view-more" class="view-more-btn hidden">View more sessions</button>

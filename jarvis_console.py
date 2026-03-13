@@ -1328,7 +1328,7 @@ def run_console(config, mode, user_id="user"):
             if command.lower().strip() in _noise_words:
                 continue
 
-            conversation.add_message("user", command)
+            conversation.add_message("user", command, client_id="console")
 
             # Show context window events inline
             if context_window and context_window.enabled:
@@ -1442,7 +1442,7 @@ def run_console(config, mode, user_id="user"):
 
             t_end = time.perf_counter()
 
-            conversation.add_message("assistant", response)
+            conversation.add_message("assistant", response, client_id="console")
 
             # Display response (skip if LLM streaming already printed it)
             if response and not llm_streamed:

@@ -844,6 +844,7 @@ class Coordinator:
         self.conversation.add_message(
             "user", command,
             speaker_confidence=self._last_speaker_confidence,
+            client_id="voice",
         )
         self.tts._spoke = False
 
@@ -932,7 +933,7 @@ class Coordinator:
         # Post-process: strip metric conversions Qwen sneaks in, then filler for history
         response = self.llm.strip_metric(response, command) if response else response
         stored_response = self.llm.strip_filler(response) if response else response
-        self.conversation.add_message("assistant", stored_response)
+        self.conversation.add_message("assistant", stored_response, client_id="voice")
         print(f"💬 Jarvis: {response}")
         if not self.tts._spoke:
             self._speak_and_wait(response)
@@ -977,9 +978,9 @@ class Coordinator:
         else:
             response = persona.pick("greeting")
 
-        self.conversation.add_message("user", "jarvis")
+        self.conversation.add_message("user", "jarvis", client_id="voice")
         if response:
-            self.conversation.add_message("assistant", response)
+            self.conversation.add_message("assistant", response, client_id="voice")
             print(f"💬 Jarvis: {response}")
             self._speak_and_wait(response)
 
