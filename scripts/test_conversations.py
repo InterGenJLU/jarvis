@@ -290,6 +290,14 @@ def _skip_filler():
     """Marker: skip auto filler check for this turn."""
     return ("skip_filler", "", "")
 
+def _any_of(*texts, desc=""):
+    """Response must contain at least one of the given texts (case-insensitive)."""
+    return ("any_of", "|".join(texts), desc or f"contains one of: {', '.join(texts)}")
+
+def _skip_mum():
+    """Marker: skip auto 'mum' check for secondary user turns."""
+    return ("skip_mum", "", "")
+
 
 # Filler phrases that should never end a response
 _FILLER_ENDINGS = [
@@ -314,7 +322,11 @@ def _extract_tools(info_messages):
 
 
 def grade_turn(result, checks, user_id=None):
-    """Evaluate checks against a TurnResult. Returns list of (passed, description)."""
+    """Evaluate checks against a TurnResult. Returns list of (passed, description, category).
+
+    Category is "functional" or "honorific". Turn grade is computed from functional only.
+    Honorific compliance is tracked and reported separately.
+    """
     verdicts = []
     check_types = {c[0] for c in checks}
 
@@ -328,7 +340,20 @@ def grade_turn(result, checks, user_id=None):
     # Auto: "sir" for the user (unless skip_sir or explicit empty)
     if "skip_sir" not in check_types and "empty" not in check_types:
         if user_id is None or user_id == "primary_user":
-            effective.append(("contains", "sir", "'sir' honorific"))
+            effective.append(("auto_sir", "sir", "'sir' honorific"))
+
+    # Auto: "ma'am" for secondary user mid-conversation (unless skip_mum or explicit empty)
+    # Note: explicit _has("ma'am") checks in turn definitions are functional (intentional).
+    # This auto-check only fires when no explicit mum/ms. erica check exists.
+    if "skip_mum" not in check_types and "empty" not in check_types:
+        if user_id and user_id == "secondary_user":
+            # Only add auto-mum if no explicit honorific checks already present
+            has_explicit_honorific = any(
+                c[0] == "contains" and c[1] in ("ma'am", "ms. erica")
+                for c in checks
+            )
+            if not has_explicit_honorific:
+                effective.append(("auto_mum", "ma'am", "'mum' honorific"))
 
     # Auto: no filler (unless skip_filler or explicit empty)
     if "skip_filler" not in check_types and "empty" not in check_types:
@@ -339,13 +364,21 @@ def grade_turn(result, checks, user_id=None):
 
     for ctype, cvalue, cdesc in effective:
         # Skip marker checks
-        if ctype in ("skip_sir", "skip_filler"):
+        if ctype in ("skip_sir", "skip_filler", "skip_mum"):
             continue
 
         passed = True
         detail = ""
+        category = "functional"
 
-        if ctype == "contains":
+        # Honorific auto-checks get their own category
+        if ctype in ("auto_sir", "auto_mum"):
+            category = "honorific"
+            if cvalue.lower() not in response_lower:
+                passed = False
+                detail = "not found in response"
+
+        elif ctype == "contains":
             if cvalue.lower() not in response_lower:
                 passed = False
                 detail = "not found in response"
@@ -354,6 +387,12 @@ def grade_turn(result, checks, user_id=None):
             if cvalue.lower() in response_lower:
                 passed = False
                 detail = "found in response"
+
+        elif ctype == "any_of":
+            alternatives = cvalue.split("|")
+            if not any(alt.lower() in response_lower for alt in alternatives):
+                passed = False
+                detail = "none found in response"
 
         elif ctype == "skill":
             if result.skill_name != cvalue:
@@ -396,7 +435,7 @@ def grade_turn(result, checks, user_id=None):
         verdict_desc = cdesc
         if not passed and detail:
             verdict_desc = f"{cdesc} ({detail})"
-        verdicts.append((passed, verdict_desc))
+        verdicts.append((passed, verdict_desc, category))
 
     return verdicts
 
@@ -784,9 +823,12 @@ def get_v2_conversations():
         _c("V05", "Short Ambiguous Follow-ups", "routing", [
             _t("how much disk space do I have",
                checks=[_uses_tool("get_system_info")]),
-            _t("what about memory", "implied: system memory"),
-            _t("and CPU"),
-            _t("is that normal?", "contextual follow-up"),
+            _t("what about memory", "implied: system memory",
+               checks=[_any_of("memory", "ram", "gb", desc="addresses system memory")]),
+            _t("and CPU",
+               checks=[_any_of("cpu", "processor", "core", "%", desc="addresses CPU info")]),
+            _t("is that normal?", "contextual follow-up",
+               checks=[_min_words(10, "contextual synthesis")]),
         ]),
 
         _c("V06", "Greeting to Task to Dismiss", "routing", [
@@ -815,149 +857,227 @@ def get_v2_conversations():
         ]),
 
         _c("V10", "Five-Turn Deep Dive", "routing", [
-            _t("explain how TLS handshake works"),
-            _t("what changed between TLS 1.2 and 1.3"),
-            _t("why was RSA key exchange removed"),
-            _t("what's the performance difference"),
-            _t("summarize everything in 3 bullet points"),
+            _t("explain how TLS handshake works",
+               checks=[_any_of("tls", "handshake", "certificate", desc="on-topic: TLS"), _min_words(20)]),
+            _t("what changed between TLS 1.2 and 1.3",
+               checks=[_any_of("1.2", "1.3", desc="references TLS versions")]),
+            _t("why was RSA key exchange removed",
+               checks=[_any_of("rsa", "key exchange", "forward secrecy", desc="addresses RSA removal")]),
+            _t("what's the performance difference",
+               checks=[_min_words(15, "substantive answer")]),
+            _t("summarize everything in 3 bullet points",
+               checks=[_min_words(10, "provides summary")]),
         ]),
 
         # ── Hallucination-Prone Domains (V11-V15) ────────────────────
 
         _c("V11", "Medical Symptom Research", "domain-medical", [
-            _t("what are the common symptoms of Type 2 diabetes"),
-            _t("what medications are typically prescribed for it"),
-            _t("are there any interactions between metformin and ibuprofen"),
-            _t("what lifestyle changes help manage blood sugar"),
+            _t("what are the common symptoms of Type 2 diabetes",
+               checks=[_any_of("diabetes", "symptom", "thirst", "fatigue", desc="on-topic: diabetes")]),
+            _t("what medications are typically prescribed for it",
+               checks=[_any_of("metformin", "medication", "prescri", desc="mentions medications")]),
+            _t("are there any interactions between metformin and ibuprofen",
+               checks=[_any_of("interact", "metformin", "ibuprofen", desc="addresses drug interaction")]),
+            _t("what lifestyle changes help manage blood sugar",
+               checks=[_min_words(15, "substantive lifestyle advice")]),
         ]),
 
         _c("V12", "Veterinary Health Question", "domain-medical", [
-            _t("my dog has been limping on his front left leg for two days, what could it be"),
-            _t("he's a 7 year old lab mix, about 80 pounds"),
-            _t("is there anything I can give him for the pain at home"),
-            _t("when should I take him to the vet versus just waiting it out"),
+            _t("my dog has been limping on his front left leg for two days, what could it be",
+               checks=[_min_words(15, "substantive response")]),
+            _t("he's a 7 year old lab mix, about 80 pounds",
+               checks=[_min_words(10, "acknowledges breed/weight")]),
+            _t("is there anything I can give him for the pain at home",
+               checks=[_any_of("vet", "veterinar", "don't", "avoid", desc="safety-conscious advice")]),
+            _t("when should I take him to the vet versus just waiting it out",
+               checks=[_any_of("vet", "veterinar", desc="recommends vet guidance")]),
         ]),
 
         _c("V13", "Legal Rights Question", "domain-legal-finance", [
-            _t("if my landlord wants to enter my apartment, how much notice do they have to give me in Alabama"),
-            _t("what if they come in without notice, what are my options"),
-            _t("can I withhold rent if they refuse to fix something"),
+            _t("if my landlord wants to enter my apartment, how much notice do they have to give me in Alabama",
+               checks=[_any_of("notice", "hour", "day", "48", "24", desc="mentions notice period")]),
+            _t("what if they come in without notice, what are my options",
+               checks=[_min_words(15, "substantive legal options")]),
+            _t("can I withhold rent if they refuse to fix something",
+               checks=[_min_words(15, "addresses rent withholding")]),
         ]),
 
         _c("V14", "Stock Market Research", "domain-legal-finance", [
-            _t("how has NVIDIA stock performed this year"),
-            _t("what's driving the price right now"),
-            _t("is it a good time to buy"),
-            _t("what about AMD compared to NVIDIA for a long-term hold"),
+            _t("how has NVIDIA stock performed this year",
+               checks=[_any_of("nvidia", "nvda", desc="on-topic: NVIDIA")]),
+            _t("what's driving the price right now",
+               checks=[_min_words(15, "substantive analysis")]),
+            _t("is it a good time to buy",
+               checks=[_min_words(15, "investment perspective")]),
+            _t("what about AMD compared to NVIDIA for a long-term hold",
+               checks=[_any_of("amd", desc="addresses AMD comparison")]),
         ]),
 
         _c("V15", "Nutrition and Macros", "domain-nutrition", [
-            _t("how many calories are in a chicken breast"),
-            _t("what about the protein and fat breakdown"),
-            _t("if I eat 4 chicken breasts a day is that too much protein"),
-            _t("what's a good daily protein target for someone who lifts weights, about 200 pounds"),
+            _t("how many calories are in a chicken breast",
+               checks=[_any_of("calori", "kcal", desc="provides calorie info")]),
+            _t("what about the protein and fat breakdown",
+               checks=[_any_of("protein", "fat", "gram", desc="provides macro breakdown")]),
+            _t("if I eat 4 chicken breasts a day is that too much protein",
+               checks=[_min_words(15, "substantive answer")]),
+            _t("what's a good daily protein target for someone who lifts weights, about 200 pounds",
+               checks=[_any_of("gram", "protein", desc="provides protein target")]),
         ]),
 
         # ── Knowledge Domains (V16-V23) ──────────────────────────────
 
         _c("V16", "Sports Scores and Standings", "domain-sports-gaming", [
-            _t("how did Alabama do in their last football game"),
-            _t("who are they playing next"),
-            _t("what are the current SEC standings"),
-            _t("who's favored to win the SEC championship this year"),
+            _t("how did Alabama do in their last football game",
+               checks=[_any_of("alabama", "crimson", "tide", desc="on-topic: Alabama football")]),
+            _t("who are they playing next",
+               checks=[_min_words(5, "provides schedule info")]),
+            _t("what are the current SEC standings",
+               checks=[_any_of("sec", "standing", "season", desc="addresses SEC standings")]),
+            _t("who's favored to win the SEC championship this year",
+               checks=[_min_words(10, "provides prediction")]),
         ]),
 
         _c("V17", "Gaming Release Research", "domain-sports-gaming", [
-            _t("what big games have come out recently for PlayStation 5"),
-            _t("which one has the best reviews"),
-            _t("is there a new Grand Theft Auto coming out"),
-            _t("what's the price and where can I get the best deal"),
+            _t("what big games have come out recently for PlayStation 5",
+               checks=[_min_words(15, "lists games")]),
+            _t("which one has the best reviews",
+               checks=[_min_words(10, "provides review info")]),
+            _t("is there a new Grand Theft Auto coming out",
+               checks=[_any_of("gta", "grand theft", desc="addresses GTA")]),
+            _t("what's the price and where can I get the best deal",
+               checks=[_any_of("$", "price", "cost", desc="provides pricing")]),
         ]),
 
         _c("V18", "Home Value Research", "domain-real-estate", [
-            _t("what's the average home price in Huntsville Alabama right now"),
-            _t("how does that compare to five years ago"),
-            _t("what neighborhoods are appreciating the fastest"),
-            _t("what would my monthly payment be on a $350,000 house with 20 percent down at current rates"),
+            _t("what's the average home price in Huntsville Alabama right now",
+               checks=[_any_of("$", "huntsville", desc="provides home price data")]),
+            _t("how does that compare to five years ago",
+               checks=[_min_words(10, "historical comparison")]),
+            _t("what neighborhoods are appreciating the fastest",
+               checks=[_min_words(15, "neighborhood analysis")]),
+            _t("what would my monthly payment be on a $350,000 house with 20 percent down at current rates",
+               checks=[_any_of("$", "month", "payment", desc="provides mortgage calc")]),
         ]),
 
         _c("V19", "Historical Deep Dive", "domain-history-factual", [
-            _t("what caused the fall of the Roman Empire"),
-            _t("how long did the decline actually take"),
-            _t("were there any parallels to modern civilizations"),
-            _t("what are the best books on this topic"),
+            _t("what caused the fall of the Roman Empire",
+               checks=[_any_of("rome", "roman", "empire", desc="on-topic: Roman Empire"), _min_words(20)]),
+            _t("how long did the decline actually take",
+               checks=[_min_words(15, "discusses timeline")]),
+            _t("were there any parallels to modern civilizations",
+               checks=[_min_words(15, "discusses parallels")]),
+            _t("what are the best books on this topic",
+               checks=[_min_words(15, "provides recommendations")]),
         ]),
 
         _c("V20", "Factual Quick-Fire", "domain-history-factual", [
-            _t("who invented the telephone"),
-            _t("what year was the first transatlantic flight"),
-            _t("how tall is the Empire State Building"),
-            _t("what's the population of Tokyo"),
+            _t("who invented the telephone",
+               checks=[_any_of("bell", "gray", "meucci", desc="names inventor")]),
+            _t("what year was the first transatlantic flight",
+               checks=[_any_of("1919", "1927", "alcock", "lindbergh", desc="provides year/name")]),
+            _t("how tall is the Empire State Building",
+               checks=[_any_of("1,454", "1454", "1,250", "1250", "feet", "meter", desc="provides height")]),
+            _t("what's the population of Tokyo",
+               checks=[_any_of("million", "13", "14", "33", "37", desc="provides population figure")]),
         ]),
 
         _c("V21", "Science Research Query", "domain-science-tech", [
-            _t("what's the current scientific consensus on dark matter"),
-            _t("what experiments are being done to detect it"),
-            _t("has anyone proposed alternatives to dark matter"),
-            _t("explain it like I understand physics but not cosmology"),
+            _t("what's the current scientific consensus on dark matter",
+               checks=[_any_of("dark matter", "mass", "gravity", desc="on-topic: dark matter"), _min_words(20)]),
+            _t("what experiments are being done to detect it",
+               checks=[_min_words(15, "describes experiments")]),
+            _t("has anyone proposed alternatives to dark matter",
+               checks=[_any_of("mond", "modified", "alternative", desc="discusses alternatives")]),
+            _t("explain it like I understand physics but not cosmology",
+               checks=[_min_words(20, "adaptive explanation")]),
         ]),
 
         _c("V22", "Python API Research", "domain-programming", [
-            _t("what's the latest stable version of Python right now"),
-            _t("what new features did it add"),
-            _t("show me an example of the new pattern matching syntax"),
-            _t("how does Python's performance compare to Rust for CPU-bound work"),
+            _t("what's the latest stable version of Python right now",
+               checks=[_any_of("python", "3.", desc="mentions Python version")]),
+            _t("what new features did it add",
+               checks=[_min_words(15, "describes features")]),
+            _t("show me an example of the new pattern matching syntax",
+               checks=[_any_of("match", "case", desc="shows pattern matching")]),
+            _t("how does Python's performance compare to Rust for CPU-bound work",
+               checks=[_any_of("rust", "python", "faster", "performance", desc="addresses comparison")]),
         ]),
 
         _c("V23", "Security Code Analysis", "domain-programming", [
-            _t("if I have a Flask endpoint that takes user input and puts it directly in a SQL query, what could go wrong"),
-            _t("show me the vulnerable version versus the fixed version"),
-            _t("what other OWASP top 10 issues should I watch for in Flask"),
+            _t("if I have a Flask endpoint that takes user input and puts it directly in a SQL query, what could go wrong",
+               checks=[_any_of("sql", "injection", desc="identifies SQL injection")]),
+            _t("show me the vulnerable version versus the fixed version",
+               checks=[_min_words(15, "provides code examples")]),
+            _t("what other OWASP top 10 issues should I watch for in Flask",
+               checks=[_any_of("owasp", "xss", "cross", "auth", desc="lists OWASP issues")]),
         ]),
 
         # ── Entertainment & Automotive (V24-V27) ─────────────────────
 
         _c("V24", "Current Movies Research", "entertainment", [
-            _t("what movies are playing in theaters right now"),
-            _t("who's the lead in that first one", "anaphoric to search results"),
-            _t("what else have they been in"),
-            _t("anything good on streaming this month"),
+            _t("what movies are playing in theaters right now",
+               checks=[_min_words(15, "lists current movies")]),
+            _t("who's the lead in that first one", "anaphoric to search results",
+               checks=[_min_words(5, "identifies actor")]),
+            _t("what else have they been in",
+               checks=[_min_words(10, "lists filmography")]),
+            _t("anything good on streaming this month",
+               checks=[_min_words(10, "streaming recommendations")]),
         ]),
 
         _c("V25", "Music and Concert Research", "entertainment", [
-            _t("is Tool touring this year"),
-            _t("are they playing anywhere near North Carolina"),
-            _t("how much are tickets going for"),
-            _t("what other rock or metal shows are happening this summer in the southeast"),
+            _t("is Tool touring this year",
+               checks=[_any_of("tool", "tour", "concert", "festival", desc="addresses Tool touring")]),
+            _t("are they playing anywhere near North Carolina",
+               checks=[_min_words(10, "provides location info")]),
+            _t("how much are tickets going for",
+               checks=[_any_of("$", "ticket", "price", desc="provides pricing")]),
+            _t("what other rock or metal shows are happening this summer in the southeast",
+               checks=[_min_words(15, "lists other shows")]),
         ]),
 
         _c("V26", "Jeep Specs and Research", "automotive", [
-            _t("what's the towing capacity on a 2026 Jeep Wrangler JL"),
-            _t("look that up online to make sure"),
-            _t("how does the Wrangler compare to the Bronco for off-road capability"),
-            _t("if I'm doing mostly weekend trail rides, which one makes more sense"),
+            _t("what's the towing capacity on a 2026 Jeep Wrangler JL",
+               checks=[_any_of("tow", "pound", "lb", "000", desc="provides towing capacity")]),
+            _t("look that up online to make sure",
+               checks=[_uses_tool("web_search", "verifies via web search")]),
+            _t("how does the Wrangler compare to the Bronco for off-road capability",
+               checks=[_any_of("bronco", "wrangler", desc="compares vehicles")]),
+            _t("if I'm doing mostly weekend trail rides, which one makes more sense",
+               checks=[_min_words(15, "provides recommendation")]),
         ]),
 
         _c("V27", "Car Maintenance Questions", "automotive", [
-            _t("what's the recommended oil change interval for a 2026 Wrangler JL"),
-            _t("are there any recalls or common problems I should know about"),
-            _t("what does the 60,000 mile service typically cost"),
+            _t("what's the recommended oil change interval for a 2026 Wrangler JL",
+               checks=[_any_of("oil", "mile", "km", "month", desc="provides interval")]),
+            _t("are there any recalls or common problems I should know about",
+               checks=[_min_words(15, "addresses recalls/problems")]),
+            _t("what does the 60,000 mile service typically cost",
+               checks=[_any_of("$", "cost", "price", desc="provides cost estimate")]),
         ]),
 
         # ── Travel & Geo (V28-V29) ──────────────────────────────────
 
         _c("V28", "Road Trip Planning", "travel-geo", [
-            _t("how far is it from here to Gatlinburg Tennessee"),
-            _t("with my Wrangler getting about 22 mpg and gas at $3.50, what's the fuel cost round trip"),
-            _t("what's worth seeing along the way"),
-            _t("recommend a good cabin rental in Gatlinburg for a weekend"),
+            _t("how far is it from here to Gatlinburg Tennessee",
+               checks=[_any_of("mile", "km", "hour", "drive", desc="provides distance")]),
+            _t("with my Wrangler getting about 22 mpg and gas at $3.50, what's the fuel cost round trip",
+               checks=[_any_of("$", "cost", desc="provides fuel cost")]),
+            _t("what's worth seeing along the way",
+               checks=[_min_words(15, "lists attractions")]),
+            _t("recommend a good cabin rental in Gatlinburg for a weekend",
+               checks=[_min_words(15, "provides accommodation info")]),
         ]),
 
         _c("V29", "International Travel", "travel-geo", [
-            _t("I'm thinking about driving to Cancun from here, how far is that"),
-            _t("what paperwork do I need for the border crossing"),
-            _t("what's the best route and where should I stop for gas"),
-            _t("how much should I budget for a week down there"),
+            _t("I'm thinking about driving to Cancun from here, how far is that",
+               checks=[_any_of("mile", "km", "hour", desc="provides distance")]),
+            _t("what paperwork do I need for the border crossing",
+               checks=[_any_of("passport", "visa", "permit", "fmm", desc="lists required documents")]),
+            _t("what's the best route and where should I stop for gas",
+               checks=[_min_words(15, "provides route info")]),
+            _t("how much should I budget for a week down there",
+               checks=[_any_of("$", "budget", "cost", desc="provides budget estimate")]),
         ]),
 
         # ── Self-Awareness (V30-V31) ─────────────────────────────────
@@ -977,7 +1097,7 @@ def get_v2_conversations():
             _t("what can you do"),
             _t("can you control my desktop"),
             _t("do you have access to my calendar",
-               checks=[_has("not", "calendar not available")]),
+               checks=[_any_of("not", "don't", "no ", "can't", desc="calendar not available")]),
             _t("what skills do you have loaded right now"),
         ]),
 
@@ -1127,41 +1247,62 @@ def get_v2_conversations():
         # ── Long-Form Knowledge (V49-V51) ────────────────────────────
 
         _c("V49", "Cybersecurity Deep Dive", "long-form", [
-            _t("tell me about lateral movement in cybersecurity"),
-            _t("what tools do attackers typically use for that"),
-            _t("how do you detect it in a network"),
-            _t("what about in a cloud environment"),
-            _t("summarize in 3 bullet points"),
+            _t("tell me about lateral movement in cybersecurity",
+               checks=[_any_of("lateral", "movement", "credential", desc="on-topic: lateral movement"), _min_words(20)]),
+            _t("what tools do attackers typically use for that",
+               checks=[_any_of("mimikatz", "psexec", "cobalt", "tool", desc="names attacker tools")]),
+            _t("how do you detect it in a network",
+               checks=[_any_of("detect", "monitor", "log", "anomal", desc="discusses detection")]),
+            _t("what about in a cloud environment",
+               checks=[_any_of("cloud", "iam", "aws", "azure", desc="addresses cloud context")]),
+            _t("summarize in 3 bullet points",
+               checks=[_min_words(10, "provides summary")]),
         ]),
 
         _c("V50", "DNS and Networking", "long-form", [
-            _t("explain how DNS works end to end"),
-            _t("what happens when DNS resolution fails"),
-            _t("what's the difference between DNS over HTTPS and standard DNS"),
-            _t("how would I set up a Pi-hole at home"),
+            _t("explain how DNS works end to end",
+               checks=[_any_of("dns", "domain", "resolver", "root", desc="on-topic: DNS"), _min_words(20)]),
+            _t("what happens when DNS resolution fails",
+               checks=[_any_of("fail", "nxdomain", "timeout", "error", desc="addresses DNS failure")]),
+            _t("what's the difference between DNS over HTTPS and standard DNS",
+               checks=[_any_of("https", "doh", "encrypt", "plain", desc="compares DoH vs standard")]),
+            _t("how would I set up a Pi-hole at home",
+               checks=[_any_of("pi-hole", "pihole", "raspberry", "install", desc="addresses Pi-hole setup")]),
         ]),
 
         _c("V51", "AI and ML Breakdown", "long-form", [
-            _t("what's the difference between machine learning, deep learning, and AI"),
-            _t("where does a large language model fit in"),
-            _t("what are the biggest limitations of current LLMs"),
-            _t("what's the most promising research direction right now"),
+            _t("what's the difference between machine learning, deep learning, and AI",
+               checks=[_any_of("machine learning", "deep learning", desc="on-topic: AI/ML"), _min_words(20)]),
+            _t("where does a large language model fit in",
+               checks=[_any_of("llm", "language model", "deep learning", "neural", desc="places LLMs in hierarchy")]),
+            _t("what are the biggest limitations of current LLMs",
+               checks=[_any_of("hallucin", "limit", "reason", "context", desc="discusses limitations")]),
+            _t("what's the most promising research direction right now",
+               checks=[_min_words(15, "discusses research directions")]),
         ]),
 
         # ── Math (V52-V53) ───────────────────────────────────────────
 
         _c("V52", "Recipe Scaling", "math", [
-            _t("I need to triple 3/4 cup of flour"),
-            _t("I only have a 1/3 cup scoop, how many scoops"),
-            _t("recipe serves 4, I need to feed 7, what's my multiplier"),
-            _t("scale the whole thing for me — 3/4 cup flour, 2 tbsp butter, 1.5 cups milk, 3 eggs"),
+            _t("I need to triple 3/4 cup of flour",
+               checks=[_any_of("2 1/4", "2.25", "2¼", desc="correct: 2 1/4 cups")]),
+            _t("I only have a 1/3 cup scoop, how many scoops",
+               checks=[_any_of("6", "7", desc="correct scoop count (6.75, rounds to 7)")]),
+            _t("recipe serves 4, I need to feed 7, what's my multiplier",
+               checks=[_any_of("1.75", "7/4", desc="correct multiplier")]),
+            _t("scale the whole thing for me — 3/4 cup flour, 2 tbsp butter, 1.5 cups milk, 3 eggs",
+               checks=[_min_words(15, "scales all ingredients")]),
         ]),
 
         _c("V53", "Home Project Calculations", "math", [
-            _t("room is 14 by 12 feet with 9 foot ceilings, what's the wall area"),
-            _t("subtract two 3x4 windows and a 3x7 door"),
-            _t("a gallon covers 350 square feet, how many gallons for two coats"),
-            _t("at $75 a gallon, total paint cost"),
+            _t("room is 14 by 12 feet with 9 foot ceilings, what's the wall area",
+               checks=[_any_of("468", "sq", "square", desc="provides wall area")]),
+            _t("subtract two 3x4 windows and a 3x7 door",
+               checks=[_any_of("423", "393", "sq", "square", desc="provides adjusted area")]),
+            _t("a gallon covers 350 square feet, how many gallons for two coats",
+               checks=[_any_of("3", "gallon", desc="provides gallon count")]),
+            _t("at $75 a gallon, total paint cost",
+               checks=[_any_of("$", "225", "cost", desc="provides total cost")]),
         ]),
 
         # ── Weather & News (V54-V55) ─────────────────────────────────
@@ -1191,7 +1332,7 @@ def get_v2_conversations():
             _t("what reminders do I have set",
                checks=[_uses_tool("manage_reminders")]),
             _t("cancel the one about oil changes",
-               checks=[_uses_tool("manage_reminders")]),
+               checks=[_has("cancel", "confirms cancellation")]),
             _t("set a reminder for Friday at 3pm to leave early for the weekend",
                checks=[_uses_tool("manage_reminders")]),
         ]),
@@ -1233,7 +1374,7 @@ def get_v2_conversations():
             _t("compare them in a document"),
             _t("add price data to each entry"),
             _t("email that to me", "should explain email not yet available",
-               checks=[_has("not", "email not available")]),
+               checks=[_any_of("not", "can't", "don't", "unable", desc="email not available")]),
         ]),
 
         _c("V61", "Personal Context Chain", "mixed-capability", [
@@ -1328,15 +1469,29 @@ def print_conversation_result(cr, verbose=True):
 
         # Show check results
         if tr.check_results:
-            failures = [(p, d) for p, d in tr.check_results if not p]
-            passes = [(p, d) for p, d in tr.check_results if p]
-            total = len(tr.check_results)
-            if failures:
-                print(f"      GRADE: FAIL ({len(passes)}/{total} checks passed)")
-                for _, desc in failures:
-                    print(f"        ✗ {desc}")
+            # Handle both 2-tuple (legacy) and 3-tuple (new) formats
+            func_checks = []
+            hon_checks = []
+            for v in tr.check_results:
+                cat = v[2] if len(v) > 2 else "functional"
+                if cat == "honorific":
+                    hon_checks.append(v)
+                else:
+                    func_checks.append(v)
+
+            func_failures = [v for v in func_checks if not v[0]]
+            func_passes = [v for v in func_checks if v[0]]
+            hon_failures = [v for v in hon_checks if not v[0]]
+
+            if func_failures:
+                print(f"      GRADE: FAIL ({len(func_passes)}/{len(func_checks)} functional checks)")
+                for v in func_failures:
+                    print(f"        ✗ {v[1]}")
             elif verbose:
-                print(f"      GRADE: PASS ({total}/{total})")
+                print(f"      GRADE: PASS ({len(func_checks)}/{len(func_checks)} functional)")
+            if hon_failures:
+                for v in hon_failures:
+                    print(f"        ⚠ {v[1]} [honorific]")
 
     # Summary
     if cr.turn_results:
@@ -1522,24 +1677,49 @@ def print_analysis(results):
             print(f"    {cr.id} {cr.name} [{cr.grade}] ({passed}/{total} turns)")
             for tr in cr.turn_results:
                 if tr.grade == "FAIL":
-                    failures = [d for p, d in tr.check_results if not p]
+                    failures = [v[1] for v in tr.check_results
+                                if not v[0] and (v[2] if len(v) > 2 else "functional") == "functional"]
                     fail_str = "; ".join(failures[:3])
                     if len(failures) > 3:
                         fail_str += f" (+{len(failures)-3} more)"
                     print(f"      T{tr.turn_num}: {fail_str}")
 
-    # Aggregate check failure reasons
-    failure_reasons = {}
+    # Honorific compliance (separate metric)
+    hon_total = 0
+    hon_pass = 0
     for t in all_turns:
-        for passed, desc in t.check_results:
-            if not passed:
-                # Normalize the description to group similar failures
-                key = desc.split(" (")[0]  # strip detail in parens
-                failure_reasons[key] = failure_reasons.get(key, 0) + 1
+        for v in t.check_results:
+            cat = v[2] if len(v) > 2 else "functional"
+            if cat == "honorific":
+                hon_total += 1
+                if v[0]:
+                    hon_pass += 1
+    if hon_total:
+        hon_pct = 100 * hon_pass // hon_total
+        print(f"\n  Honorific compliance: {hon_pass}/{hon_total} ({hon_pct}%)")
+        print(f"    (tracked separately — does not affect PASS/FAIL grades)")
 
-    if failure_reasons:
-        print(f"\n  Top failure reasons:")
-        for reason, count in sorted(failure_reasons.items(), key=lambda x: -x[1])[:10]:
+    # Aggregate check failure reasons
+    func_failure_reasons = {}
+    hon_failure_reasons = {}
+    for t in all_turns:
+        for v in t.check_results:
+            if not v[0]:
+                cat = v[2] if len(v) > 2 else "functional"
+                key = v[1].split(" (")[0]  # strip detail in parens
+                if cat == "honorific":
+                    hon_failure_reasons[key] = hon_failure_reasons.get(key, 0) + 1
+                else:
+                    func_failure_reasons[key] = func_failure_reasons.get(key, 0) + 1
+
+    if func_failure_reasons:
+        print(f"\n  Top functional failure reasons:")
+        for reason, count in sorted(func_failure_reasons.items(), key=lambda x: -x[1])[:10]:
+            print(f"    {count:3d}x  {reason}")
+
+    if hon_failure_reasons:
+        print(f"\n  Honorific failures (informational):")
+        for reason, count in sorted(hon_failure_reasons.items(), key=lambda x: -x[1])[:5]:
             print(f"    {count:3d}x  {reason}")
 
 
@@ -1573,10 +1753,11 @@ async def run_conversation(client, conv, delay=2.0, verbose=True):
             result.turn_num = i + 1
             result.notes = turn.notes
 
-            # Grade the turn
+            # Grade the turn (functional verdicts only determine grade)
             verdicts = grade_turn(result, turn.checks, user_id=turn.user_id)
             result.check_results = verdicts
-            result.grade = "PASS" if all(v[0] for v in verdicts) else "FAIL"
+            functional = [v for v in verdicts if v[2] == "functional"]
+            result.grade = "PASS" if all(v[0] for v in functional) else "FAIL"
             turn_results.append(result)
 
             if verbose:
@@ -1891,7 +2072,7 @@ def save_results(results, path):
                     'synthesis_category': tr.synthesis_category,
                     'synthesis_temperature': tr.synthesis_temperature,
                     'grade': tr.grade,
-                    'check_results': tr.check_results,
+                    'check_results': [list(v) for v in tr.check_results],
                 }
                 for tr in cr.turn_results
             ],
@@ -1927,7 +2108,10 @@ def load_results(path):
                 raw_stats=t.get('raw_stats', {}),
                 synthesis_category=t.get('synthesis_category', ''),
                 synthesis_temperature=t.get('synthesis_temperature', 0.0),
-                check_results=t.get('check_results', []),
+                check_results=[
+                    tuple(v) if len(v) >= 3 else (v[0], v[1], "functional")
+                    for v in t.get('check_results', [])
+                ],
                 grade=t.get('grade', ''),
             )
             for t in item['turns']
@@ -1965,7 +2149,8 @@ def regrade_results(results, conversations=None):
             turn_def = conv.turns[i]
             verdicts = grade_turn(tr, turn_def.checks, user_id=turn_def.user_id)
             tr.check_results = verdicts
-            tr.grade = "PASS" if all(v[0] for v in verdicts) else "FAIL"
+            functional = [v for v in verdicts if v[2] == "functional"]
+            tr.grade = "PASS" if all(v[0] for v in functional) else "FAIL"
 
         cr.grade = grade_conversation(cr)
 

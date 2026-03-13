@@ -506,11 +506,9 @@ def system_prompt(home_location: str = None) -> str:
     current_time = now.strftime("%I:%M %p").lstrip("0")
     if formal:
         rule1 = (
-            f"1. The user is {formal}. "
-            f"If the user says hello, good morning, good evening, goodbye, goodnight, "
-            f"or any greeting or farewell, YOU MUST use '{formal}' — DO NOT use '{h}' in greetings or farewells. "
-            f"YOU MUST use '{h}' ONLY for mid-conversation replies that are NOT greetings or farewells. "
-            f"YOU MUST check your previous response — if you used '{formal}' last time, use '{h}' this time, and vice versa.\n"
+            f"1. The user is {formal}. YOU MUST include either '{formal}' or '{h}' in EVERY response — never omit the address.\n"
+            f"   - Greetings (hello, good morning, good evening) and farewells (goodbye, goodnight, thank you): ALWAYS use '{formal}'.\n"
+            f"   - All other responses: ALTERNATE between '{formal}' and '{h}'. Check your previous response — if you used '{formal}' last, use '{h}' this time, and vice versa.\n"
         )
     else:
         rule1 = f"1. YOU MUST address the user as '{h}' — work it naturally into your responses.\n"
@@ -599,8 +597,8 @@ def system_prompt_brief() -> str:
     formal = get_formal_address()
     if formal:
         addr_rule = (
-            f"1. YOU MUST address the user as '{formal}' for greetings and farewells. "
-            f"YOU MUST use '{h}' for mid-conversation replies.\n"
+            f"1. The user is {formal}. YOU MUST include '{formal}' or '{h}' in EVERY response.\n"
+            f"   Greetings/farewells: ALWAYS '{formal}'. Other responses: ALTERNATE '{formal}' and '{h}'.\n"
         )
     else:
         addr_rule = f"1. YOU MUST address the user as '{h}'.\n"
