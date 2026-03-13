@@ -48,6 +48,8 @@ from core.web_research import WebResearcher, format_search_results
 from core.skill_manager import SkillManager
 from core.reminder_manager import get_reminder_manager
 from core.news_manager import get_news_manager
+from core.weather_db import get_weather_db
+from core.weather_poller import get_weather_poller
 from core import persona
 from core.conversation_state import ConversationState
 from core.conversation_router import ConversationRouter
@@ -179,11 +181,20 @@ class WebTTSProxy:
         self.hybrid = False  # Toggled by voice switch
         self._announcement_queue: list[str] = []
         self._lock = threading.Lock()
+        self._command_depth = 0  # >0 while processing user commands
 
     def speak(self, text, normalize=True):
-        """Queue announcement for WebSocket delivery + optional TTS."""
-        with self._lock:
-            self._announcement_queue.append(text)
+        """Speak via TTS and optionally queue as announcement banner.
+
+        During user-command processing (_command_depth > 0), speech is
+        TTS-only — the text is NOT queued as an announcement banner.
+        Proactive deliveries (reminders, alerts, rundowns) call speak()
+        outside command processing, so they queue normally and appear
+        as banners via the announcement pump.
+        """
+        if self._command_depth == 0:
+            with self._lock:
+                self._announcement_queue.append(text)
         if self.hybrid and self.real_tts:
             threading.Thread(
                 target=self.real_tts.speak, args=(text, normalize), daemon=True
@@ -267,6 +278,17 @@ def init_components(config, tts_proxy):
         nm.set_window_callback(lambda d: None)
         nm.start()
         components['news_manager'] = nm
+
+    # Weather
+    components['weather_db'] = None
+    components['weather_poller'] = None
+    if config.get("weather.enabled", True):
+        wdb = get_weather_db(config)
+        components['weather_db'] = wdb
+        wp = get_weather_poller(config)
+        wp.set_tts_callback(tts_proxy.speak)
+        wp.start()
+        components['weather_poller'] = wp
 
     # Conversational memory
     components['memory_manager'] = None
@@ -1069,16 +1091,28 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     _route_ctx = None
     if conn_ctx:
         from core.conversation_router import RouteContext
+        # Check if mobile user is away from home
+        _away_geo = None
+        if conn_ctx.client_type == 'mobile':
+            _last_geo = getattr(conn_ctx, '_last_geo', None)
+            if _last_geo:
+                from core.weather_db import get_weather_db
+                wdb = get_weather_db()
+                if wdb and wdb.is_away(*_last_geo):
+                    _away_geo = _last_geo
         _route_ctx = RouteContext(
             user_id=conn_ctx.user_id,
             client_type=conn_ctx.client_type,
             client_id=conn_ctx.client_id,
             location=conn_ctx.location,
+            away_geo=_away_geo,
         )
+    router._target_history = conn_ctx.session_history if conn_ctx else None
     result = await asyncio.to_thread(
         router.route, command, in_conversation=True, doc_buffer=doc_buffer,
         image_data=image_data, route_ctx=_route_ctx,
     )
+    router._target_history = None
     t_match = time.perf_counter()
     logger.debug("route result: handled=%s intent=%s skip=%s has_tools=%s match=%s",
                  result.handled, getattr(result, 'intent', None), result.skip,
@@ -2041,15 +2075,12 @@ async def _handle_chat_message(ws, conn_ctx, components, tts_proxy, config,
                 " [+image]" if msg_image_data else "",
                 conn_ctx.client_type, conn_ctx.client_id)
     async with conn_ctx.cmd_lock:
+        tts_proxy._command_depth += 1
         try:
             result = await process_command(
                 content, components, tts_proxy, config,
                 ws=ws, image_data=msg_image_data, conn_ctx=conn_ctx,
             )
-            # Drain announcements queued during command processing
-            # (skills call tts_proxy.speak() which would duplicate
-            # the response as a gold announcement banner)
-            tts_proxy.get_pending_announcements()
 
             # Speak LLM responses via TTS when voice is enabled
             # (skills already speak internally; this covers LLM fallback)
@@ -2112,6 +2143,8 @@ async def _handle_chat_message(ws, conn_ctx, components, tts_proxy, config,
                 })
             except Exception:
                 pass  # WS may have closed
+        finally:
+            tts_proxy._command_depth -= 1
 
 
 # ---------------------------------------------------------------------------
@@ -2148,6 +2181,11 @@ async def websocket_handler(request):
             await asyncio.sleep(1)
 
     pump_task = asyncio.create_task(announcement_pump())
+
+    # Register in connection registry for targeted alert routing
+    ws_conns = app.get('ws_connections')
+    if ws_conns is not None:
+        ws_conns[ws] = conn_ctx
 
     # Send current session messages + session list on connect
     try:
@@ -2359,6 +2397,24 @@ async def websocket_handler(request):
                             logger.info("Mobile location: %s (%.4f, %.4f)",
                                         location, lat, lon)
 
+                            # Weather: divergence detection for away-user alert tracking
+                            wdb = request.app.get('weather_db') or get_weather_db()
+                            if wdb:
+                                uid = conn_ctx.user_id or 'christopher'
+                                loc_key = f"{uid}_mobile"
+                                if wdb.is_away(lat, lon):
+                                    wdb.upsert_tracked_location(
+                                        key=loc_key,
+                                        label=f"{uid}'s area - {location}",
+                                        lat=lat, lon=lon,
+                                        user_id=uid, source="gps",
+                                    )
+                                    logger.info("Weather: user %s away from home — tracking alerts for %s",
+                                                uid, location)
+                                else:
+                                    # Back near home — remove away tracking if it existed
+                                    wdb.remove_tracked_location(loc_key)
+
                 elif msg_type == 'frame_response':
                     # Mobile browser sending a captured camera frame
                     relay = request.app.get('mobile_relay')
@@ -2387,11 +2443,24 @@ async def websocket_handler(request):
                 break
     finally:
         pump_task.cancel()
+        # Unregister from connection registry
+        ws_conns = app.get('ws_connections')
+        if ws_conns is not None:
+            ws_conns.pop(ws, None)
+
         # Clean up mobile camera relay if this WS was the relay source
         relay = request.app.get('mobile_relay')
         if relay and relay._ws is ws:
             relay.clear_ws()
             logger.info("Mobile camera relay disconnected")
+
+        # Weather: remove away-user tracking on mobile disconnect
+        if conn_ctx.client_type == "mobile" and getattr(conn_ctx, '_last_geo', None):
+            wdb = request.app.get('weather_db') or get_weather_db()
+            if wdb and wdb.is_away(*conn_ctx._last_geo):
+                uid = conn_ctx.user_id or 'christopher'
+                wdb.remove_tracked_location(f"{uid}_mobile")
+                logger.info("Weather: removed away tracking for %s on disconnect", uid)
 
         # Per-connection state is garbage-collected with conn_ctx.
         # No shared session_history to clear — each connection owns its own.
@@ -3930,6 +3999,7 @@ async def on_startup(app):
     app['components'] = components
     app['cmd_lock'] = asyncio.Lock()
     app['dashboard_clients'] = set()
+    app['ws_connections'] = {}  # ws → conn_ctx, for targeted alert routing
 
     # Initialize webcam manager (lazy — feed starts on first client)
     try:
@@ -3946,6 +4016,61 @@ async def on_startup(app):
     app['mobile_relay'] = relay
     set_mobile_camera_relay(relay)
     logger.info("Mobile camera relay initialized")
+
+    # Store weather_db on app for easy access from WS handler
+    app['weather_db'] = components.get('weather_db')
+
+    # Weather alert banner — push structured alerts to targeted WS connections
+    wp = components.get('weather_poller')
+    if wp:
+        loop = asyncio.get_event_loop()
+
+        def _push_weather_alert(alert_data: dict):
+            """Push weather_alert message to targeted WebSocket connections.
+
+            Home alerts go to ALL connections. Away-user alerts go only to
+            connections belonging to that user.
+            """
+            ws_conns = app.get('ws_connections', {})
+            if not ws_conns:
+                return
+
+            location_key = alert_data.get('location_key', 'home')
+
+            # Determine target user_id for away alerts
+            target_user_id = None
+            if location_key != 'home':
+                # location_key is like "christopher_mobile" — extract user_id
+                # Look up in tracked_locations for authoritative user_id
+                wdb = app.get('weather_db')
+                if wdb:
+                    locations = wdb.get_tracked_locations()
+                    loc = next((l for l in locations
+                                if l['location_key'] == location_key), None)
+                    if loc and loc.get('user_id'):
+                        target_user_id = loc['user_id']
+
+            payload = json.dumps({
+                'type': 'weather_alert',
+                'event': alert_data.get('event', ''),
+                'severity': alert_data.get('severity', ''),
+                'headline': alert_data.get('headline', ''),
+                'location_key': location_key,
+                'is_immediate': alert_data.get('is_immediate', False),
+            })
+
+            for ws_conn, conn_ctx in list(ws_conns.items()):
+                # Skip closed connections
+                if ws_conn.closed:
+                    continue
+                # Per-user targeting: away alerts only to that user
+                if target_user_id and conn_ctx.user_id != target_user_id:
+                    continue
+                asyncio.run_coroutine_threadsafe(
+                    ws_conn.send_str(payload), loop
+                )
+
+        wp.set_alert_banner_callback(_push_weather_alert)
 
     # Wire live dashboard push — MetricsTracker calls this after each record()
     metrics = components.get('metrics')
@@ -3979,6 +4104,10 @@ async def on_shutdown(app):
     nm = components.get('news_manager')
     if nm:
         nm.stop()
+
+    wp = components.get('weather_poller')
+    if wp:
+        wp.stop()
 
     cm = components.get('calendar_manager')
     if cm:

@@ -52,6 +52,7 @@ class RouteContext:
     client_type: str | None = None  # 'desktop' or 'mobile'
     client_id: str | None = None    # UUID from browser localStorage
     location: str | None = None
+    away_geo: tuple[float, float] | None = None  # (lat, lon) if away from home
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +159,7 @@ class ConversationRouter:
         self.task_planner = task_planner
         self.people_manager = people_manager
         self.awareness = awareness
+        self._target_history = None  # Set per-request by jarvis_web.py
 
     @property
     def _user_id(self) -> str:
@@ -186,6 +188,14 @@ class ConversationRouter:
         if ctx and ctx.client_type:
             return ctx.client_type == "mobile"
         return getattr(self.conversation, 'client_type', 'desktop') == "mobile"
+
+    @property
+    def _away_geo(self) -> tuple[float, float] | None:
+        """Raw (lat, lon) if current user is away from home, else None."""
+        ctx = getattr(_router_thread_ctx, 'ctx', None)
+        if ctx and ctx.away_geo:
+            return ctx.away_geo
+        return None
 
     def route(self, command: str, *,
               in_conversation: bool = False,
@@ -778,7 +788,8 @@ class ConversationRouter:
                             )
 
                 history = self.conversation.format_history_for_llm(
-                    include_system_prompt=False
+                    include_system_prompt=False,
+                    target_history=self._target_history,
                 )
                 response = self.llm.chat(
                     user_message=(
@@ -1371,6 +1382,7 @@ class ConversationRouter:
 
         history = self.conversation.format_history_for_llm(
             include_system_prompt=False,
+            target_history=self._target_history,
         )
         response = self.llm.chat(
             user_message=(
@@ -1471,6 +1483,7 @@ class ConversationRouter:
         # For other types, ask LLM to answer in context of the artifact
         history = self.conversation.format_history_for_llm(
             include_system_prompt=False,
+            target_history=self._target_history,
         )
         response = self.llm.chat(
             user_message=(
@@ -1540,6 +1553,7 @@ class ConversationRouter:
 
         history = self.conversation.format_history_for_llm(
             include_system_prompt=False,
+            target_history=self._target_history,
         )
         response = self.llm.chat(
             user_message=(
@@ -1931,6 +1945,10 @@ class ConversationRouter:
     # Map skill names → tool names for semantic matching.
     # Auto-built from core/tools/*.py definitions via tool_registry.
     from core.tool_registry import TOOL_SKILL_MAP as _TOOL_SKILL_MAP
+
+    # Skills that should route through P4 (native skill handlers) instead of
+    # P4-LLM tool-calling, even though they have tool-migrated versions.
+    _PREFER_SKILL_ROUTING = {"weather"}
 
     # Threshold for tool pruning.  Tuned via sweep across 56 queries at
     # thresholds 0.30-0.60 (scripts/test_intent_overlap.py).  0.40 is the
@@ -2490,7 +2508,7 @@ class ConversationRouter:
 
             logger.debug(f"  Tool pruning: {skill_name} = {skill_best:.2f}")
 
-            if skill_name in self._TOOL_SKILL_MAP:
+            if skill_name in self._TOOL_SKILL_MAP and skill_name not in self._PREFER_SKILL_ROUTING:
                 # Migrated skill — track for tool selection
                 if skill_best > best_migrated_score:
                     best_migrated_score = skill_best
@@ -2554,12 +2572,26 @@ class ConversationRouter:
                 )
                 return None
             # If a non-migrated skill (not web_nav) scored well, defer to P4.
+            # Stash its domain tools so LLM fallback can use them if P4 fails.
             if best_non_migrated_score >= self._TOOL_PRUNE_THRESHOLD:
                 logger.info(
                     "Tool pruning: non-migrated '%s' scored %.2f — "
                     "deferring to P4 skill routing",
                     best_non_migrated_name, best_non_migrated_score,
                 )
+                domain_tools = []
+                if best_non_migrated_name in self._TOOL_SKILL_MAP:
+                    for tn in self._TOOL_SKILL_MAP[best_non_migrated_name]:
+                        schema = SKILL_TOOLS.get(tn)
+                        if schema and schema not in domain_tools:
+                            domain_tools.append(schema)
+                for prefer_name in self._PREFER_SKILL_ROUTING:
+                    if prefer_name in self._TOOL_SKILL_MAP:
+                        for tn in self._TOOL_SKILL_MAP[prefer_name]:
+                            schema = SKILL_TOOLS.get(tn)
+                            if schema and schema not in domain_tools:
+                                domain_tools.append(schema)
+                self._deferred_domain_tools = domain_tools if domain_tools else None
                 return None
             # No domain tools AND no non-migrated skill matched.
             # Still give the LLM always-on tools (web_search, recall_memory)
@@ -2583,6 +2615,15 @@ class ConversationRouter:
             )
             # Stash domain tools for fallback if P4 also fails
             domain_tools = [t[1] for t in matched_tools]
+            # Ensure prefer-skill tools are included in deferred set (guest fallback)
+            for prefer_name in self._PREFER_SKILL_ROUTING:
+                if prefer_name in self._TOOL_SKILL_MAP:
+                    for tn in self._TOOL_SKILL_MAP[prefer_name]:
+                        schema = SKILL_TOOLS.get(tn)
+                        if schema:
+                            domain_tools = domain_tools or []
+                            if schema not in domain_tools:
+                                domain_tools.append(schema)
             self._deferred_domain_tools = domain_tools if domain_tools else None
             return None
 
@@ -2817,7 +2858,8 @@ class ConversationRouter:
         guest = self._is_guest
 
         history = self.conversation.format_history_for_llm(
-            include_system_prompt=False
+            include_system_prompt=False,
+            target_history=self._target_history,
         )
         logger.debug("_prepare_llm_context: history_len=%d", len(history) if history else 0)
 
@@ -2937,7 +2979,7 @@ class ConversationRouter:
             multi_speaker = self.conversation.is_multi_speaker
 
             # Fetch up to 5 exchanges worth of history
-            history = self.conversation.get_recent_history(max_turns=5)
+            history = self.conversation.get_recent_history(max_turns=5, target_history=self._target_history)
 
             # Parse history into exchange tuples: (turn_num, question, answer, user_id)
             exchanges = []

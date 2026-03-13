@@ -19,6 +19,7 @@ Usage:
 """
 
 import queue
+import subprocess
 import threading
 import time
 
@@ -59,6 +60,8 @@ class Watchdog(threading.Thread):
         self._last_llm_check_ts: float = 0.0
         self._llm_status: str | None = None               # None = healthy
         self._llm_unhealthy_count: int = 0
+        self._flux_detected_ts: float = 0.0
+        self._flux_grace_period: int = 400  # seconds — covers 300s generation + 90s startup + buffer
         self._stop_event = threading.Event()
 
     # ------------------------------------------------------------------
@@ -259,6 +262,32 @@ class Watchdog(threading.Thread):
                 return
         except Exception:
             pass  # gpu_swap not initialized or import error
+
+        # Cross-process check: flux-server may be running from web service GPU swap
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "flux-server.service"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.stdout.strip() == "active":
+                if self._llm_status != "flux_generating":
+                    self._flux_detected_ts = time.monotonic()
+                    self.logger.info("LLM offline — flux-server active (image generation in progress)")
+                elif time.monotonic() - self._flux_detected_ts > self._flux_grace_period:
+                    self.logger.warning(
+                        "flux-server still running after %ds grace period — possible stuck generation",
+                        self._flux_grace_period,
+                    )
+                    # Fall through to normal health check / announcement
+                else:
+                    # Within grace period — suppress
+                    pass
+                if time.monotonic() - self._flux_detected_ts <= self._flux_grace_period:
+                    self._llm_status = "flux_generating"
+                    self._llm_unhealthy_count = 0
+                    return
+        except Exception:
+            pass
 
         try:
             r = requests.get("http://127.0.0.1:8080/health", timeout=3)

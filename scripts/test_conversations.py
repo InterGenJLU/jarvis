@@ -52,6 +52,7 @@ class Turn:
     user: str
     notes: str = ""
     user_id: str | None = None  # None = current user (default christopher)
+    checks: list = field(default_factory=list)  # list of (type, value, desc) tuples
 
 
 @dataclass
@@ -73,6 +74,8 @@ class TurnResult:
     raw_stats: dict = field(default_factory=dict)
     synthesis_category: str = ""
     synthesis_temperature: float = 0.0
+    check_results: list = field(default_factory=list)  # [(passed, desc), ...]
+    grade: str = ""  # "PASS" or "FAIL"
 
 
 @dataclass
@@ -93,6 +96,7 @@ class ConversationResult:
     turn_results: list
     total_time_ms: int = 0
     error: str = ""
+    grade: str = ""  # "PASS", "MIXED", "FAIL"
 
 
 # ── Config ─────────────────────────────────────────────────────────────────
@@ -240,12 +244,175 @@ class JarvisWSClient:
 
 # ── Conversation Definitions ──────────────────────────────────────────────
 
-def _t(user, notes="", user_id=None):
-    return Turn(user=user, notes=notes, user_id=user_id)
+def _t(user, notes="", user_id=None, checks=None):
+    return Turn(user=user, notes=notes, user_id=user_id, checks=checks or [])
 
 
 def _c(id, name, category, turns):
     return Conversation(id=id, name=name, category=category, turns=turns)
+
+
+# ── Check Helpers ──────────────────────────────────────────────────────────
+
+def _has(text, desc=""):
+    """Response must contain text (case-insensitive)."""
+    return ("contains", text, desc or f"contains '{text}'")
+
+def _lacks(text, desc=""):
+    """Response must NOT contain text (case-insensitive)."""
+    return ("not_contains", text, desc or f"lacks '{text}'")
+
+def _skill_is(name, desc=""):
+    """Must route to named skill."""
+    return ("skill", name, desc or f"skill:{name}")
+
+def _uses_tool(name, desc=""):
+    """Named tool must be called."""
+    return ("tool_used", name, desc or f"uses {name}")
+
+def _no_tool(name, desc=""):
+    """Named tool must NOT be called."""
+    return ("tool_not_used", name, desc or f"avoids {name}")
+
+def _empty():
+    """Response should be empty (bare ack filtering)."""
+    return ("empty", "", "empty response")
+
+def _min_words(n, desc=""):
+    """Response must have at least n words."""
+    return ("min_words", str(n), desc or f"≥{n} words")
+
+def _skip_sir():
+    """Marker: skip auto 'sir' check for this turn."""
+    return ("skip_sir", "", "")
+
+def _skip_filler():
+    """Marker: skip auto filler check for this turn."""
+    return ("skip_filler", "", "")
+
+
+# Filler phrases that should never end a response
+_FILLER_ENDINGS = [
+    "feel free to ask",
+    "let me know",
+    "if you have any questions",
+    "if you need anything else",
+    "don't hesitate to ask",
+    "happy to help",
+]
+
+
+def _extract_tools(info_messages):
+    """Extract tool names from info_messages."""
+    tools = []
+    for info in info_messages:
+        if info.startswith("Searching:"):
+            tools.append("web_search")
+        elif info.startswith("Running:"):
+            tools.append(info.replace("Running:", "").strip())
+    return tools
+
+
+def grade_turn(result, checks, user_id=None):
+    """Evaluate checks against a TurnResult. Returns list of (passed, description)."""
+    verdicts = []
+    check_types = {c[0] for c in checks}
+
+    # Build effective check list: explicit + auto
+    effective = list(checks)
+
+    # Auto: non-empty (unless explicit empty check present)
+    if "empty" not in check_types:
+        effective.append(("non_empty", "", "non-empty response"))
+
+    # Auto: "sir" for the user (unless skip_sir or explicit empty)
+    if "skip_sir" not in check_types and "empty" not in check_types:
+        if user_id is None or user_id == "primary_user":
+            effective.append(("contains", "sir", "'sir' honorific"))
+
+    # Auto: no filler (unless skip_filler or explicit empty)
+    if "skip_filler" not in check_types and "empty" not in check_types:
+        effective.append(("no_filler", "", "no filler ending"))
+
+    response_lower = result.response.lower().strip()
+    tools = _extract_tools(result.info_messages)
+
+    for ctype, cvalue, cdesc in effective:
+        # Skip marker checks
+        if ctype in ("skip_sir", "skip_filler"):
+            continue
+
+        passed = True
+        detail = ""
+
+        if ctype == "contains":
+            if cvalue.lower() not in response_lower:
+                passed = False
+                detail = "not found in response"
+
+        elif ctype == "not_contains":
+            if cvalue.lower() in response_lower:
+                passed = False
+                detail = "found in response"
+
+        elif ctype == "skill":
+            if result.skill_name != cvalue:
+                passed = False
+                actual = result.skill_name or result.llm_model or "unknown"
+                detail = f"got {actual}"
+
+        elif ctype == "tool_used":
+            if cvalue not in tools:
+                passed = False
+                detail = f"tools: {tools or 'none'}"
+
+        elif ctype == "tool_not_used":
+            if cvalue in tools:
+                passed = False
+                detail = f"{cvalue} was called"
+
+        elif ctype == "empty":
+            if result.word_count > 0:
+                passed = False
+                detail = f"got {result.word_count} words"
+
+        elif ctype == "non_empty":
+            if result.word_count == 0:
+                passed = False
+
+        elif ctype == "min_words":
+            threshold = int(cvalue)
+            if result.word_count < threshold:
+                passed = False
+                detail = f"got {result.word_count} words"
+
+        elif ctype == "no_filler":
+            for filler in _FILLER_ENDINGS:
+                if filler in response_lower:
+                    passed = False
+                    detail = f"ends with '{filler}'"
+                    break
+
+        verdict_desc = cdesc
+        if not passed and detail:
+            verdict_desc = f"{cdesc} ({detail})"
+        verdicts.append((passed, verdict_desc))
+
+    return verdicts
+
+
+def grade_conversation(cr):
+    """Compute conversation-level grade from turn grades."""
+    if cr.error:
+        return "ERROR"
+    grades = [tr.grade for tr in cr.turn_results if tr.grade]
+    if not grades:
+        return "PASS"
+    if all(g == "PASS" for g in grades):
+        return "PASS"
+    if all(g == "FAIL" for g in grades):
+        return "FAIL"
+    return "MIXED"
 
 
 def get_v1_conversations():
@@ -576,33 +743,47 @@ def get_v2_conversations():
         # ── Routing Core (V01-V10) ──────────────────────────────────
 
         _c("V01", "Rapid Topic Shift", "routing", [
-            _t("what's the weather"),
-            _t("check git status"),
-            _t("was it supposed to rain today?", "callback to turn 1 weather"),
+            _t("what's the weather",
+               checks=[_skill_is("weather")]),
+            _t("check git status",
+               checks=[_uses_tool("developer_tools")]),
+            _t("was it supposed to rain today?", "callback to turn 1 weather",
+               checks=[_skill_is("weather"), _has("today", "says 'today'"), _lacks("tomorrow")]),
         ]),
 
         _c("V02", "Anaphoric Chain", "routing", [
-            _t("how many files are in my documents folder"),
-            _t("list them for me", "anaphoric reference"),
-            _t("which ones are the biggest", "continuation"),
+            _t("how many files are in my documents folder",
+               checks=[_uses_tool("find_files", "uses filesystem tool")]),
+            _t("list them for me", "anaphoric reference",
+               checks=[_uses_tool("find_files", "lists files, not reminders")]),
+            _t("which ones are the biggest", "continuation",
+               checks=[_no_tool("web_search", "uses local tools, not web")]),
             _t("how old is the oldest one", "implied context"),
         ]),
 
         _c("V03", "Mid-Conversation Correction", "routing", [
-            _t("set a reminder for 3pm to call the dentist"),
-            _t("actually make it 4pm", "time correction"),
-            _t("and change dentist to doctor", "subject correction"),
+            _t("set a reminder for 3pm to call the dentist",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("actually make it 4pm", "time correction",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("and change dentist to doctor", "subject correction",
+               checks=[_uses_tool("manage_reminders")]),
         ]),
 
         _c("V04", "Cross-Topic Callback", "routing", [
-            _t("any cybersecurity news"),
-            _t("tell me more about the first one", "news continuation"),
-            _t("what's the weather this weekend"),
-            _t("going back to that news story, search the web for more details", "callback to news"),
+            _t("any cybersecurity news",
+               checks=[_uses_tool("get_news")]),
+            _t("tell me more about the first one", "news continuation",
+               checks=[_min_words(20, "elaborates on news story")]),
+            _t("what's the weather this weekend",
+               checks=[_skill_is("weather")]),
+            _t("going back to that news story, search the web for more details", "callback to news",
+               checks=[_uses_tool("web_search")]),
         ]),
 
         _c("V05", "Short Ambiguous Follow-ups", "routing", [
-            _t("how much disk space do I have"),
+            _t("how much disk space do I have",
+               checks=[_uses_tool("get_system_info")]),
             _t("what about memory", "implied: system memory"),
             _t("and CPU"),
             _t("is that normal?", "contextual follow-up"),
@@ -616,18 +797,21 @@ def get_v2_conversations():
 
         _c("V07", "Knowledge then Tool Mix", "routing", [
             _t("what's a buffer overflow"),
-            _t("search for recent buffer overflow CVEs", "tool: web_search"),
+            _t("search for recent buffer overflow CVEs", "tool: web_search",
+               checks=[_uses_tool("web_search")]),
             _t("which one is the most critical", "follow-up on search results"),
         ]),
 
         _c("V08", "Bare Ack Filtering", "routing", [
             _t("what's the capital of France"),
-            _t("yeah", "bare ack — should NOT trigger new response"),
+            _t("yeah", "bare ack — should NOT trigger new response",
+               checks=[_empty(), _skip_sir()]),
             _t("what about Germany", "new question after bare ack"),
         ]),
 
         _c("V09", "Compound Detection Edge Case", "routing", [
-            _t("what's the weather and whether I should bring a jacket", "NOT compound — single intent"),
+            _t("what's the weather and whether I should bring a jacket", "NOT compound — single intent",
+               checks=[_uses_tool("get_weather"), _no_tool("web_search", "single intent, not web search")]),
         ]),
 
         _c("V10", "Five-Turn Deep Dive", "routing", [
@@ -779,16 +963,21 @@ def get_v2_conversations():
         # ── Self-Awareness (V30-V31) ─────────────────────────────────
 
         _c("V30", "Hardware Identity", "self-awareness", [
-            _t("what CPU are you running on"),
-            _t("how much RAM do you have"),
-            _t("what GPU are you using"),
-            _t("what LLM model are you running right now"),
+            _t("what CPU are you running on",
+               checks=[_has("5900", "correct CPU")]),
+            _t("how much RAM do you have",
+               checks=[_has("64", "correct RAM")]),
+            _t("what GPU are you using",
+               checks=[_has("7900", "correct GPU")]),
+            _t("what LLM model are you running right now",
+               checks=[_has("qwen", "correct LLM model")]),
         ]),
 
         _c("V31", "Capability Self-Knowledge", "self-awareness", [
             _t("what can you do"),
             _t("can you control my desktop"),
-            _t("do you have access to my calendar"),
+            _t("do you have access to my calendar",
+               checks=[_has("not", "calendar not available")]),
             _t("what skills do you have loaded right now"),
         ]),
 
@@ -796,7 +985,8 @@ def get_v2_conversations():
 
         _c("V32", "Store and Recall", "memory", [
             _t("remember that my favorite barbecue restaurant is Jim N Nick's"),
-            _t("what's my favorite barbecue place", "recall_memory should find it"),
+            _t("what's my favorite barbecue place", "recall_memory should find it",
+               checks=[_has("jim", "recalls Jim N Nick's")]),
             _t("forget that", "memory forget confirm"),
             _t("yes, delete it"),
         ]),
@@ -851,9 +1041,12 @@ def get_v2_conversations():
         # ── Web Navigation (V40-V41) ─────────────────────────────────
 
         _c("V40", "Site-Specific Searches", "web-navigation", [
-            _t("search YouTube for how to smoke a brisket"),
-            _t("now search Amazon for a Thermapen thermometer"),
-            _t("look up brisket on Wikipedia"),
+            _t("search YouTube for how to smoke a brisket",
+               checks=[_skill_is("web_navigation")]),
+            _t("now search Amazon for a Thermapen thermometer",
+               checks=[_skill_is("web_navigation")]),
+            _t("look up brisket on Wikipedia",
+               checks=[_skill_is("web_navigation")]),
         ]),
 
         _c("V41", "Browser Control", "web-navigation", [
@@ -873,18 +1066,24 @@ def get_v2_conversations():
         ]),
 
         _c("V43", "Code Directory Analysis", "file-ops", [
-            _t("how many lines of code are in the jarvis project"),
-            _t("show me the directory tree for the core folder"),
+            _t("how many lines of code are in the jarvis project",
+               checks=[_uses_tool("find_files", "uses local filesystem tool")]),
+            _t("show me the directory tree for the core folder",
+               checks=[_no_tool("web_search", "uses local tools, not web")]),
             _t("how big is the models directory"),
         ]),
 
         # ── System Admin (V44-V45) ───────────────────────────────────
 
         _c("V44", "Git and Dev Tools", "system-admin", [
-            _t("what's my git status"),
-            _t("show me the last 5 commits"),
-            _t("are there any uncommitted changes"),
-            _t("search the codebase for domain_disclaimer"),
+            _t("what's my git status",
+               checks=[_uses_tool("developer_tools")]),
+            _t("show me the last 5 commits",
+               checks=[_uses_tool("developer_tools")]),
+            _t("are there any uncommitted changes",
+               checks=[_uses_tool("developer_tools")]),
+            _t("search the codebase for domain_disclaimer",
+               checks=[_uses_tool("developer_tools", "local codebase search")]),
         ]),
 
         _c("V45", "System Health", "system-admin", [
@@ -897,22 +1096,31 @@ def get_v2_conversations():
         # ── Multi-User / Secondary User (V46-V48) ─────────────────────────────
 
         _c("V46", "Secondary User Basic Interaction", "multi-user", [
-            _t("good morning", "formal: Ms. Guest greeting", user_id="secondary_user"),
-            _t("what's the weather today", "mum honorific mid-convo", user_id="secondary_user"),
-            _t("do I have any reminders", "secondary user's reminders", user_id="secondary_user"),
-            _t("thank you, that's all", "formal: Ms. Guest farewell", user_id="secondary_user"),
+            _t("good morning", "formal: Ms. Guest greeting", user_id="secondary_user",
+               checks=[_has("ms. erica", "formal greeting"), _skip_sir()]),
+            _t("what's the weather today", "mum honorific mid-convo", user_id="secondary_user",
+               checks=[_has("ma'am", "'mum' honorific"), _skip_sir()]),
+            _t("do I have any reminders", "secondary user's reminders", user_id="secondary_user",
+               checks=[_has("ma'am"), _skip_sir()]),
+            _t("thank you, that's all", "formal: Ms. Guest farewell", user_id="secondary_user",
+               checks=[_has("ms. erica", "formal farewell"), _skip_sir()]),
         ]),
 
         _c("V47", "Secondary User Task Request", "multi-user", [
-            _t("set a reminder for tomorrow at 9am to call the pharmacy", user_id="secondary_user"),
-            _t("what's for dinner tonight", "general question, mum honorific", user_id="secondary_user"),
-            _t("how do I send a picture on my iPhone", "tech help, clear and patient", user_id="secondary_user"),
+            _t("set a reminder for tomorrow at 9am to call the pharmacy", user_id="secondary_user",
+               checks=[_has("ma'am"), _skip_sir(), _uses_tool("manage_reminders")]),
+            _t("what's for dinner tonight", "general question, mum honorific", user_id="secondary_user",
+               checks=[_has("ma'am"), _skip_sir()]),
+            _t("how do I send a picture on my iPhone", "tech help, clear and patient", user_id="secondary_user",
+               checks=[_has("ma'am"), _skip_sir()]),
         ]),
 
         _c("V48", "User Switch Mid-Conversation", "multi-user", [
             _t("what's the weather this weekend", "the user, sir"),
-            _t("what's a good recipe for chicken soup", "switches to secondary user, mum", user_id="secondary_user"),
-            _t("can you search for that on YouTube", "still secondary user", user_id="secondary_user"),
+            _t("what's a good recipe for chicken soup", "switches to secondary user, mum", user_id="secondary_user",
+               checks=[_has("ma'am"), _skip_sir()]),
+            _t("can you search for that on YouTube", "still secondary user", user_id="secondary_user",
+               checks=[_has("ma'am"), _skip_sir()]),
             _t("check my git status", "switches back to the user, sir", user_id="user"),
         ]),
 
@@ -959,9 +1167,12 @@ def get_v2_conversations():
         # ── Weather & News (V54-V55) ─────────────────────────────────
 
         _c("V54", "Weather Multi-Turn", "weather-news", [
-            _t("what's the weather right now"),
-            _t("what about this weekend"),
-            _t("is it supposed to rain tomorrow"),
+            _t("what's the weather right now",
+               checks=[_skill_is("weather")]),
+            _t("what about this weekend",
+               checks=[_skill_is("weather")]),
+            _t("is it supposed to rain tomorrow",
+               checks=[_skill_is("weather")]),
             _t("should I wash my car this week or wait"),
         ]),
 
@@ -975,17 +1186,25 @@ def get_v2_conversations():
         # ── Reminders (V56-V57) ──────────────────────────────────────
 
         _c("V56", "Reminder Lifecycle", "reminders", [
-            _t("set a reminder for tomorrow at 10am to check the oil change schedule"),
-            _t("what reminders do I have set"),
-            _t("cancel the one about oil changes"),
-            _t("set a reminder for Friday at 3pm to leave early for the weekend"),
+            _t("set a reminder for tomorrow at 10am to check the oil change schedule",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("what reminders do I have set",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("cancel the one about oil changes",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("set a reminder for Friday at 3pm to leave early for the weekend",
+               checks=[_uses_tool("manage_reminders")]),
         ]),
 
         _c("V57", "Reminder Correction Chain", "reminders", [
-            _t("remind me at 2pm to call mom"),
-            _t("actually make that 3pm"),
-            _t("and change call to text"),
-            _t("cancel all my reminders"),
+            _t("remind me at 2pm to call mom",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("actually make that 3pm",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("and change call to text",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("cancel all my reminders",
+               checks=[_uses_tool("manage_reminders")]),
         ]),
 
         # ── Readback (V58) ───────────────────────────────────────────
@@ -1009,25 +1228,34 @@ def get_v2_conversations():
         ]),
 
         _c("V60", "Research to Document", "mixed-capability", [
-            _t("search for the top 5 budget smokers for brisket"),
+            _t("search for the top 5 budget smokers for brisket",
+               checks=[_uses_tool("web_search")]),
             _t("compare them in a document"),
             _t("add price data to each entry"),
-            _t("email that to me", "should explain email not yet available"),
+            _t("email that to me", "should explain email not yet available",
+               checks=[_has("not", "email not available")]),
         ]),
 
         _c("V61", "Personal Context Chain", "mixed-capability", [
             _t("remember that I have a dentist appointment next Tuesday"),
-            _t("set a reminder for Monday night to not eat after 10pm"),
-            _t("what do I have going on this week", "should surface dentist appointment"),
-            _t("search for tips on preparing for a dental cleaning"),
+            _t("set a reminder for Monday night to not eat after 10pm",
+               checks=[_uses_tool("manage_reminders")]),
+            _t("what do I have going on this week", "should surface dentist appointment",
+               checks=[_has("dentist", "surfaces stored appointment")]),
+            _t("search for tips on preparing for a dental cleaning",
+               checks=[_uses_tool("web_search")]),
         ]),
 
         _c("V62", "Cross-Domain Rapid Fire", "mixed-capability", [
-            _t("what's 15 percent of $87.50"),
+            _t("what's 15 percent of $87.50",
+               checks=[_has("13", "correct calculation")]),
             _t("who won the Super Bowl last year"),
-            _t("open YouTube"),
-            _t("what's the weather tomorrow"),
-            _t("how much disk space do I have left"),
+            _t("open YouTube",
+               checks=[_skill_is("web_navigation")]),
+            _t("what's the weather tomorrow",
+               checks=[_skill_is("weather")]),
+            _t("how much disk space do I have left",
+               checks=[_uses_tool("get_system_info")]),
         ]),
     ]
 
@@ -1075,8 +1303,9 @@ def truncate(text, max_len=200):
 
 def print_conversation_result(cr, verbose=True):
     """Print formatted results for one conversation."""
+    grade_label = f"  {cr.grade}" if cr.grade else ""
     print(f"\n{'='*70}")
-    print(f"  {cr.id}: {cr.name}  [{cr.category}]")
+    print(f"  {cr.id}: {cr.name}  [{cr.category}]{grade_label}")
     print(f"{'='*70}")
 
     if cr.error:
@@ -1084,7 +1313,8 @@ def print_conversation_result(cr, verbose=True):
         return
 
     for tr in cr.turn_results:
-        print(f"\n  [{tr.turn_num}] USER: \"{tr.user}\"")
+        grade_icon = "✓" if tr.grade == "PASS" else "✗"
+        print(f"\n  [{tr.turn_num}] [{grade_icon}] USER: \"{tr.user}\"")
         if verbose:
             resp_display = tr.response.replace('\n', ' ').strip()
             print(f"      JARVIS: \"{resp_display}\"")
@@ -1095,6 +1325,18 @@ def print_conversation_result(cr, verbose=True):
         if tr.info_messages and verbose:
             for info in tr.info_messages:
                 print(f"      INFO: {info}")
+
+        # Show check results
+        if tr.check_results:
+            failures = [(p, d) for p, d in tr.check_results if not p]
+            passes = [(p, d) for p, d in tr.check_results if p]
+            total = len(tr.check_results)
+            if failures:
+                print(f"      GRADE: FAIL ({len(passes)}/{total} checks passed)")
+                for _, desc in failures:
+                    print(f"        ✗ {desc}")
+            elif verbose:
+                print(f"      GRADE: PASS ({total}/{total})")
 
     # Summary
     if cr.turn_results:
@@ -1108,8 +1350,12 @@ def print_conversation_result(cr, verbose=True):
                 elif info.startswith("Running:"):
                     tools_used.append(info.replace("Running:", "").strip())
         tool_summary = f" | tools: {', '.join(sorted(set(tools_used)))}" if tools_used else ""
+
+        passed_turns = sum(1 for t in cr.turn_results if t.grade == "PASS")
+        total_turns = len(cr.turn_results)
         print(f"\n  Summary: {len(cr.turn_results)} turns | avg {avg_ms}ms"
               f" | avg {avg_words} words/response{tool_summary}")
+        print(f"  Grade: {cr.grade} ({passed_turns}/{total_turns} turns passed)")
         print(f"  Total time: {cr.total_time_ms}ms")
 
 
@@ -1238,6 +1484,64 @@ def print_analysis(results):
     secs = (total_time // 1000) % 60
     print(f"\n  Total run time: {total_time // 1000}s ({mins}m {secs}s)")
 
+    # ── Grading Summary ──────────────────────────────────────────
+    print(f"\n{'='*70}")
+    print(f"  GRADING SUMMARY")
+    print(f"{'='*70}")
+
+    conv_pass = sum(1 for cr in results if cr.grade == "PASS")
+    conv_mixed = sum(1 for cr in results if cr.grade == "MIXED")
+    conv_fail = sum(1 for cr in results if cr.grade == "FAIL")
+    conv_error = sum(1 for cr in results if cr.grade == "ERROR")
+    conv_total = len(results)
+
+    turn_pass = sum(1 for t in all_turns if t.grade == "PASS")
+    turn_fail = sum(1 for t in all_turns if t.grade == "FAIL")
+    turn_total = len(all_turns)
+
+    pct_conv = 100 * conv_pass // conv_total if conv_total else 0
+    pct_turn = 100 * turn_pass // turn_total if turn_total else 0
+
+    print(f"\n  Conversations: {conv_pass}/{conv_total} PASS ({pct_conv}%)")
+    if conv_mixed:
+        print(f"    MIXED: {conv_mixed}")
+    if conv_fail:
+        print(f"    FAIL:  {conv_fail}")
+    if conv_error:
+        print(f"    ERROR: {conv_error}")
+
+    print(f"  Turns: {turn_pass}/{turn_total} PASS ({pct_turn}%)")
+
+    # List failed/mixed conversations with details
+    failed_convs = [cr for cr in results if cr.grade in ("FAIL", "MIXED")]
+    if failed_convs:
+        print(f"\n  Failed/Mixed conversations:")
+        for cr in failed_convs:
+            passed = sum(1 for t in cr.turn_results if t.grade == "PASS")
+            total = len(cr.turn_results)
+            print(f"    {cr.id} {cr.name} [{cr.grade}] ({passed}/{total} turns)")
+            for tr in cr.turn_results:
+                if tr.grade == "FAIL":
+                    failures = [d for p, d in tr.check_results if not p]
+                    fail_str = "; ".join(failures[:3])
+                    if len(failures) > 3:
+                        fail_str += f" (+{len(failures)-3} more)"
+                    print(f"      T{tr.turn_num}: {fail_str}")
+
+    # Aggregate check failure reasons
+    failure_reasons = {}
+    for t in all_turns:
+        for passed, desc in t.check_results:
+            if not passed:
+                # Normalize the description to group similar failures
+                key = desc.split(" (")[0]  # strip detail in parens
+                failure_reasons[key] = failure_reasons.get(key, 0) + 1
+
+    if failure_reasons:
+        print(f"\n  Top failure reasons:")
+        for reason, count in sorted(failure_reasons.items(), key=lambda x: -x[1])[:10]:
+            print(f"    {count:3d}x  {reason}")
+
 
 # ── Runner ─────────────────────────────────────────────────────────────────
 
@@ -1268,18 +1572,26 @@ async def run_conversation(client, conv, delay=2.0, verbose=True):
             result = await client.send_turn(turn.user)
             result.turn_num = i + 1
             result.notes = turn.notes
+
+            # Grade the turn
+            verdicts = grade_turn(result, turn.checks, user_id=turn.user_id)
+            result.check_results = verdicts
+            result.grade = "PASS" if all(v[0] for v in verdicts) else "FAIL"
             turn_results.append(result)
 
             if verbose:
-                print(f" → {result.word_count} words, {result.total_ms}ms")
+                grade_icon = "✓" if result.grade == "PASS" else "✗"
+                print(f" → {result.word_count} words, {result.total_ms}ms [{grade_icon}]")
 
     except Exception as e:
-        return ConversationResult(
+        cr = ConversationResult(
             id=conv.id, name=conv.name, category=conv.category,
             turn_results=turn_results,
             total_time_ms=int((time.time() - conv_start) * 1000),
             error=str(e),
         )
+        cr.grade = "ERROR"
+        return cr
 
     # Reset to christopher if we switched during this conversation
     if current_user != "primary_user":
@@ -1288,11 +1600,13 @@ async def run_conversation(client, conv, delay=2.0, verbose=True):
         except Exception:
             pass
 
-    return ConversationResult(
+    cr = ConversationResult(
         id=conv.id, name=conv.name, category=conv.category,
         turn_results=turn_results,
         total_time_ms=int((time.time() - conv_start) * 1000),
     )
+    cr.grade = grade_conversation(cr)
+    return cr
 
 
 SHARE_DIR = os.path.expanduser("~/jarvis/share")
@@ -1557,6 +1871,7 @@ def save_results(results, path):
             'category': cr.category,
             'total_time_ms': cr.total_time_ms,
             'error': cr.error,
+            'grade': cr.grade,
             'turns': [
                 {
                     'turn_num': tr.turn_num,
@@ -1575,6 +1890,8 @@ def save_results(results, path):
                     'raw_stats': tr.raw_stats,
                     'synthesis_category': tr.synthesis_category,
                     'synthesis_temperature': tr.synthesis_temperature,
+                    'grade': tr.grade,
+                    'check_results': tr.check_results,
                 }
                 for tr in cr.turn_results
             ],
@@ -1610,6 +1927,8 @@ def load_results(path):
                 raw_stats=t.get('raw_stats', {}),
                 synthesis_category=t.get('synthesis_category', ''),
                 synthesis_temperature=t.get('synthesis_temperature', 0.0),
+                check_results=t.get('check_results', []),
+                grade=t.get('grade', ''),
             )
             for t in item['turns']
         ]
@@ -1620,7 +1939,35 @@ def load_results(path):
             turn_results=turns,
             total_time_ms=item.get('total_time_ms', 0),
             error=item.get('error', ''),
+            grade=item.get('grade', ''),
         ))
+
+    return results
+
+
+def regrade_results(results, conversations=None):
+    """Re-grade loaded results using current check definitions.
+
+    Useful for re-evaluating old results against updated checks.
+    """
+    if conversations is None:
+        conversations = get_v2_conversations()
+    conv_map = {c.id: c for c in conversations}
+
+    for cr in results:
+        conv = conv_map.get(cr.id)
+        if not conv:
+            continue
+
+        for i, tr in enumerate(cr.turn_results):
+            if i >= len(conv.turns):
+                break
+            turn_def = conv.turns[i]
+            verdicts = grade_turn(tr, turn_def.checks, user_id=turn_def.user_id)
+            tr.check_results = verdicts
+            tr.grade = "PASS" if all(v[0] for v in verdicts) else "FAIL"
+
+        cr.grade = grade_conversation(cr)
 
     return results
 
@@ -1685,6 +2032,9 @@ def main():
             print("Run the test suite first, then use --analyze")
             return
         results = load_results(args.save)
+        # Re-grade with current check definitions
+        all_convs_for_grade = get_v1_conversations() if args.v1 else get_v2_conversations()
+        results = regrade_results(results, all_convs_for_grade)
         for cr in results:
             print_conversation_result(cr, verbose=verbose)
         print_analysis(results)

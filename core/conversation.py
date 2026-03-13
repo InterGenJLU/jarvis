@@ -235,22 +235,24 @@ class ConversationManager:
                 return profile["name"]
         return user_id.capitalize()
 
-    def get_recent_history(self, max_turns: Optional[int] = None) -> List[Dict]:
+    def get_recent_history(self, max_turns: Optional[int] = None, target_history: Optional[list] = None) -> List[Dict]:
         """
         Get recent conversation history
-        
+
         Args:
             max_turns: Maximum number of turns (user+assistant pairs)
-            
+            target_history: Per-connection history list (overrides self.session_history)
+
         Returns:
             List of message dictionaries
         """
         if max_turns is None:
             max_turns = self.max_history_turns
-        
+
         # Get last N turns (each turn = user + assistant message)
         max_messages = max_turns * 2
-        recent = self.session_history[-max_messages:] if self.session_history else []
+        source = target_history if target_history is not None else self.session_history
+        recent = source[-max_messages:] if source else []
         
         return self._trim_by_characters(recent, self.max_context_chars)
     
@@ -364,17 +366,18 @@ class ConversationManager:
         first_word = user_text.strip().lower().split()[0] if user_text.strip() else ""
         return first_word in self.continuation_phrases
     
-    def format_history_for_llm(self, include_system_prompt: bool = True) -> str:
+    def format_history_for_llm(self, include_system_prompt: bool = True, target_history: Optional[list] = None) -> str:
         """
         Format conversation history for LLM input
-        
+
         Args:
             include_system_prompt: Whether to include system prompt
-            
+            target_history: Per-connection history list (overrides self.session_history)
+
         Returns:
             Formatted conversation history
         """
-        history = self.get_recent_history()
+        history = self.get_recent_history(target_history=target_history)
         
         lines = []
         

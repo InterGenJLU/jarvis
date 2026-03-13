@@ -80,5 +80,8 @@ share/archive/
 # PID files
 *.pid
 
+# Memory / handoff notes (personal, never publish)
+memory/
+
 # Environment
 .env

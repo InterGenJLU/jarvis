@@ -308,6 +308,10 @@
                 addAnnouncement(msg.content);
                 break;
 
+            case 'weather_alert':
+                addWeatherAlert(msg);
+                break;
+
             case 'info':
                 addInfoMessage(msg.content);
                 break;
@@ -655,6 +659,43 @@
         setTimeout(function () {
             if (banner.parentNode) banner.parentNode.removeChild(banner);
         }, 300);
+    }
+
+    function addWeatherAlert(msg) {
+        var isImmediate = msg.is_immediate;
+        var severity = isImmediate ? 'immediate' : 'notable';
+        var icon = isImmediate ? '\u26A0\uFE0F' : '\u26C8\uFE0F';
+        var label = isImmediate ? 'SEVERE WEATHER ALERT' : 'Weather Advisory';
+
+        // Inline record in chat
+        var div = document.createElement('div');
+        div.className = 'weather-alert-inline weather-alert-' + severity;
+        div.innerHTML = '<strong>' + icon + ' ' + label + '</strong><br>' +
+            escapeHtml(msg.headline || msg.event);
+        messagesEl.appendChild(div);
+        scrollToBottom();
+
+        // Floating banner
+        var banner = document.createElement('div');
+        banner.className = 'weather-alert-banner weather-alert-' + severity;
+        banner.innerHTML = '<strong>' + icon + ' ' + label + '</strong> &mdash; ' +
+            escapeHtml(msg.headline || msg.event);
+        var closeBtn = document.createElement('button');
+        closeBtn.className = 'weather-alert-close';
+        closeBtn.innerHTML = '&times;';
+        closeBtn.addEventListener('click', function () {
+            dismissBanner(banner);
+        });
+        banner.appendChild(closeBtn);
+        announcementContainer.appendChild(banner);
+
+        // Immediate alerts are sticky (no auto-dismiss) — user must acknowledge
+        // Notable alerts auto-dismiss after 30s
+        if (!isImmediate) {
+            setTimeout(function () {
+                dismissBanner(banner);
+            }, 30000);
+        }
     }
 
     function addInfoMessage(content) {

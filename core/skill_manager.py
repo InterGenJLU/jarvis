@@ -616,17 +616,22 @@ class SkillManager:
             if len(suffix_matches) > 1:
                 # Ambiguous — disambiguate via semantic similarity
                 result = self._disambiguate_suffix(
-                    skill_name, suffix_matches, user_text, entities, kw_lower,
+                    skill, skill_name, suffix_matches, user_text, entities, kw_lower,
                 )
                 if result is not None:
                     return result
 
         return None
 
-    def _disambiguate_suffix(self, skill_name: str, suffix_matches: list,
+    def _disambiguate_suffix(self, skill, skill_name: str, suffix_matches: list,
                               user_text: str, entities: dict,
                               kw_lower: str) -> Optional[str]:
-        """Resolve ambiguous suffix matches via embedding similarity."""
+        """Resolve ambiguous suffix matches via embedding similarity.
+
+        Scores ALL semantic intents in the skill (not just suffix matches)
+        so that handlers like get_weather_for_period can compete with
+        get_current_weather and get_tomorrow_weather when keyword is 'weather'.
+        """
         from sentence_transformers import util as _st_util
         if not hasattr(self, '_embedding_model'):
             return None
@@ -640,7 +645,7 @@ class SkillManager:
                 return None
             raise
         _best_sim, _best_pair = -1.0, None
-        for _sid, _sdata in suffix_matches:
+        for _sid, _sdata in skill.semantic_intents.items():
             _ex = self._semantic_embedding_cache.get((skill_name, _sid))
             if _ex is not None:
                 _sim = float(_st_util.cos_sim(_user_emb, _ex).max())

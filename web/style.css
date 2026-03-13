@@ -449,6 +449,75 @@ header h1 {
     opacity: 1;
 }
 
+/* Weather alert — inline chat record */
+.weather-alert-inline {
+    max-width: 85%;
+    align-self: center;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    animation: fadeIn 0.2s ease-out;
+    line-height: 1.4;
+}
+
+.weather-alert-inline.weather-alert-immediate {
+    background: #450a0a;
+    border: 1px solid #dc2626;
+    color: #fca5a5;
+}
+
+.weather-alert-inline.weather-alert-notable {
+    background: #422006;
+    border: 1px solid #f59e0b;
+    color: #fbbf24;
+}
+
+/* Weather alert — floating banner */
+.weather-alert-banner {
+    border-radius: 8px;
+    padding: 12px 40px 12px 14px;
+    font-size: 0.88rem;
+    animation: slideDown 0.3s ease-out;
+    pointer-events: auto;
+    position: relative;
+    line-height: 1.4;
+}
+
+.weather-alert-banner.weather-alert-immediate {
+    background: #450a0a;
+    border: 2px solid #dc2626;
+    color: #fca5a5;
+    box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4);
+}
+
+.weather-alert-banner.weather-alert-notable {
+    background: #422006;
+    border: 1px solid #f59e0b;
+    color: #fbbf24;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.weather-alert-banner.dismissing {
+    animation: slideUp 0.3s ease-in forwards;
+}
+
+.weather-alert-close {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: none;
+    border: none;
+    color: inherit;
+    font-size: 1.2rem;
+    cursor: pointer;
+    opacity: 0.6;
+    padding: 0 4px;
+}
+
+.weather-alert-close:hover {
+    opacity: 1;
+}
+
 @keyframes slideDown {
     from { opacity: 0; transform: translateY(-16px); }
     to { opacity: 1; transform: translateY(0); }

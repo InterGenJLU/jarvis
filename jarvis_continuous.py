@@ -51,6 +51,8 @@ from core.skill_manager import SkillManager
 from core.continuous_listener import ContinuousListener
 from core.reminder_manager import get_reminder_manager
 from core.news_manager import get_news_manager
+from core.weather_db import get_weather_db
+from core.weather_poller import get_weather_poller
 from core.honorific import get_honorific
 from core.speech_chunker import SpeechChunker
 from core.events import Event, EventType
@@ -275,6 +277,18 @@ class JarvisContinuous:
             self.logger.info("News monitor started")
         else:
             self.news_manager = None
+
+        # Initialize weather system
+        self.weather_db = None
+        self.weather_poller = None
+        if config.get("weather.enabled", True):
+            self.weather_db = get_weather_db(config)
+            self.weather_poller = get_weather_poller(config)
+            # Use bg_tts (event pipeline) or tts directly for announcements
+            tts_for_weather = self.bg_tts if self.event_mode else self.tts
+            self.weather_poller.set_tts_callback(tts_for_weather.speak)
+            self.weather_poller.start()
+            self.logger.info("Weather poller started")
 
         # --- Presence detection (face recognition greetings) ---
         self.presence_detector = None
@@ -945,6 +959,8 @@ class JarvisContinuous:
                     self.mcp_bridge.stop()
                 if self.news_manager:
                     self.news_manager.stop()
+                if self.weather_poller:
+                    self.weather_poller.stop()
                 if self.calendar_manager:
                     self.calendar_manager.stop()
                 if hasattr(self, 'caldav_manager') and self.caldav_manager:
@@ -971,6 +987,8 @@ class JarvisContinuous:
                     self.mcp_bridge.stop()
                 if self.news_manager:
                     self.news_manager.stop()
+                if self.weather_poller:
+                    self.weather_poller.stop()
                 if self.calendar_manager:
                     self.calendar_manager.stop()
                 if hasattr(self, 'caldav_manager') and self.caldav_manager:
