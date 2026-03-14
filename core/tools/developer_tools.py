@@ -297,6 +297,8 @@ def _devtools_codebase_search(args: dict) -> str:
 @_register_devtool("process_info")
 def _devtools_process_info(args: dict) -> str:
     sort_by = args.get("sort_by", "cpu")
+    if sort_by not in ("cpu", "memory"):
+        sort_by = "cpu"
     sort_key = "-%mem" if sort_by == "memory" else "-%cpu"
     return _run_cmd(f"ps aux --sort={sort_key} | head -15")
 
@@ -389,6 +391,8 @@ def _devtools_system_health(args: dict) -> str:
 @_register_devtool("check_logs")
 def _devtools_check_logs(args: dict) -> str:
     log_filter = args.get("filter", "recent")
+    if log_filter not in ("recent", "errors", "warnings"):
+        log_filter = "recent"
     minutes = max(1, min(1440, int(args.get("minutes", 15))))
     cmd = f'journalctl --user -u jarvis --since "{minutes} min ago" --no-pager'
     if log_filter == "errors":

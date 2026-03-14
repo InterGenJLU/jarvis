@@ -344,12 +344,12 @@ def grade_turn(result, checks, user_id=None):
 
     # Auto: "ma'am" for secondary user mid-conversation (unless skip_mum or explicit empty)
     # Note: explicit _has("ma'am") checks in turn definitions are functional (intentional).
-    # This auto-check only fires when no explicit mum/ms. erica check exists.
+    # This auto-check only fires when no explicit mum/ms. guest check exists.
     if "skip_mum" not in check_types and "empty" not in check_types:
         if user_id and user_id == "secondary_user":
             # Only add auto-mum if no explicit honorific checks already present
             has_explicit_honorific = any(
-                c[0] == "contains" and c[1] in ("ma'am", "ms. erica")
+                c[0] == "contains" and c[1] in ("ma'am", "ms. guest")
                 for c in checks
             )
             if not has_explicit_honorific:
@@ -1217,13 +1217,13 @@ def get_v2_conversations():
 
         _c("V46", "Secondary User Basic Interaction", "multi-user", [
             _t("good morning", "formal: Ms. Guest greeting", user_id="secondary_user",
-               checks=[_has("ms. erica", "formal greeting"), _skip_sir()]),
+               checks=[_has("ms. guest", "formal greeting"), _skip_sir()]),
             _t("what's the weather today", "mum honorific mid-convo", user_id="secondary_user",
                checks=[_has("ma'am", "'mum' honorific"), _skip_sir()]),
             _t("do I have any reminders", "secondary user's reminders", user_id="secondary_user",
                checks=[_has("ma'am"), _skip_sir()]),
             _t("thank you, that's all", "formal: Ms. Guest farewell", user_id="secondary_user",
-               checks=[_has("ms. erica", "formal farewell"), _skip_sir()]),
+               checks=[_has("ms. guest", "formal farewell"), _skip_sir()]),
         ]),
 
         _c("V47", "Secondary User Task Request", "multi-user", [

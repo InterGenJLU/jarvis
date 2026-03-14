@@ -81,6 +81,7 @@ class ContinuousListener:
         # Speech collection
         self.collecting_speech = False
         self.speech_buffer = []
+        self._buffer_lock = threading.Lock()  # protects speech_buffer access across threads
         
         # Conversation window - allow responses without wake word during conversation
         self.conversation_window_active = False
@@ -102,6 +103,12 @@ class ContinuousListener:
             "stop", "cancel", "nevermind", "never mind",
             "sure", "right", "correct", "wrong", "good", "great",
             "hello", "hey", "hi", "bye", "goodbye",
+            # Short question/command words (3 chars) that the noise filter
+            # would otherwise reject during conversation window
+            "why", "how", "who", "what", "when", "where",
+            "run", "set", "get", "add", "all", "any", "new",
+            "off", "end", "try", "use", "yet", "now",
+            "six", "ten", "two", "one",
         }
         
         # Initialize RNNoise for audio denoising
@@ -140,7 +147,8 @@ class ContinuousListener:
                           len(self._vad_timestamps) if hasattr(self, '_vad_timestamps') else -1)
         print("🗣️  Speech detected...")
         self.collecting_speech = True
-        self.speech_buffer = []
+        with self._buffer_lock:
+            self.speech_buffer = []
         # Snapshot the pre-speech ring buffer NOW, before more speech frames
         # are added to it.  If we wait until _process_speech(), the ring
         # buffer will contain the speech itself (it never stops recording),
@@ -209,7 +217,8 @@ class ContinuousListener:
         # If collecting speech, add raw device-rate audio to buffer
         # (batch resampling in _process_speech is cheaper than per-frame np.interp)
         if self.collecting_speech:
-            self.speech_buffer.append(audio.copy())
+            with self._buffer_lock:
+                self.speech_buffer.append(audio.copy())
 
             # If speech ended, process the collected audio
             if not in_speech and len(self.speech_buffer) > 10:  # At least 10 frames (~300ms)
@@ -227,11 +236,11 @@ class ContinuousListener:
         pre_buffer = getattr(self, '_pre_speech_audio', np.array([], dtype=np.float32))
 
         # Combine speech frames (at device sample rate)
-        speech_audio_raw = np.concatenate(self.speech_buffer)
-
-        # Reset collection
-        self.collecting_speech = False
-        self.speech_buffer = []
+        with self._buffer_lock:
+            speech_audio_raw = np.concatenate(self.speech_buffer)
+            # Reset collection
+            self.collecting_speech = False
+            self.speech_buffer = []
 
         # Batch resample device-rate audio → VAD rate (single np.interp on full buffer)
         if self.device_sample_rate and self.device_sample_rate != self.sample_rate:
@@ -615,7 +624,8 @@ class ContinuousListener:
         # Discard any in-progress speech collection — do NOT process/transcribe it,
         # because that would spawn a background thread that races with TTS playback
         self.collecting_speech = False
-        self.speech_buffer = []
+        with self._buffer_lock:
+            self.speech_buffer = []
 
         self.logger.info("🔇 Listening paused (TTS playback)")
     

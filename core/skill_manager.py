@@ -897,6 +897,11 @@ class SkillManager:
                 },
             },
         )
+        # Clear stale cache entry on re-registration (e.g. MCP reconnect)
+        if name in self.skills:
+            self._semantic_embedding_cache.pop((name, "default"), None)
+            self.logger.info(f"Re-registering virtual skill '{name}' — cleared stale cache")
+
         self.skills[name] = virtual
 
         # Pre-compute embeddings for the pruner cache

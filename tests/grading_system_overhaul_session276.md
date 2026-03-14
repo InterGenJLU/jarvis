@@ -22,7 +22,7 @@ Additionally:
 - Honorific compliance is tracked and reported as a separate metric in the analysis summary
 - Display shows honorific failures with `⚠` warning icon, not `✗` failure icon
 
-**Key distinction:** Explicit `_has("ma'am")` and `_has("ms. erica")` checks in secondary user conversation definitions remain **functional** — these are intentional persona requirements, not auto-checks. Only the auto-injected "sir"/"ma'am" checks are categorized as honorific.
+**Key distinction:** Explicit `_has("ma'am")` and `_has("ms. guest")` checks in secondary user conversation definitions remain **functional** — these are intentional persona requirements, not auto-checks. Only the auto-injected "sir"/"ma'am" checks are categorized as honorific.
 
 ### 2. Fixed False-Negative Checks
 
@@ -42,7 +42,7 @@ Additionally:
 - **Rationale:** Same as V31:T3. R044 response was "I can't do that just yet, sir" — correct behavior, but "not" wasn't literally present. R023 had the opposite problem — JARVIS claimed it could send email, which is wrong.
 
 #### V46:T4 — "thank you, that's all" (secondary user farewell)
-- **No change.** The `_has("ms. erica", "formal farewell")` check is **correct per original design intent**.
+- **No change.** The `_has("ms. guest", "formal farewell")` check is **correct per original design intent**.
 - **Owner confirmed:** Greetings and farewells always use the formal honorific "Ms. Guest". Mid-conversation uses "ma'am". The R023 analysis graded T4 as PASS with just "ma'am", but that was the reviewer being lenient — the turn note explicitly says "formal: Ms. Guest farewell".
 
 ### 3. New Check Helper

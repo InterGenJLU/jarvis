@@ -69,6 +69,9 @@ experiments/
 # Research artifacts (session research, not code)
 research/
 
+# V3 test results (per-run output)
+tests/v3_results/
+
 # Local backups & archives
 .backup/
 .archive/

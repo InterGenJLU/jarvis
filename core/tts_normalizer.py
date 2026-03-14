@@ -134,10 +134,12 @@ class TTSNormalizer:
         # Bullet markers at start of line: - item or * item → item
         text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
         # Numbered list: "1. item" → "Step 1... item" (preserve step context for spoken delivery)
+        # Only match 1-3 digit numbers to avoid false positives on sentences
+        # starting with years or large numbers (e.g. "2024. Things changed.")
         def _numbered_list(match):
             num = match.group(1)
             return f"Step {num}... "
-        text = re.sub(r'^(\d+)\.\s+', _numbered_list, text, flags=re.MULTILINE)
+        text = re.sub(r'^(\d{1,3})\.\s+', _numbered_list, text, flags=re.MULTILINE)
         return text
 
     # ========== Pauses / Punctuation ==========
@@ -275,15 +277,17 @@ class TTSNormalizer:
         - Qwen3.5-Plus → Qwen three point five dash Plus
         - Whisper-base → Whisper dash base
         """
-        # Pattern: word/acronym optionally glued to a version number, then
-        # optional hyphen-separated segments (35B, A3B, Plus, schnell, etc.)
+        # Pattern: word/acronym glued to a version number with either a decimal
+        # version OR hyphenated suffixes (or both).  This avoids false positives
+        # on ordinary words like "Chapter3" or "Windows11".
         # e.g. "Qwen3.5-35B-A3B", "Llama3.1-8B", "GPT4o", "FLUX1.0-schnell"
-        pattern = r'([A-Za-z]{2,})(\d+(?:\.\d+)?[a-zA-Z]?)((?:-[A-Za-z0-9.]+)*)'
+        pattern = r'([A-Za-z]{2,})(\d+\.\d+[a-zA-Z]?)((?:-[A-Za-z0-9.]+)*)|([A-Za-z]{2,})(\d+[a-zA-Z])((?:-[A-Za-z0-9.]+)*)|([A-Za-z]{2,})(\d+)((?:-[A-Za-z0-9.]+)+)'
 
         def _model_to_spoken(match):
-            name = match.group(1)        # "Qwen", "Llama", "GPT", "FLUX"
-            version = match.group(2)      # "3.5", "4o", "1.0"
-            suffixes = match.group(3)     # "-35B-A3B", "-8B", "-schnell", ""
+            # Three alternation branches: 1-3 (decimal ver), 4-6 (digit+letter), 7-9 (digit+suffix)
+            name = match.group(1) or match.group(4) or match.group(7)
+            version = match.group(2) or match.group(5) or match.group(8)
+            suffixes = match.group(3) or match.group(6) or match.group(9) or ''
 
             # Speak the name — uppercase acronyms get spelled out
             if name.isupper() and len(name) >= 2:
@@ -918,7 +922,7 @@ class TTSNormalizer:
             r"\bFTP\b": "F T P",
             r"\bDNS\b": "D N S",
             r"\bVPN\b": "V P N",
-            r"\bVS\b": "V S",
+            r"(?-i:\bVS\b)": "V S",
             r"\bIPv4\b": "I P V 4",
             r"\bIPv6\b": "I P V 6",
             r"\bIP\b": "I P",

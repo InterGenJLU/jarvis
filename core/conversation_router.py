@@ -2661,6 +2661,9 @@ class ConversationRouter:
         entire family so the LLM can chain related operations like
         'list them', 'what's in there now', 'delete the largest one'.
         """
+        # Never inject extra tools for guest users — respect the guest gate
+        if self._is_guest:
+            return tools
         prior = getattr(self.conv_state, 'last_tools_called', None)
         if not prior:
             return tools
@@ -2845,6 +2848,9 @@ class ConversationRouter:
         self.conv_state.exchange_summaries.append(
             {"turn": turn_num, "summary": summary}
         )
+        # Cap at 20 summaries to prevent unbounded growth in long conversations
+        if len(self.conv_state.exchange_summaries) > 20:
+            self.conv_state.exchange_summaries = self.conv_state.exchange_summaries[-20:]
         return summary
 
     # -------------------------------------------------------------------

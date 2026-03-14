@@ -7,6 +7,7 @@ Tracks conversation history and maintains context across interactions.
 
 import json
 import time
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -33,7 +34,8 @@ class ConversationManager:
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         
         self.chat_history_file = self.conversations_dir / "chat_history.jsonl"
-        
+        self._history_file_lock = threading.Lock()  # serialize JSONL appends
+
         # Configuration
         self.max_history_turns = config.get("conversation.max_history_turns", 16)
         self.max_context_chars = config.get("conversation.max_context_chars", 12000)
@@ -201,8 +203,9 @@ class ConversationManager:
     def _append_to_history_file(self, message: Dict):
         """Append message to JSONL history file"""
         try:
-            with open(self.chat_history_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(message, ensure_ascii=False) + '\n')
+            with self._history_file_lock:
+                with open(self.chat_history_file, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(message, ensure_ascii=False) + '\n')
         except Exception as e:
             self.logger.error(f"Failed to append to history file: {e}")
     

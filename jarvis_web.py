@@ -1618,6 +1618,10 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     _tool_args,
                 )
                 tool_result, tool_image_data = parse_tool_result(raw_result)
+                await ws.send_json({
+                    'type': 'info',
+                    'content': f'Tool result: {tool_call_request.name} returned {len(tool_result)} chars',
+                })
 
                 # Save tool-generated images to disk
                 if tool_image_data:
@@ -2051,6 +2055,9 @@ def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end,
         tokens = info.get('tokens_used')
         if tokens:
             stats['llm_tokens'] = tokens
+        input_toks = info.get('input_tokens')
+        if input_toks:
+            stats['input_tokens'] = input_toks
 
     if synthesis_category:
         stats['synthesis_category'] = synthesis_category
@@ -2462,6 +2469,17 @@ async def websocket_handler(request):
                 wdb.remove_tracked_location(f"{uid}_mobile")
                 logger.info("Weather: removed away tracking for %s on disconnect", uid)
 
+        # Reset shared state if this connection had switched the user away
+        # from the default.  Prevents identity leak to the next connection.
+        if conn_ctx.user_id != 'christopher':
+            conversation.current_user = 'christopher'
+            cw = components.get('context_window')
+            if cw:
+                cw.set_user('christopher')
+            from core.honorific import set_honorific
+            set_honorific('sir', None)
+            logger.info("Shared state reset to christopher on disconnect (was %s)", conn_ctx.user_id)
+
         # Per-connection state is garbage-collected with conn_ctx.
         # No shared session_history to clear — each connection owns its own.
         conn_ctx.conv_state.close_window()
@@ -2620,6 +2638,9 @@ async def _send_doc_loaded(ws, doc_buffer, source_label, content):
 async def _load_file_into_buffer(ws, doc_buffer, file_path):
     """Load a file from the server filesystem into the document buffer."""
     p = Path(file_path).expanduser().resolve()
+    if not _is_path_allowed(p):
+        await ws.send_json({'type': 'info', 'content': "Access denied: path outside allowed directories"})
+        return
     if not p.exists():
         await ws.send_json({'type': 'info', 'content': f"File not found: {file_path}"})
         return
@@ -3041,6 +3062,21 @@ def _gather_system_stats(components: dict) -> dict:
     return data
 
 
+_BROWSE_ALLOWED_ROOTS = [
+    Path.home(),
+    Path('/mnt/storage'),
+    Path('/mnt/models'),
+    Path('/tmp'),
+]
+
+
+def _is_path_allowed(p: Path) -> bool:
+    """Check that resolved path is under an allowed root directory."""
+    resolved = str(p)
+    return any(resolved == str(root) or resolved.startswith(str(root) + '/')
+               for root in _BROWSE_ALLOWED_ROOTS)
+
+
 async def browse_handler(request):
     """GET /api/browse — List directory contents for file browser.
 
@@ -3049,6 +3085,9 @@ async def browse_handler(request):
     """
     raw_path = request.query.get('path', '/home/user')
     p = Path(raw_path).expanduser().resolve()
+
+    if not _is_path_allowed(p):
+        return web.json_response({'error': 'Access denied'}, status=403)
 
     if not p.is_dir():
         return web.json_response({'error': f'Not a directory: {raw_path}'}, status=400)
@@ -3755,10 +3794,22 @@ async def dashboard_ws_handler(request):
     return ws
 
 
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "   # inline needed for iOS viewport fix
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "connect-src 'self' ws: wss:; "
+    "object-src 'none'; "
+    "base-uri 'self'"
+)
+
+
 async def index_handler(request):
     """Serve index.html for the root path."""
     resp = web.FileResponse(Path(__file__).parent / 'web' / 'index.html')
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Content-Security-Policy'] = _CSP
     return resp
 
 

@@ -447,6 +447,8 @@ class InteractionCache:
                     break
 
         # Update SQLite
+        bubble_parent = False
+        half = 0.0
         with self._db_lock:
             conn = self._get_conn()
             try:
@@ -470,24 +472,28 @@ class InteractionCache:
                         (half, self._MAX_IMPORTANCE_SCORE, now,
                          target_art.parent_id),
                     )
-                    # Hot tier parent too
-                    with self._hot_lock:
-                        for artifacts in self._hot.values():
-                            for art in artifacts:
-                                if art.artifact_id == target_art.parent_id:
-                                    art.importance_score = min(
-                                        art.importance_score + half,
-                                        self._MAX_IMPORTANCE_SCORE,
-                                    )
-                                    art.last_accessed_at = now
-                                    art.access_count += 1
-                                    break
+                    bubble_parent = True
                 conn.commit()
             except Exception as e:
                 self.logger.warning("record_access failed for %s: %s",
                                     artifact_id, e)
             finally:
                 conn.close()
+
+        # Hot tier parent update — outside db_lock to maintain
+        # consistent lock ordering (hot_lock → db_lock, never reversed)
+        if bubble_parent:
+            with self._hot_lock:
+                for artifacts in self._hot.values():
+                    for art in artifacts:
+                        if art.artifact_id == target_art.parent_id:
+                            art.importance_score = min(
+                                art.importance_score + half,
+                                self._MAX_IMPORTANCE_SCORE,
+                            )
+                            art.last_accessed_at = now
+                            art.access_count += 1
+                            break
 
         self.logger.debug("Recorded access: %s +%.1f (%s) count=%d",
                           artifact_id, weight, access_type,
@@ -600,11 +606,12 @@ class InteractionCache:
             return
 
         siblings = []
-        for art in self._hot.get(new_artifact.window_id, []):
-            if (art.artifact_id != new_artifact.artifact_id
-                    and art.turn_id == new_artifact.turn_id
-                    and art.parent_id is None):
-                siblings.append(art.artifact_id)
+        with self._hot_lock:
+            for art in self._hot.get(new_artifact.window_id, []):
+                if (art.artifact_id != new_artifact.artifact_id
+                        and art.turn_id == new_artifact.turn_id
+                        and art.parent_id is None):
+                    siblings.append(art.artifact_id)
 
         for sib_id in siblings:
             self.create_link(new_artifact.artifact_id, sib_id,

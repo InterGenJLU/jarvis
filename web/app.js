@@ -547,7 +547,14 @@
         items.forEach(([label, value]) => {
             const item = document.createElement('span');
             item.className = 'stat-item';
-            item.innerHTML = `<span class="stat-label">${label}:</span> <span class="stat-value">${value}</span>`;
+            var lbl = document.createElement('span');
+            lbl.className = 'stat-label';
+            lbl.textContent = label + ':';
+            var val = document.createElement('span');
+            val.className = 'stat-value';
+            val.textContent = ' ' + value;
+            item.appendChild(lbl);
+            item.appendChild(val);
             panel.appendChild(item);
         });
 
@@ -1126,7 +1133,10 @@
 
                 const bubble = document.createElement('div');
                 bubble.className = 'message-bubble';
-                bubble.innerHTML = '<em>Generated in ' + data.elapsed_seconds + 's</em> (seed: ' + data.seed + ')';
+                var em = document.createElement('em');
+                em.textContent = 'Generated in ' + Number(data.elapsed_seconds) + 's';
+                bubble.appendChild(em);
+                bubble.appendChild(document.createTextNode(' (seed: ' + Number(data.seed) + ')'));
                 msgDiv.appendChild(bubble);
 
                 const ts = document.createElement('div');
