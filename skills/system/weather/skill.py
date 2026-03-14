@@ -125,10 +125,13 @@ class WeatherSkill(BaseSkill):
                 "weather tomorrow",
                 "tomorrow's forecast",
                 "what will the weather be tomorrow",
-                "how's it going to be tomorrow"
+                "how's it going to be tomorrow",
+                "whats the weather gonna be like tomorrow",
+                "whats the weather gonna be tomorrow",
+                "how's it gonna be tomorrow",
             ],
             handler=self.get_tomorrow_weather,
-            threshold=0.70
+            threshold=0.65
         )
 
         # Sunrise

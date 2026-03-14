@@ -1445,6 +1445,19 @@ class Coordinator:
                         self._speak_and_wait(final_text)
                     chunks_spoken += 1
 
+            # Post-process: if LLM omitted the honorific, append it
+            # as a final spoken fragment and update full_response.
+            if full_response.strip() and chunks_spoken > 0:
+                from core.honorific import get_honorific
+                h = get_honorific()
+                if h and h.lower() not in full_response.lower():
+                    suffix = f", {h}."
+                    full_response = full_response.rstrip().rstrip('.') + suffix
+                    if audio_pipeline:
+                        audio_pipeline.put(suffix)
+                    else:
+                        self._speak_and_wait(suffix)
+
             # Wait for all audio to finish playing
             if audio_pipeline:
                 audio_pipeline.finish()

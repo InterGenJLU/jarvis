@@ -184,10 +184,7 @@ def build_tool_prompt_rules(active_tool_names: set) -> str:
     rules.extend(_GLOBAL_RULES_SUFFIX)
 
     numbered = "\n".join(f"{i + 1}. {r}" for i, r in enumerate(rules))
-    return (
-        "You have access to tools that can retrieve local data. "
-        "Tool usage guidelines:\n" + numbered
-    )
+    return "Tool usage guidelines:\n" + numbered
 
 
 # ---------------------------------------------------------------------------

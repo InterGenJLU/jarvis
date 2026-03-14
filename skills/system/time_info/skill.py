@@ -85,7 +85,7 @@ class TimeInfoSkill(BaseSkill):
             else:
                 time_str = f"{hour} {minute} {period}"
             
-            response = f"The time is {time_str}."
+            response = f"The time is {time_str}, {{honorific}}."
             return self.respond(response)
             
         except Exception as e:
@@ -109,7 +109,7 @@ class TimeInfoSkill(BaseSkill):
             else:
                 suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
             
-            response = f"Today is {day_name}, {month_name} {day}{suffix}, {year}."
+            response = f"Today is {day_name}, {month_name} {day}{suffix}, {year}, {{honorific}}."
             return self.respond(response)
             
         except Exception as e:

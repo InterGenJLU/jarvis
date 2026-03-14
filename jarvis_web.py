@@ -1768,6 +1768,12 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     logger.error("Partial fallback also failed: %s", e)
 
         cleaned = llm.strip_filler(synthesis) if synthesis else ""
+        # Post-process: inject honorific if LLM omitted it
+        if cleaned.strip():
+            from core.honorific import get_honorific
+            _h = get_honorific()
+            if _h and _h.lower() not in cleaned.lower():
+                cleaned = cleaned.rstrip().rstrip('.') + f", {_h}."
         logger.debug("stream_end: synthesis_len=%d cleaned_len=%d has_image=%s",
                       len(synthesis), len(cleaned), bool(_tool_image_path))
         stream_end_msg = {
@@ -1863,6 +1869,12 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
 
     # --- Normal end ---
     cleaned = llm.strip_filler(full_response) if full_response else ""
+    # Post-process: inject honorific if LLM omitted it
+    if cleaned.strip():
+        from core.honorific import get_honorific
+        _h = get_honorific()
+        if _h and _h.lower() not in cleaned.lower():
+            cleaned = cleaned.rstrip().rstrip('.') + f", {_h}."
     await ws.send_json({
         'type': 'stream_end',
         'full_response': cleaned,

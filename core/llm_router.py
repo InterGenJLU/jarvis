@@ -1651,11 +1651,11 @@ class LLMRouter:
             f"{chaining_prefix}"
         )
         synth_footer = (
-            f"{honorific_rule}\n"
             "DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
             "Jump straight into the answer. "
             "DO NOT tell the user to check another website or look elsewhere. "
-            "You ARE their source of information."
+            "You ARE their source of information.\n"
+            f"{honorific_rule}"
         )
 
         # ── Domain-specific rules ─────────────────────────────────
