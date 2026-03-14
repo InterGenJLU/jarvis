@@ -511,7 +511,7 @@ def system_prompt(home_location: str = None) -> str:
             f"   - All other responses: ALTERNATE between '{formal}' and '{h}'. Check your previous response — if you used '{formal}' last, use '{h}' this time, and vice versa.\n"
         )
     else:
-        rule1 = f"1. YOU MUST address the user as '{h}' — work it naturally into your responses.\n"
+        rule1 = f"1. YOU MUST address the user as '{h}' in EVERY response — even short factual answers. Never omit the address.\n"
     location_line = f"The user's home location is {home_location}.\n" if home_location else ""
     return (
         f"You are JARVIS, a personal AI assistant running locally on the user's computer. "

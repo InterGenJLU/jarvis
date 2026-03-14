@@ -979,6 +979,7 @@ class LLMRouter:
                 f"\n\nToday's date is {today}. Current time: {current_time}."
                 "\nFor time or date questions, answer directly from the above — do NOT search.\n\n"
                 + rules_text
+                + f"\n\nREMINDER: You MUST address the user as '{get_honorific()}' in every response."
             )
         else:
             # --- Web-search-only prompt ---
