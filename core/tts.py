@@ -102,10 +102,13 @@ class TextToSpeech:
         # Engine selection
         self.engine = config.get("tts.engine", "piper")
 
+        self._piper_ready = False  # Tracks whether Piper fallback is initialized
+
         if self.engine == "kokoro":
             self._init_kokoro(config)
         else:
             self._init_piper(config)
+            self._piper_ready = True
 
         if self.normalization_enabled:
             self.logger.info("Text normalization enabled")
@@ -205,6 +208,33 @@ class TextToSpeech:
             self.logger.warning(f"Could not read sample rate from config: {e}")
         return 22050
 
+    # ── Piper fallback ─────────────────────────────────────────────────
+
+    def _fallback_to_piper(self, text: str) -> bool:
+        """Attempt Piper TTS when Kokoro fails. Lazy-inits Piper on first call."""
+        if not self._piper_ready:
+            try:
+                self.logger.warning("Kokoro failed — initializing Piper fallback...")
+                kokoro_rate = self.sample_rate  # Save Kokoro's rate
+                self._init_piper(self.config)
+                self._piper_ready = True
+                # Restore Kokoro sample rate as primary (Piper uses its own
+                # rate internally via _speak_piper's subprocess pipeline)
+                self._piper_sample_rate = self.sample_rate
+                self.sample_rate = kokoro_rate
+            except Exception as e:
+                self.logger.error(f"Piper fallback init failed: {e}")
+                return False
+
+        self.logger.warning("Kokoro failed — falling back to Piper")
+        # _speak_piper opens its own aplay with the correct rate
+        saved_rate = self.sample_rate
+        self.sample_rate = getattr(self, '_piper_sample_rate', 22050)
+        try:
+            return self._speak_piper(text)
+        finally:
+            self.sample_rate = saved_rate
+
     # ── Shared speak interface ─────────────────────────────────────────
 
     def speak(self, text: str, normalize: bool = True) -> bool:
@@ -235,7 +265,10 @@ class TextToSpeech:
                         self.logger.debug(f"Normalized: '{original_text}' -> '{text}'")
 
                 if self.engine == "kokoro":
-                    return self._speak_kokoro(text)
+                    result = self._speak_kokoro(text)
+                    if not result:
+                        return self._fallback_to_piper(text)
+                    return result
                 else:
                     return self._speak_piper(text)
 
@@ -547,6 +580,8 @@ class TextToSpeech:
         aplay = None
         total_samples = 0
         first_chunk_time = None
+        stdin_closed = False
+        pipe_error = False
         try:
             for gs, ps, audio in self._kokoro_pipeline(
                 text, voice=self._kokoro_voice, speed=self._kokoro_speed
@@ -569,23 +604,42 @@ class TextToSpeech:
 
                 aplay.stdin.write(pcm)
                 total_samples += len(audio)
-
-            if aplay is not None:
-                aplay.stdin.close()
         except BrokenPipeError:
+            self.logger.error("aplay broken pipe (device busy?)")
+            pipe_error = True
+        finally:
+            # Single cleanup path for aplay stdin — close exactly once.
+            if aplay is not None and not stdin_closed:
+                try:
+                    aplay.stdin.close()
+                except BrokenPipeError:
+                    pass  # Already broken, close is best-effort
+                stdin_closed = True
+
+        if pipe_error:
             if aplay is not None:
+                try:
+                    aplay_err = aplay.stderr.read().decode().strip()
+                    self.logger.error(f"aplay stderr: {aplay_err}")
+                except Exception:
+                    pass
+                aplay.kill()
+                try:
+                    aplay.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("aplay did not exit after kill — zombie possible")
                 self._untrack_proc(aplay)
-                aplay_err = aplay.stderr.read().decode().strip()
-                self.logger.error(f"aplay broken pipe (device busy?): {aplay_err}")
-                aplay.wait()
             return False
 
         if total_samples == 0:
             self.logger.error("Kokoro produced no audio")
             if aplay is not None:
+                aplay.kill()
+                try:
+                    aplay.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("aplay did not exit after kill — zombie possible")
                 self._untrack_proc(aplay)
-                aplay.stdin.close()
-                aplay.wait()
             return False
 
         gen_time = time.time() - t0

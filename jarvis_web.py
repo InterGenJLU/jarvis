@@ -2756,6 +2756,9 @@ def _sessions_meta_path(config) -> Path:
     return storage / "data" / "conversations" / "sessions_meta.json"
 
 
+_sessions_meta_lock = asyncio.Lock()  # Serialize rename to prevent read-modify-write race
+
+
 def _load_sessions_meta(config) -> dict:
     """Load custom session names from disk."""
     p = _sessions_meta_path(config)
@@ -2858,9 +2861,10 @@ async def session_rename_handler(request):
     if len(name) > 200:
         return web.json_response({'error': 'Name too long (max 200 chars)'}, status=400)
 
-    meta = _load_sessions_meta(config)
-    meta[session_id] = name
-    _save_sessions_meta(config, meta)
+    async with _sessions_meta_lock:
+        meta = _load_sessions_meta(config)
+        meta[session_id] = name
+        _save_sessions_meta(config, meta)
 
     return web.json_response({'ok': True})
 

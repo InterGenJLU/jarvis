@@ -35,11 +35,12 @@ for _path in sorted(_tools_dir.glob("*.py")):
     _mod_name = f"core.tools.{_path.stem}"
     try:
         _mod = importlib.import_module(_mod_name)
-        # Validate required attributes
-        for _attr in ("TOOL_NAME", "SCHEMA", "SYSTEM_PROMPT_RULE"):
-            if not hasattr(_mod, _attr):
-                logger.error(f"Tool module {_mod_name} missing required attribute: {_attr}")
-                continue
+        # Validate required attributes — skip module entirely if any are missing
+        _missing = [a for a in ("TOOL_NAME", "SCHEMA", "SYSTEM_PROMPT_RULE")
+                     if not hasattr(_mod, a)]
+        if _missing:
+            logger.error(f"Tool module {_mod_name} missing required attributes: {_missing} — skipped")
+            continue
         _tool_modules.append(_mod)
     except Exception as _e:
         logger.error(f"Failed to load tool module {_mod_name}: {_e}")
@@ -306,5 +307,10 @@ def inject_dependencies(deps: dict):
             if dep_name in deps and var_name:
                 setattr(mod, var_name, deps[dep_name])
                 logger.debug(f"Injected {dep_name} into {mod.TOOL_NAME}")
+            elif dep_name not in deps:
+                logger.warning(
+                    f"Tool {mod.TOOL_NAME} declares dependency '{dep_name}' "
+                    f"but it was not provided — tool may fail at runtime"
+                )
     _REGISTRY_READY = True
     logger.info("Tool registry ready — dependencies injected")

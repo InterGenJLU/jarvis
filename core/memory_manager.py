@@ -245,10 +245,42 @@ class MemoryManager:
         if index_file.exists():
             self.faiss_index = faiss.read_index(str(index_file))
             self._load_faiss_metadata(meta_file)
+
+            # Validate index/metadata consistency — a past crash during
+            # non-atomic save could leave them out of sync.
+            n_vectors = self.faiss_index.ntotal
+            n_meta = len(self.faiss_metadata)
+            if n_vectors != n_meta:
+                min_count = min(n_vectors, n_meta)
+                self.logger.warning(
+                    f"⚠️ FAISS desync detected: {n_vectors} vectors vs {n_meta} metadata. "
+                    f"Truncating to {min_count} to restore consistency."
+                )
+                if n_meta > n_vectors:
+                    self.faiss_metadata = self.faiss_metadata[:n_vectors]
+                elif n_vectors > n_meta:
+                    # Rebuild index with only the vectors that have metadata.
+                    # FAISS IndexFlatIP doesn't support remove_ids, so rebuild.
+                    import numpy as np
+                    old_index = self.faiss_index
+                    self.faiss_index = faiss.IndexFlatIP(384)
+                    if n_meta > 0:
+                        vectors = faiss.rev_swig_ptr(old_index.get_xb(), n_vectors * 384)
+                        vectors = np.array(vectors, dtype=np.float32).reshape(n_vectors, 384)
+                        self.faiss_index.add(vectors[:n_meta])
+                # Persist the corrected state
+                self._save_faiss_index()
+
             self.logger.info(
                 f"Loaded FAISS index: {self.faiss_index.ntotal} vectors, "
                 f"{len(self.faiss_metadata)} metadata entries"
             )
+            # Clean up stale temp files from interrupted saves
+            for tmp_name in ("default.index.tmp", "default_meta.jsonl.tmp"):
+                tmp_file = self.faiss_index_path / tmp_name
+                if tmp_file.exists():
+                    tmp_file.unlink()
+                    self.logger.debug(f"Cleaned up stale temp file: {tmp_name}")
         else:
             # 384-dim for all-MiniLM-L6-v2; inner product (cosine after L2 normalization)
             self.faiss_index = faiss.IndexFlatIP(384)
@@ -270,18 +302,42 @@ class MemoryManager:
             self.logger.error(f"Failed to load FAISS metadata: {e}")
 
     def _save_faiss_index(self):
-        """Persist FAISS index + metadata to disk."""
+        """Persist FAISS index + metadata to disk atomically.
+
+        Writes both files to temporary paths first, then renames them into
+        place.  os.replace() is atomic on Linux, so a crash mid-save leaves
+        the previous good copy intact instead of a half-written file.
+        """
         if self.faiss_index is None:
             return
         try:
             import faiss
-            faiss.write_index(self.faiss_index, str(self.faiss_index_path / "default.index"))
-            with open(self.faiss_index_path / "default_meta.jsonl", "w", encoding="utf-8") as f:
+            import os
+
+            index_path = self.faiss_index_path / "default.index"
+            meta_path = self.faiss_index_path / "default_meta.jsonl"
+            tmp_index = self.faiss_index_path / "default.index.tmp"
+            tmp_meta = self.faiss_index_path / "default_meta.jsonl.tmp"
+
+            # Write to temp files first
+            faiss.write_index(self.faiss_index, str(tmp_index))
+            with open(tmp_meta, "w", encoding="utf-8") as f:
                 for entry in self.faiss_metadata:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+            # Atomic rename — old files replaced only after new ones are complete
+            os.replace(str(tmp_index), str(index_path))
+            os.replace(str(tmp_meta), str(meta_path))
+
             self._faiss_dirty = 0
         except Exception as e:
             self.logger.error(f"Failed to save FAISS index: {e}")
+            # Clean up temp files on failure
+            for tmp in (tmp_index, tmp_meta):
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def index_message(self, message: dict):
         """Embed and add a single message to FAISS index. ~1-2ms."""

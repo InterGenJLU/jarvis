@@ -637,11 +637,12 @@ class InteractionCache:
 
     def get_by_id(self, artifact_id: str) -> Optional[Artifact]:
         """Retrieve a single artifact by ID. Checks hot first, then SQLite."""
-        # Hot tier scan
-        for artifacts in self._hot.values():
-            for art in artifacts:
-                if art.artifact_id == artifact_id:
-                    return art
+        # Hot tier scan (lock prevents RuntimeError on concurrent dict mutation)
+        with self._hot_lock:
+            for artifacts in self._hot.values():
+                for art in artifacts:
+                    if art.artifact_id == artifact_id:
+                        return art
 
         # SQLite fallback
         with self._db_lock:
@@ -660,12 +661,13 @@ class InteractionCache:
     def get_by_turn(self, window_id: str, turn_id: int,
                     artifact_type: Optional[str] = None) -> list[Artifact]:
         """Get all artifacts for a given turn, optionally filtered by type."""
-        # Hot tier first
+        # Hot tier first (lock prevents concurrent list mutation)
         results = []
-        for art in self._hot.get(window_id, []):
-            if art.turn_id == turn_id:
-                if artifact_type is None or art.artifact_type == artifact_type:
-                    results.append(art)
+        with self._hot_lock:
+            for art in self._hot.get(window_id, []):
+                if art.turn_id == turn_id:
+                    if artifact_type is None or art.artifact_type == artifact_type:
+                        results.append(art)
         if results:
             return sorted(results, key=lambda a: a.item_index)
 
@@ -732,7 +734,8 @@ class InteractionCache:
 
     def get_hot_artifacts(self, window_id: str) -> list[Artifact]:
         """Get all hot-tier artifacts for a window."""
-        return list(self._hot.get(window_id, []))
+        with self._hot_lock:
+            return list(self._hot.get(window_id, []))
 
     def find_by_keyword(self, window_id: str,
                         keyword: str) -> Optional[Artifact]:
@@ -743,10 +746,11 @@ class InteractionCache:
         """
         kw = keyword.lower()
 
-        # Hot tier (reverse for most-recent-first)
-        for art in reversed(self._hot.get(window_id, [])):
-            if self._keyword_match(art, kw):
-                return art
+        # Hot tier (reverse for most-recent-first, lock prevents concurrent mutation)
+        with self._hot_lock:
+            for art in reversed(self._hot.get(window_id, [])):
+                if self._keyword_match(art, kw):
+                    return art
 
         # SQLite fallback (warm tier)
         with self._db_lock:
@@ -1117,8 +1121,9 @@ class InteractionCache:
             if len(art.content) < 50:
                 skipped += 1
                 continue
-            # Skip duplicate content (by hash of first 200 chars)
-            content_hash = hash(art.content[:200])
+            # Skip duplicate content (hash full content to avoid false
+            # positives on artifacts that share a long prefix)
+            content_hash = hash(art.content)
             if content_hash in seen_hashes:
                 skipped += 1
                 continue

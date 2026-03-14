@@ -214,8 +214,11 @@ class ContinuousListener:
         if self._speaking_event.is_set() or self.speaking:
             return
         
-        # If collecting speech, add raw device-rate audio to buffer
-        # (batch resampling in _process_speech is cheaper than per-frame np.interp)
+        # If collecting speech, add raw device-rate audio to buffer.
+        # RATE CONTRACT: speech_buffer stores audio at device_sample_rate.
+        # _process_speech() batch-resamples to self.sample_rate (VAD rate)
+        # before concatenating with pre_buffer (which is already at VAD rate
+        # from the VAD ring buffer).  Do NOT change one without the other.
         if self.collecting_speech:
             with self._buffer_lock:
                 self.speech_buffer.append(audio.copy())
@@ -242,13 +245,30 @@ class ContinuousListener:
             self.collecting_speech = False
             self.speech_buffer = []
 
-        # Batch resample device-rate audio → VAD rate (single np.interp on full buffer)
+        # Batch resample device-rate audio → VAD rate (single np.interp on full buffer).
+        # RATE CONTRACT: pre_buffer is at self.sample_rate (from VAD ring buffer).
+        # speech_audio must be resampled to match before concatenation.
         if self.device_sample_rate and self.device_sample_rate != self.sample_rate:
             num_samples = int(len(speech_audio_raw) * self.sample_rate / self.device_sample_rate)
             indices = np.linspace(0, len(speech_audio_raw) - 1, num_samples)
             speech_audio = np.interp(indices, np.arange(len(speech_audio_raw)), speech_audio_raw).astype(np.float32)
         else:
             speech_audio = speech_audio_raw
+
+        # Safety check: both arrays must be at the same sample rate (self.sample_rate)
+        # before concatenation.  A mismatch here means one of the two collection
+        # paths changed without updating the other — catch it early.
+        if len(pre_buffer) > 0 and len(speech_audio) > 0:
+            # Heuristic: if device_rate != vad_rate and the ratio of samples
+            # doesn't roughly match expected durations, something is wrong.
+            pre_duration = len(pre_buffer) / self.sample_rate
+            speech_duration = len(speech_audio) / self.sample_rate
+            total_frames = len(self.vad.audio_buffer) if hasattr(self.vad, 'audio_buffer') else 0
+            if pre_duration > self.vad.buffer_duration + 1.0:
+                self.logger.warning(
+                    f"⚠️ Pre-buffer duration ({pre_duration:.2f}s) exceeds ring buffer "
+                    f"capacity ({self.vad.buffer_duration}s) — possible sample rate mismatch"
+                )
 
         full_audio = np.concatenate([pre_buffer, speech_audio])
 
@@ -314,8 +334,18 @@ class ContinuousListener:
             self.logger.info(f"📝 Transcribed: {text}")
             print(f"📝 Heard: \"{text}\"")
 
-            # Check if conversation window is active
-            if self.conversation_window_active:
+            # Check if conversation window is active.
+            # Must hold _conversation_lock to prevent race with _conversation_timeout:
+            # without the lock, the timer could fire between our check and cancel,
+            # causing the utterance to be dropped or processed after cleanup.
+            in_conversation = False
+            with self._conversation_lock:
+                if self.conversation_window_active:
+                    in_conversation = True
+                    # Pause the timeout while we process this utterance
+                    self._cancel_conversation_timer()
+
+            if in_conversation:
                 # Filter out likely noise during conversation window
                 if self._is_conversation_noise(text):
                     self.logger.info(f"🔇 Filtered noise during conversation: '{text}'")
@@ -326,9 +356,6 @@ class ContinuousListener:
                 if corrected_text != text:
                     self.logger.info(f"🔧 Corrected in conversation: '{text}' → '{corrected_text}'")
                     text = corrected_text
-
-                # Pause the timeout while we process this utterance
-                self._cancel_conversation_timer()
 
                 self.logger.info(f"✅ Response during conversation window: {text}")
                 self.on_command(text)

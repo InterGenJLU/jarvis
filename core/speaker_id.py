@@ -34,7 +34,7 @@ class SpeakerIdentifier:
 
         # Config
         self.similarity_threshold = config.get(
-            "user_profiles.similarity_threshold", 0.85
+            "user_profiles.similarity_threshold", 0.70  # Lowered from 0.85 — mic distance affects scores significantly
         )
 
         # Lazy-loaded resemblyzer encoder
@@ -169,6 +169,10 @@ class SpeakerIdentifier:
         if np.all(embedding == 0):
             self.logger.error(f"Enrollment failed: audio too short for {user_id}")
             return False
+
+        # L2-normalize for consistent cosine similarity matching
+        # (enroll_from_multiple does this; single-enroll must too)
+        embedding = embedding / np.linalg.norm(embedding)
 
         # Save embedding
         emb_path = self.profile_manager.embeddings_dir / f"{user_id}.npy"

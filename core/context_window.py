@@ -27,12 +27,33 @@ from typing import List, Dict, Optional
 from core.logger import get_logger
 
 
-# Tokens ~ words * 1.3 for prose (no external tokenizer needed)
+# Tokens ~ words * 1.3 for prose (fallback when tokenizer unavailable)
 TOKEN_RATIO = 1.3
 # Code/JSON uses chars/4 (operators, brackets inflate token count vs prose)
 _CODE_TOKEN_RATIO = 0.25  # chars-to-tokens for code-like content
 # Safety margin for budget calculations
 _TOKEN_SAFETY_MARGIN = 1.05
+
+# Lazy-loaded Qwen tokenizer for exact token counts.
+# Falls back to word heuristic if unavailable.
+_tokenizer = None
+_tokenizer_loaded = False
+
+
+def _get_tokenizer():
+    """Load Qwen tokenizer once, return it or None."""
+    global _tokenizer, _tokenizer_loaded
+    if _tokenizer_loaded:
+        return _tokenizer
+    _tokenizer_loaded = True
+    try:
+        from transformers import AutoTokenizer
+        _tokenizer = AutoTokenizer.from_pretrained(
+            "Qwen/Qwen2.5-7B-Instruct", trust_remote_code=False
+        )
+    except Exception:
+        pass  # Fall back to heuristic
+    return _tokenizer
 
 # Common stop words (excluded from topic labeling)
 _STOP_WORDS = frozenset({
@@ -64,9 +85,16 @@ def _is_code_like(text: str) -> bool:
 def estimate_tokens(text: str) -> int:
     """Estimate token count from text.
 
-    Uses chars/4 for code-like content (more operators/brackets per token),
-    words*1.3 for prose. Adds 5% safety margin.
+    Uses the Qwen tokenizer for exact counts when available.
+    Falls back to chars/4 for code-like content, words*1.3 for prose,
+    with 5% safety margin.
     """
+    if not text:
+        return 0
+    tok = _get_tokenizer()
+    if tok is not None:
+        return len(tok.encode(text))
+    # Heuristic fallback
     if _is_code_like(text):
         return int(len(text) * _CODE_TOKEN_RATIO * _TOKEN_SAFETY_MARGIN)
     return int(len(text.split()) * TOKEN_RATIO * _TOKEN_SAFETY_MARGIN)
