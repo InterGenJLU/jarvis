@@ -1437,9 +1437,21 @@ class ConversationRouter:
             open_window=EXTENDED_WINDOW,
         )
 
+    # Action verbs that indicate a tool command, not an artifact reference.
+    # "cancel my reminders" = tool action, not "show me the reminder artifact".
+    _ACTION_VERB_PREFIX = re.compile(
+        r'^\s*(?:cancel|delete|clear|remove|set|add|snooze|dismiss|create|update|change|edit)\b',
+        re.I,
+    )
+
     def _resolve_type_reference(self, command: str,
                                 cmd: str) -> RouteResult | None:
         """Resolve 'those results', 'that recipe', 'the weather', etc."""
+        # Don't intercept commands that start with action verbs — those are
+        # tool requests, not artifact references.
+        if self._ACTION_VERB_PREFIX.search(cmd):
+            return None
+
         from core.interaction_cache import get_interaction_cache
 
         wid = self.conv_state.window_id
@@ -1794,7 +1806,7 @@ class ConversationRouter:
             tp.set_pending_confirmation(plan)
             logger.info(f"Plan requires confirmation (destructive step: {desc})")
             return RouteResult(
-                text=f"This plan includes running a command on your system: {desc}. Shall I proceed?",
+                text=f"This plan includes running a command on your system: {desc}. Shall I proceed, {persona.get_honorific()}?",
                 intent="task_plan_confirm",
                 source="planner",
                 handled=True,
@@ -2347,7 +2359,15 @@ class ConversationRouter:
         """
         logger.debug("_handle_tool_calling: command=%.80s guest=%s mobile=%s",
                      command, self._is_guest, self._is_mobile)
-        tools = self._select_tools_for_command(command)
+        tools = self._select_tools_for_command(command) or []
+
+        # Inject prior-turn tool families for anaphoric follow-ups.
+        # This runs BEFORE the empty-tools bail-out so that vague
+        # follow-ups like "list them" / "which is biggest" still get
+        # the tools from the prior turn even when semantic matching
+        # finds nothing.
+        tools = self._apply_anaphoric_carryover(tools)
+
         if not tools:
             logger.debug(f"P4-LLM: no tools selected for: {command[:80]}")
             return None
@@ -2522,6 +2542,15 @@ class ConversationRouter:
                 # Non-migrated skill — track best score for guard check.
                 if skill_name == 'web_navigation':
                     web_nav_score = skill_best
+                    # Keyword override: if query contains a web_navigation
+                    # keyword, ensure deferral to P4 so native handlers run.
+                    kw_meta = sm.skill_metadata.get('web_navigation')
+                    if kw_meta:
+                        for kw in getattr(kw_meta, 'keywords', []):
+                            if re.search(r'\b' + re.escape(kw.lower()) + r'\b', command.lower()):
+                                web_nav_score = max(web_nav_score, self._TOOL_PRUNE_THRESHOLD)
+                                logger.debug("web_nav keyword '%s' found — forcing deferral", kw)
+                                break
                 elif skill_best > best_non_migrated_score:
                     best_non_migrated_score = skill_best
                     best_non_migrated_name = skill_name
@@ -2652,6 +2681,7 @@ class ConversationRouter:
     # can chain related operations (e.g. find → delete, list → modify).
     _ANAPHORIC_TOOL_FAMILIES = [
         {"find_files", "developer_tools", "get_system_info"},
+        {"manage_reminders"},
     ]
 
     def _apply_anaphoric_carryover(self, tools: list) -> list:

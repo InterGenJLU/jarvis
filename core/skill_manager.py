@@ -20,7 +20,7 @@ from core.honorific import resolve_honorific
 
 # Generic keywords too ambiguous for suffix matching or bare-word routing
 _generic_keywords = {"search", "open", "find", "look", "browse", "navigate", "web",
-                     "file", "code", "directory", "count", "analyze", "amazon"}
+                     "file", "code", "directory", "count", "analyze"}
 
 # Keywords with explicit handler aliases get a bonus so they win ties
 _keyword_aliases = {"google", "codebase"}

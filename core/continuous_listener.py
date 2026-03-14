@@ -5,6 +5,8 @@ Always-listening mode with VAD and wake word detection in transcriptions.
 Buffers audio and transcribes when speech is detected.
 """
 
+import os
+import re
 import sounddevice as sd
 import numpy as np
 import threading
@@ -24,9 +26,15 @@ except (ImportError, OSError) as e:
     RNNoise = None
 
 
+def is_garbage_transcription(text: str) -> bool:
+    """Return True if *text* looks like repetitive-char garbage (TTS bleed, single-char noise)."""
+    unique_chars = set(text.replace(' ', '').replace('.', ''))
+    return len(unique_chars) <= 3 and len(text) > 5
+
+
 class ContinuousListener:
     """Continuous audio listener with VAD"""
-    
+
     def __init__(self, config, stt: SpeechToText, on_command: Callable,
                  audio_queue=None):
         """
@@ -82,6 +90,7 @@ class ContinuousListener:
         self.collecting_speech = False
         self.speech_buffer = []
         self._buffer_lock = threading.Lock()  # protects speech_buffer access across threads
+        self._vad_timestamps = []  # rate-limit VAD triggers (noise burst detection)
         
         # Conversation window - allow responses without wake word during conversation
         self.conversation_window_active = False
@@ -134,8 +143,6 @@ class ContinuousListener:
 
         # Rate-limit VAD triggers to avoid wasting CPU on ambient noise floods
         now = time.monotonic()
-        if not hasattr(self, '_vad_timestamps'):
-            self._vad_timestamps = []
         self._vad_timestamps.append(now)
         # Keep only last 3 seconds of timestamps
         self._vad_timestamps = [t for t in self._vad_timestamps if now - t <= 3.0]
@@ -144,7 +151,7 @@ class ContinuousListener:
             return
 
         self.logger.debug("🗣️  Speech detected (VAD triggers=%d), starting collection",
-                          len(self._vad_timestamps) if hasattr(self, '_vad_timestamps') else -1)
+                          len(self._vad_timestamps))
         print("🗣️  Speech detected...")
         self.collecting_speech = True
         with self._buffer_lock:
@@ -318,10 +325,8 @@ class ContinuousListener:
                 print(f"⚠️  Ignoring background noise")
                 return
 
-            # Filter obvious garbage before any further processing
-            # (repetitive chars from TTS bleed, single-char noise, etc.)
-            unique_chars = set(text.replace(' ', '').replace('.', ''))
-            if len(unique_chars) <= 3 and len(text) > 5:
+            # Filter obvious garbage (repetitive chars from TTS bleed, etc.)
+            if is_garbage_transcription(text):
                 self.logger.info(f"⚠️  Ignoring garbage transcription: {text[:30]}...")
                 return
 
@@ -700,8 +705,6 @@ class ContinuousListener:
 
     def _apply_command_corrections(self, text: str) -> str:
         """Apply corrections for common command mishearings"""
-        import re
-
         # "i was/analyzed [command]" -> "analyze [command]"
         if re.match(r'^i (was|analyzed)\s+', text, re.IGNORECASE):
             corrected = re.sub(r'^i (was|analyzed)\s+', 'analyze ', text, flags=re.IGNORECASE)
@@ -824,7 +827,7 @@ class ContinuousListener:
             print(f"🔓 Conversation window open ({duration:.0f}s)")
         else:
             self.logger.debug(f"🔓 Conversation window extended ({duration:.0f}s)")
-        self._play_conversation_tone()
+        self._play_tone("tone_path", "tone")
 
     def close_conversation_window(self):
         """Close conversation window and cancel timer."""
@@ -834,7 +837,7 @@ class ContinuousListener:
                 self.conversation_window_active = False
                 self.logger.info("🔒 Conversation window closed")
                 print("🔒 Conversation window closed")
-                self._play_conversation_close_tone()
+                self._play_tone("close_tone_path", "close tone")
 
     def _cancel_conversation_timer(self):
         """Cancel the conversation timeout timer (must hold lock or be called from locked context)."""
@@ -852,7 +855,7 @@ class ContinuousListener:
                 timed_out = True
                 self.logger.info("🔒 Conversation window timed out (silence)")
                 print("🔒 Conversation ended (silence)")
-                self._play_conversation_close_tone()
+                self._play_tone("close_tone_path", "close tone")
         # Invoke cleanup callback AFTER releasing the lock
         if timed_out and self.on_window_close:
             try:
@@ -860,17 +863,16 @@ class ContinuousListener:
             except Exception as e:
                 self.logger.error(f"on_window_close callback error: {e}")
 
-    def _play_conversation_tone(self):
-        """Play the conversation window tone if configured."""
+    def _play_tone(self, config_key, label="tone"):
+        """Play a conversation tone if configured."""
         if not self.config.get("conversation.follow_up_window.play_tone", True):
             return
-        tone_path = self.config.get("conversation.follow_up_window.tone_path")
+        tone_path = self.config.get(f"conversation.follow_up_window.{config_key}")
         if not tone_path:
             return
-        import os
         tone_path = os.path.expanduser(tone_path)
         if not os.path.exists(tone_path):
-            self.logger.warning(f"Conversation tone file not found: {tone_path}")
+            self.logger.warning(f"Conversation {label} file not found: {tone_path}")
             return
         try:
             import subprocess
@@ -881,30 +883,7 @@ class ContinuousListener:
                 stderr=subprocess.DEVNULL
             )
         except Exception as e:
-            self.logger.error(f"Failed to play conversation tone: {e}")
-
-    def _play_conversation_close_tone(self):
-        """Play the conversation window close tone if configured."""
-        if not self.config.get("conversation.follow_up_window.play_tone", True):
-            return
-        tone_path = self.config.get("conversation.follow_up_window.close_tone_path")
-        if not tone_path:
-            return
-        import os
-        tone_path = os.path.expanduser(tone_path)
-        if not os.path.exists(tone_path):
-            self.logger.warning(f"Conversation close tone file not found: {tone_path}")
-            return
-        try:
-            import subprocess
-            output_device = self.config.get("audio.output_device", "default")
-            subprocess.Popen(
-                ["aplay", "-D", output_device, tone_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to play conversation close tone: {e}")
+            self.logger.error(f"Failed to play conversation {label}: {e}")
 
     def stop(self):
         """Stop continuous listening"""

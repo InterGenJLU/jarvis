@@ -49,6 +49,7 @@ class TurnLog:
 
     # Tool calls (from info messages)
     tools_called: list[str] = field(default_factory=list)
+    tool_outputs: dict = field(default_factory=dict)  # tool_name -> raw output
     info_messages: list[str] = field(default_factory=list)
 
     # Derived
@@ -78,6 +79,7 @@ class TurnLog:
             "total_ms": self.total_ms,
             "raw_stats": self.raw_stats,
             "tools_called": self.tools_called,
+            "tool_outputs": self.tool_outputs,
             "info_messages": self.info_messages,
             "word_count": self.word_count,
             "is_empty": self.is_empty,
@@ -162,6 +164,7 @@ class JarvisClient:
         response_text = ""
         stats_data = {}
         info_messages = []
+        tool_outputs = {}
         got_terminal = False
         has_error = False
         error_text = ""
@@ -196,6 +199,8 @@ class JarvisClient:
                 got_terminal = True
             elif mtype == 'stats':
                 stats_data = data.get('data', {})
+            elif mtype == 'tool_output':
+                tool_outputs[data.get('tool', '')] = data.get('content', '')
             elif mtype == 'info':
                 info_messages.append(data.get('content', ''))
             elif mtype == 'system_stats':
@@ -240,6 +245,7 @@ class JarvisClient:
             total_ms=stats_data.get('total_ms', 0),
             raw_stats=stats_data,
             tools_called=tools_called,
+            tool_outputs=tool_outputs,
             info_messages=info_messages,
             word_count=word_count,
             is_empty=(word_count == 0),

@@ -121,6 +121,11 @@ def no_tool(name: str, desc: str = "") -> tuple[str, str, str]:
     return ("no_tool", name, desc or f"avoids {name}")
 
 
+def tool_output_contains(tool: str, text: str, desc: str = "") -> tuple[str, str, str]:
+    """Raw tool output from *tool* contains *text* (case-insensitive)."""
+    return ("tool_output_contains", f"{tool}|{text}", desc or f"tool output has '{text}'")
+
+
 def routes_to_llm(desc: str = "") -> tuple[str, str, str]:
     """routing_layer is P4-LLM or Fallback."""
     return ("routes_to_llm", "", desc or "routes to LLM")
@@ -280,8 +285,18 @@ def grade_turn(turn_log: TurnLog, assertions: list[tuple[str, str, str]],
                 passed = False
                 detail = f"{avalue} was called"
 
+        elif atype == "tool_output_contains":
+            tool_name, needle = avalue.split("|", 1)
+            raw = (turn_log.tool_outputs or {}).get(tool_name, "")
+            if needle.lower() not in raw.lower():
+                passed = False
+                detail = f"'{needle}' not in {tool_name} output ({len(raw)} chars)"
+
         elif atype == "routes_to_llm":
-            if turn_log.routing_layer not in ("P4-LLM", "Fallback"):
+            valid = turn_log.routing_layer in ("P4-LLM", "Fallback")
+            if not valid and turn_log.routing_layer == "" and turn_log.llm_model:
+                valid = True  # LLM answered directly without calling tools
+            if not valid:
                 passed = False
                 detail = f"got {turn_log.routing_layer}"
 

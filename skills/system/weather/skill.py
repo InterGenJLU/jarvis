@@ -124,6 +124,8 @@ class WeatherSkill(BaseSkill):
             examples=[
                 "weather tomorrow",
                 "tomorrow's forecast",
+                "forecast for tomorrow",
+                "what's the forecast for tomorrow",
                 "what will the weather be tomorrow",
                 "how's it going to be tomorrow",
                 "whats the weather gonna be like tomorrow",

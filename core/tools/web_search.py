@@ -39,7 +39,10 @@ SYSTEM_PROMPT_RULE = (
     "When building the query, strip conversational filler ('can you find me', "
     "'I need', 'please'). Example: 'Can you find me a good pizza recipe?' "
     "→ query: 'best homemade pizza recipe'. "
-    "NOT for: opinions, creative writing, math, coding help, local system info."
+    "NOT for: opinions, creative writing, math, coding help, local system info. "
+    "Do NOT use for questions about the user's LOCAL files, folders, directories, "
+    "codebase, project structure, or git repos — use find_files or developer_tools instead. "
+    "Example: 'search the codebase for X' → developer_tools codebase_search, NOT web_search."
 )
 
 handler = None  # Dispatched by frontends (WebResearcher.search())

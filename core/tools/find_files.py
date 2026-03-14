@@ -165,6 +165,8 @@ SCHEMA = {
 }
 
 SYSTEM_PROMPT_RULE = (
+    "ALWAYS use this when the user asks about their local files, folders, "
+    "directory tree, directory structure, or file counts. "
     "For questions about files on THIS COMPUTER (find files, count files, "
     "list files, directory sizes, disk usage, file details, recent files, "
     "directory tree, large files, installed packages, count code lines), "

@@ -81,34 +81,34 @@ class WebNavigationSkill(BaseSkill):
         self._response_pools = {
             "search": [
                 "Let me look into that, {honorific}.",
-                "Searching now.",
-                "One moment while I pull that up.",
+                "Searching now, {honorific}.",
+                "One moment while I pull that up, {honorific}.",
                 "Looking into it, {honorific}.",
-                "Let me see what I can find.",
+                "Let me see what I can find, {honorific}.",
             ],
             "youtube": [
                 "Pulling up YouTube now, {honorific}.",
-                "Let's see what YouTube has on that.",
-                "Checking YouTube for you.",
+                "Let's see what YouTube has on that, {honorific}.",
+                "Checking YouTube for you, {honorific}.",
             ],
             "amazon": [
                 "Checking Amazon for you, {honorific}.",
-                "Let me see what's available.",
-                "Pulling up Amazon now.",
+                "Let me see what's available, {honorific}.",
+                "Pulling up Amazon now, {honorific}.",
             ],
             "wikipedia": [
-                "Let me consult Wikipedia on that.",
+                "Let me consult Wikipedia on that, {honorific}.",
                 "Checking Wikipedia, {honorific}.",
-                "Pulling up Wikipedia now.",
+                "Pulling up Wikipedia now, {honorific}.",
             ],
             "reddit": [
-                "Let me check Reddit for you.",
+                "Let me check Reddit for you, {honorific}.",
                 "Pulling up Reddit now, {honorific}.",
                 "Searching Reddit, {honorific}.",
             ],
             "github": [
                 "Searching GitHub now, {honorific}.",
-                "Let me check GitHub for that.",
+                "Let me check GitHub for that, {honorific}.",
                 "Pulling up GitHub, {honorific}.",
             ],
             "open_url": [
@@ -128,7 +128,7 @@ class WebNavigationSkill(BaseSkill):
             ],
             "easter_egg": [
                 "Right away, {honorific}. Since I wasn't doing anything else.",
-                "Certainly, {honorific}. I live for these moments.",
+                "On it, {honorific}. I live for these moments.",
                 "At once, {honorific}. My schedule just cleared up.",
                 "Consider it done, {honorific}. This is the highlight of my day.",
             ],

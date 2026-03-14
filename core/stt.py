@@ -53,7 +53,6 @@ class SpeechToText:
             self.logger.info("Using base Whisper (faster-whisper)")
             self._load_model("default", "base")
 
-        self.use_fallback = False
         self.language = config.get("stt.language", "en")
 
         # Software gain boost for low-output mics (e.g. webcam mics)
@@ -184,9 +183,6 @@ class SpeechToText:
         Returns:
             Transcribed text
         """
-        if self.use_fallback:
-            return self.fallback.transcribe(audio_data, sample_rate)
-
         # Select the right model for this speaker
         model = self.models.get(speaker_user_id) if speaker_user_id else None
         if model is None:

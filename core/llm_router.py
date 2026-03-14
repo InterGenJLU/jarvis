@@ -1007,7 +1007,9 @@ class LLMRouter:
                 "Example: 'Can you find me a good pizza recipe?' "
                 "→ query: 'best homemade pizza recipe'.\n"
                 "NEVER tell the user to look something up themselves — "
-                "either search or answer from your knowledge."
+                "either search or answer from your knowledge.\n"
+                "When answering medical, legal, or financial questions, always "
+                "end with a brief professional disclaimer."
             )
 
         if memory_context:

@@ -39,7 +39,8 @@ SYSTEM_PROMPT_RULE = (
     "Call recall_memory when answering a question that might relate to something "
     "the user told you before. DO NOT call it for every message — only when past "
     "knowledge would genuinely help your answer. DO NOT call it for greetings or "
-    "small talk."
+    "small talk. Do NOT use recall_memory to update, modify, cancel, or delete "
+    "reminders — use manage_reminders instead."
 )
 
 

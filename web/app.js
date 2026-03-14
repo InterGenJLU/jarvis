@@ -242,16 +242,12 @@
                 screen_width: screen.width,
                 screen_height: screen.height,
             }));
-            // Request geolocation on mobile sessions
+            // Request geolocation on mobile sessions — watchPosition fires
+            // immediately with current position, no separate getCurrentPosition needed
             if (isMobileClient && navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    function (pos) { sendLocation(pos); },
-                    function (err) { console.warn('Geolocation denied:', err.message); },
-                    { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
-                );
                 _geoWatchId = navigator.geolocation.watchPosition(
                     function (pos) { sendLocation(pos); },
-                    function () {},
+                    function (err) { console.warn('Geolocation denied:', err.message); },
                     { enableHighAccuracy: false, maximumAge: 300000 }
                 );
             }

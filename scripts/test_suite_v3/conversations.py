@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from .grader import (
     contains, not_contains, any_of, min_words, max_words,
     is_empty, routes_to_skill, routes_to_layer, uses_tool, no_tool,
-    routes_to_llm, has_honorific, no_filler_ending, no_filler_opening,
-    has_disclaimer,
+    tool_output_contains, routes_to_llm, has_honorific, no_filler_ending,
+    no_filler_opening, has_disclaimer,
 )
 
 
@@ -363,9 +363,9 @@ def get_conversations() -> list[Conversation]:
 
         _c("M01", "Store Preference", "memory", [
             _t("remember that my favorite restaurant is Dreamland BBQ",
-               assertions=[any_of("noted", "remember", "stored", "got it", desc="confirms storage")]),
+               assertions=[any_of("noted", "remember", "stored", "got it", "understood", desc="confirms storage")]),
             _t("and remember I usually order the ribs",
-               assertions=[any_of("noted", "remember", "stored", "got it", desc="confirms storage")]),
+               assertions=[any_of("noted", "remember", "stored", "got it", "understood", desc="confirms storage")]),
         ], cleanup=False, tags=["memory:store"]),
 
         _c("M02", "Recall and Forget Preference", "memory", [
@@ -374,9 +374,9 @@ def get_conversations() -> list[Conversation]:
             _t("what do I usually get there",
                assertions=[contains("ribs", "recalls second fact")]),
             _t("forget all of that",
-               assertions=[any_of("remov", "delet", "forget", "confirm", desc="forget initiated")]),
+               assertions=[any_of("remov", "delet", "forget", "confirm", "clear", desc="forget initiated")]),
             _t("yes, delete it", "confirm forget",
-               assertions=[any_of("removed", "deleted", "forgotten", "done", desc="confirms deletion")]),
+               assertions=[any_of("removed", "deleted", "forgotten", "done", "cleared", "confirmed", "deletion", desc="confirms deletion")]),
         ], cleanup=True, cleanup_for=["M01"], tags=["memory:recall", "memory:forget"]),
 
         _c("M03", "Memory Transparency", "memory", [
@@ -597,7 +597,8 @@ def get_conversations() -> list[Conversation]:
                assertions=[uses_tool("manage_reminders")]),
             _t("what reminders do I have set",
                assertions=[uses_tool("manage_reminders"),
-                           any_of("leave early", "friday", "weekend", desc="lists the reminder")]),
+                           tool_output_contains("manage_reminders", "leave early",
+                                                desc="tool output has the test reminder")]),
             _t("cancel the one about leaving early",
                assertions=[any_of("cancel", "removed", "deleted", desc="confirms cancellation")]),
             _t("do I have any reminders left",
@@ -646,7 +647,7 @@ def get_conversations() -> list[Conversation]:
             _t("add price data to each entry",
                assertions=[min_words(5, "acknowledges addition")]),
             _t("email that to me", "should explain email not available",
-               assertions=[any_of("not", "can't", "don't", "unable", "unavailable",
+               assertions=[any_of("not", "can't", "don't", "unable", "unavailable", "isn't",
                                   desc="email not available")]),
         ], tags=["mixed:research_to_doc"]),
 

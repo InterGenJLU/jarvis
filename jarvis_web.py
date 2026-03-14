@@ -1108,6 +1108,10 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             away_geo=_away_geo,
         )
     router._target_history = conn_ctx.session_history if conn_ctx else None
+    # Sync router's conv_state with connection's conv_state so anaphoric
+    # carryover (last_tools_called) is visible during routing.
+    if conn_ctx and router.conv_state is not conn_ctx.conv_state:
+        router.conv_state = conn_ctx.conv_state
     result = await asyncio.to_thread(
         router.route, command, in_conversation=True, doc_buffer=doc_buffer,
         image_data=image_data, route_ctx=_route_ctx,
@@ -1302,6 +1306,14 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             # Only strip filler for non-streamed responses;
             # _stream_llm_ws already strips before stream_end
             response = llm.strip_filler(response)
+
+        # Post-process: inject honorific if skill/non-streamed response omitted it
+        # (Streamed LLM responses get this in _stream_llm_ws already)
+        if response and response.strip() and not streamed:
+            from core.honorific import get_honorific
+            _h = get_honorific()
+            if _h and _h.lower() not in response.lower():
+                response = response.rstrip().rstrip('.') + f", {_h}."
 
     t_end = time.perf_counter()
 
@@ -1621,6 +1633,12 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 await ws.send_json({
                     'type': 'info',
                     'content': f'Tool result: {tool_call_request.name} returned {len(tool_result)} chars',
+                })
+                # Emit raw tool output for test framework assertions
+                await ws.send_json({
+                    'type': 'tool_output',
+                    'tool': tool_call_request.name,
+                    'content': tool_result[:2000],
                 })
 
                 # Save tool-generated images to disk
@@ -2064,6 +2082,8 @@ def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end,
     if used_llm:
         info = llm.last_call_info or {}
         stats['llm_model'] = info.get('model', '')
+        if 'layer' not in stats:
+            stats['layer'] = 'P4-LLM'
         tokens = info.get('tokens_used')
         if tokens:
             stats['llm_tokens'] = tokens

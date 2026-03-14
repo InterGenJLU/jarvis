@@ -92,6 +92,7 @@ class WebResearcher:
     # Local filesystem path patterns — web search is never useful for these
     _LOCAL_PATH_RE = re.compile(
         r'(?:^|[ "\'(])(?:/home/|~/|/mnt/|/usr/|/etc/|/opt/|/var/|/tmp/|'
+        r'\./|\.\./|file://|'
         r'[A-Z]:\\)',
     )
 

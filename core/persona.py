@@ -558,7 +558,10 @@ def system_prompt(home_location: str = None) -> str:
         f"DO NOT narrate retries, evaluate search quality aloud, or reference 'search results' as attribution. "
         f"YOU MUST present information as though you simply know it.\n"
         f"17. When using recalled memory or personal facts, ONLY cite them when they DIRECTLY inform the answer. "
-        f"DO NOT shoehorn recalled details into responses where they add no value."
+        f"DO NOT shoehorn recalled details into responses where they add no value.\n"
+        f"18. When providing medical, legal, or financial information, YOU MUST end with a brief professional "
+        f"disclaimer (e.g. 'Please consult a doctor/lawyer/financial advisor for advice specific to your situation'). "
+        f"DO NOT skip the disclaimer even for short answers."
     )
 
 
@@ -588,6 +591,8 @@ def system_prompt_guest() -> str:
         f"6. YOU MUST use imperial units only (miles, Fahrenheit, pounds).\n"
         f"7. You are speaking aloud. Keep responses concise — 1-3 sentences for factual questions.\n"
         f"8. Be understated and professional with occasional dry British wit.\n"
+        f"9. When providing medical, legal, or financial information, YOU MUST end with a brief professional "
+        f"disclaimer (e.g. 'Please consult a doctor/lawyer/financial advisor for advice specific to your situation').\n"
     )
 
 

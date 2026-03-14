@@ -87,6 +87,11 @@ SYSTEM_PROMPT_RULE = (
     "Only use action='cancel' with cancel_fragment when the user names a specific reminder "
     "unprompted (e.g. 'cancel the dentist reminder'). "
     "The title is WHAT to be reminded about. The time_text is WHEN. Both are required for add. "
+    "EDITING A REMINDER: 'change X to Y' after setting a reminder = WORD SUBSTITUTION in the title. "
+    "The user is replacing a word in the reminder title, nothing more. "
+    "Example: title is 'call mom', user says 'change call to text' → cancel the old reminder, "
+    "then add(title='text mom', time_text=<same time>). The new title is 'text mom'. "
+    "This is NOT about sending SMS. Do NOT ask for phone numbers. Just swap the word and re-add. "
     "NOT for: calendar events, alarms, timers, scheduling meetings."
 )
 
@@ -165,7 +170,7 @@ def _reminders_add(mgr, args: dict) -> str:
 def _reminders_list(mgr) -> str:
     """List upcoming and fired reminders."""
     created_by = _current_user_fn() if _current_user_fn else 'christopher'
-    pending = mgr.list_reminders("pending", limit=10, created_by=created_by)
+    pending = mgr.list_reminders("pending", limit=25, created_by=created_by)
     fired = mgr.list_reminders("fired", limit=5, created_by=created_by)
     all_reminders = fired + pending
 

@@ -155,6 +155,13 @@ _GLOBAL_RULES_SUFFIX = [
     "without any tool.",
     "NEVER fabricate system info, file paths, or hardware specs. "
     "If unsure, call the tool.",
+    "NEVER claim you completed an action (set, updated, deleted, cancelled, "
+    "created, modified, saved) without actually calling the relevant tool. "
+    "If you cannot perform the action, say so.",
+    "When the user says 'them', 'those', 'it', 'the biggest', 'the oldest', "
+    "or other vague follow-ups, they are referring to data from the PREVIOUS "
+    "tool call. Use the SAME tool (or its family) that answered the prior turn — "
+    "do NOT switch to web_search or take_screenshot for follow-ups.",
 ]
 
 

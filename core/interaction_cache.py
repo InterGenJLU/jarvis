@@ -341,8 +341,12 @@ class InteractionCache:
             # Sort by effective score ascending — evict lowest
             all_hot.sort(key=lambda x: x[0])
             to_evict = total - self._MAX_HOT_ARTIFACTS
+            # Group eviction targets by window, then rebuild lists in one pass
+            evict_ids: dict[str, set] = {}
             for _, wid, art in all_hot[:to_evict]:
-                self._hot[wid].remove(art)
+                evict_ids.setdefault(wid, set()).add(id(art))
+            for wid, ids in evict_ids.items():
+                self._hot[wid] = [a for a in self._hot[wid] if id(a) not in ids]
                 if not self._hot[wid]:
                     del self._hot[wid]
 
@@ -1735,6 +1739,9 @@ class InteractionCache:
         evidence_ids = json.dumps(insight["evidence_ids"][:20])
         distinct_windows = insight.get("distinct_windows", 2)
         evidence_count = insight["evidence_count"]
+        # Confidence: base 0.30 + 0.10 per supporting evidence + 0.05 per
+        # distinct conversation window, capped at 0.95 (never fully certain
+        # from automated consolidation alone).
         confidence = min(0.95, 0.3 + 0.1 * evidence_count
                          + 0.05 * distinct_windows)
 

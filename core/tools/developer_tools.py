@@ -105,6 +105,8 @@ SCHEMA = {
 }
 
 SYSTEM_PROMPT_RULE = (
+    "ALWAYS use this when the user asks to search the codebase, grep for code, "
+    "check git status, or view commits. "
     "For developer operations (git, codebase search, processes, "
     "services, network info, packages, logs, or shell commands), call "
     "developer_tools. For codebase_search, extract the pattern. For "

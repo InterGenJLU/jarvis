@@ -58,8 +58,6 @@ def _print_turn(turn_num: int, user_input: str, turn_log: TurnLog,
 
     if verbose:
         resp = turn_log.response_text
-        if len(resp) > 300:
-            resp = resp[:300] + "..."
         print(f"      JARVIS: {resp}")
 
     # Show failed assertions

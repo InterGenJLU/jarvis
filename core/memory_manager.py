@@ -737,12 +737,11 @@ class MemoryManager:
     @staticmethod
     def _enrich_birthday(phrase: str) -> str:
         """If the phrase contains a birthday with a year, append the computed age."""
-        import re as _re
         from datetime import datetime
-        m = _re.search(
+        m = re.search(
             r"birthday\b.*?\b(january|february|march|april|may|june|july|august|"
             r"september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})",
-            phrase, _re.IGNORECASE,
+            phrase, re.IGNORECASE,
         )
         if not m:
             return phrase
@@ -758,13 +757,12 @@ class MemoryManager:
     @staticmethod
     def _fix_verb_conjugation(text: str) -> str:
         """Fix third-person verbs after 'User' → 'you' substitution."""
-        import re as _re
         for third, second in [('owns', 'own'), ('has', 'have'), ('is', 'are'),
                               ('drives', 'drive'), ('likes', 'like'),
                               ('favors', 'favor'), ('prefers', 'prefer'),
                               ('uses', 'use'), ('works', 'work'),
                               ('plays', 'play'), ('lives', 'live')]:
-            text = _re.sub(rf'\byou {third}\b', f'you {second}', text, flags=_re.I)
+            text = re.sub(rf'\byou {third}\b', f'you {second}', text, flags=re.I)
         return text
 
     def _fact_to_phrase(self, fact: dict) -> Optional[str]:
@@ -803,15 +801,13 @@ class MemoryManager:
                 return None  # Suppress transient per_turn observations
             # Fallback: detect full sentences (subject+verb) to avoid
             # garbled "you live in User owns a Jeep Wrangler"
-            import re as _re
-            if _re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, _re.I):
-                return self._fix_verb_conjugation(_re.sub(r'\bUser\b', 'you', content))
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, re.I):
+                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
             return f"you live in {content}"  # fallback
         elif category == "preference":
             # Detect full sentences to avoid "you prefer User owns a black chair"
-            import re as _re
-            if _re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, _re.I):
-                return self._fix_verb_conjugation(_re.sub(r'\bUser\b', 'you', content))
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, re.I):
+                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
             return f"you prefer {content}"
         elif category == "work":
             return f"you work {content}"
@@ -822,14 +818,13 @@ class MemoryManager:
         elif category == "general":
             # "Remember that..." facts — content is already a full phrase
             # Convert first-person to second-person for natural delivery
-            import re as _re
             phrase = content
-            phrase = _re.sub(r"\bUser\b", "you", phrase)  # third-person "User" → "you"
+            phrase = re.sub(r"\bUser\b", "you", phrase)  # third-person "User" → "you"
             phrase = self._fix_verb_conjugation(phrase)
-            phrase = _re.sub(r"\bmy\b", "your", phrase, flags=_re.IGNORECASE)
-            phrase = _re.sub(r"\bI am\b", "you are", phrase, flags=_re.IGNORECASE)
-            phrase = _re.sub(r"\bI'm\b", "you're", phrase, flags=_re.IGNORECASE)
-            phrase = _re.sub(r"\bI\b", "you", phrase)  # case-sensitive: only uppercase I
+            phrase = re.sub(r"\bmy\b", "your", phrase, flags=re.IGNORECASE)
+            phrase = re.sub(r"\bI am\b", "you are", phrase, flags=re.IGNORECASE)
+            phrase = re.sub(r"\bI'm\b", "you're", phrase, flags=re.IGNORECASE)
+            phrase = re.sub(r"\bI\b", "you", phrase)  # case-sensitive: only uppercase I
             if phrase[0].isupper() and phrase != content:
                 phrase = phrase[0].lower() + phrase[1:]
             elif phrase[0].isupper():
@@ -1468,8 +1463,6 @@ class MemoryManager:
         self.logger.debug("persist_interaction: type=%s query_len=%d answer_len=%d user=%s",
                           interaction_type, len(query) if query else 0,
                           len(answer) if answer else 0, user_id)
-        import json
-        import uuid
         import numpy as np
 
         interaction_id = uuid.uuid4().hex[:16]
@@ -1589,7 +1582,6 @@ class MemoryManager:
         Returns list of {interaction_id, type, query, detail, answer_summary,
         metadata_json, created_at, score}.
         """
-        import json
         import numpy as np
 
         cutoff = time.time() - (days * 86400)

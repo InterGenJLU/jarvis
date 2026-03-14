@@ -22,6 +22,7 @@ from typing import Optional
 
 from core.events import Event, EventType, PipelineState
 from core.speech_chunker import SpeechChunker
+from core.continuous_listener import is_garbage_transcription
 from core.logger import get_logger
 from core.honorific import set_honorific
 from core import persona
@@ -547,14 +548,8 @@ class Coordinator:
         from pathlib import Path
         self.beep_path = Path(__file__).parent.parent / "assets" / "wake_word_detect.wav"
 
-        # Valid short replies (copied from continuous_listener for conversation noise filter)
-        self._valid_short_replies = {
-            "yes", "no", "yeah", "yep", "nah", "nope",
-            "thanks", "thank you", "okay", "ok", "please",
-            "stop", "cancel", "nevermind", "never mind",
-            "sure", "right", "correct", "wrong", "good", "great",
-            "hello", "hey", "hi", "bye", "goodbye",
-        }
+        # Share the valid short replies set from the listener (single source of truth)
+        self._valid_short_replies = self.listener._valid_short_replies
 
         # Speaker tracking (multi-speaker rapid-switch detection)
         self._last_speaker_id: Optional[str] = None
@@ -731,9 +726,8 @@ class Coordinator:
             print("⚠️  Ignoring background noise")
             return
 
-        # Filter garbage (repetitive chars)
-        unique_chars = set(text.replace(' ', '').replace('.', ''))
-        if len(unique_chars) <= 3 and len(text) > 5:
+        # Filter garbage (repetitive chars from TTS bleed, etc.)
+        if is_garbage_transcription(text):
             self.logger.info(f"Ignoring garbage transcription: {text[:30]}...")
             return
 
