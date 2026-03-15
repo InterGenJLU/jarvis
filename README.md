@@ -56,6 +56,10 @@ A fully local, GPU-accelerated voice assistant with fine-tuned speech recognitio
 ![JARVIS Mobile Vision](images/JARVIS_MOBILE_VISION.png)
 *Same vision capability from an iPhone over Tailscale VPN — webcam frame relayed via WebSocket, analyzed by the local LLM, response streamed back to mobile.*
 
+### Image-to-Image Generation
+![JARVIS Img2Img](images/JARVIS_IMG2IMG.png)
+*"Can you make me look steampunk?" — Flux.2 img2img transforms a webcam capture into a styled portrait in under 200 seconds, preserving facial features while applying the requested aesthetic. Seed-tracked for reproducibility.*
+
 ### Console Mode
 ![JARVIS Console](images/JARVIS_CONSOLE.png)
 *Terminal interface with rich stats panel showing match layer, skill routing, confidence, and timing*
