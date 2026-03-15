@@ -46,7 +46,13 @@ def generate_summary(run_data: dict) -> str:
     # Cleanup
     cr = run_data.get('cleanup_report', {})
     if cr:
-        lines.append(f"Cleanup: {cr.get('leaks', 0)} leak(s)")
+        lines.append(f"Cleanup: {cr.get('leaks', 0)} API leak(s)")
+        deep = cr.get('deep_cleaned', {})
+        if deep:
+            total = sum(deep.values())
+            lines.append(f"Deep cleanup: {total} artifacts purged ({', '.join(f'{k}={v}' for k, v in sorted(deep.items()))})")
+        else:
+            lines.append("Deep cleanup: nothing to purge")
     lines.append("")
 
     # Per-category breakdown

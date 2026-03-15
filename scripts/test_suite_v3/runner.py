@@ -260,7 +260,14 @@ async def run_suite(conversations: list[Conversation], config: dict,
                     for action in cleanup_report.actions:
                         print(f"  ✓ {action}")
             else:
-                print("\nCleanup: no leaks detected ✓")
+                print("\nCleanup: no API-level leaks detected ✓")
+            # Deep cleanup report
+            if cleanup_report.deep_cleaned:
+                print(f"\nDeep cleanup purged {sum(cleanup_report.deep_cleaned.values())} artifacts:")
+                for store, count in sorted(cleanup_report.deep_cleaned.items()):
+                    print(f"  ✓ {store}: {count}")
+            else:
+                print("Deep cleanup: nothing to purge ✓")
         except Exception as e:
             print(f"\nWarning: cleanup verification failed: {e}")
 
@@ -285,6 +292,7 @@ async def run_suite(conversations: list[Conversation], config: dict,
             "artifacts_created": cleanup_report.artifacts_created if cleanup_report else 0,
             "artifacts_cleaned": cleanup_report.artifacts_cleaned if cleanup_report else 0,
             "leaks": len(cleanup_report.leaks) if cleanup_report else 0,
+            "deep_cleaned": cleanup_report.deep_cleaned if cleanup_report else {},
         },
         "conversations": conversation_results,
     }

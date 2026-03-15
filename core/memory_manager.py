@@ -122,6 +122,7 @@ class MemoryManager:
         self._message_count_since_batch = 0
         self._surfaced_this_window = set()  # fact_ids surfaced in current conversation window
         self._pending_forget = None  # Phase 6: pending forget confirmation
+        self._last_recalled_fact_ids: list[int] = []  # Track recalled facts for broad forget
         self.last_extracted = []  # Facts extracted from most recent user message
 
         # Per-turn extraction state (Phase 7 — MemGPT store)
@@ -554,6 +555,12 @@ class MemoryManager:
         if not results["facts"] and not results["history"] and not interactions:
             return None  # Let LLM handle with "I don't have any record of that"
 
+        # Track recalled fact IDs for broad forget ("forget all of that")
+        if results["facts"]:
+            self._last_recalled_fact_ids = [
+                f["fact_id"] for f in results["facts"] if "fact_id" in f
+            ]
+
         return self.format_recall_context(results)
 
     def _extract_recall_topic(self, query: str) -> str:
@@ -602,7 +609,18 @@ class MemoryManager:
         r"(?:forget|delete|remove|erase) (?:what (?:i|you) (?:said|know) about|everything about|the fact about)\s+(.+)",
         r"forget (?:that|the) (.+)",
         r"(?:don't|do not) remember (.+?) (?:anymore|any more|any longer)",
+        # Broad / contextual forget — "forget all of that", "forget everything",
+        # "delete it all", "erase all that".  Capture group is intentionally
+        # non-empty so _extract_forget_topic can detect the vague reference.
+        r"(?:forget|delete|remove|erase) (all(?: of)? (?:that|this|it|them)|it all|everything)",
     ]
+
+    # Vague topics that signal "forget whatever we just discussed"
+    _BROAD_FORGET_TOPICS = frozenset({
+        "all of that", "all of this", "all of it", "all of them",
+        "all that", "all this", "all it", "all them",
+        "it all", "everything",
+    })
 
     TRANSPARENCY_PATTERNS = [
         r"what do you (?:know|remember) about me",
@@ -625,12 +643,30 @@ class MemoryManager:
         from core.honorific import get_honorific
 
         topic = self._extract_forget_topic(query)
-        matching_facts = self.search_facts_text(topic, user_id)
 
-        # Also try semantic search if text search found nothing
-        if not matching_facts and self.embedding_model:
-            semantic = self._search_facts_semantic(topic, user_id, top_k=5)
-            matching_facts = [f for f in semantic if f.get("score", 0) >= 0.5]
+        # Broad / contextual forget — "forget all of that", "forget everything"
+        # Use recently recalled fact IDs (exact match to "what we just discussed").
+        if topic.lower().strip().rstrip(".,!?;:") in self._BROAD_FORGET_TOPICS:
+            if self._last_recalled_fact_ids:
+                # Fetch the exact facts that were recalled in this conversation
+                matching_facts = []
+                for fid in self._last_recalled_fact_ids:
+                    fact = self.get_fact_by_id(fid, user_id)
+                    if fact:
+                        matching_facts.append(fact)
+            else:
+                # No recent recalls — fall back to all facts
+                matching_facts = self.get_facts(user_id, limit=50)
+                matching_facts = [f for f in matching_facts
+                                  if f.get("category") != "plan"
+                                  and not f.get("content", "").startswith("The user ")]
+        else:
+            matching_facts = self.search_facts_text(topic, user_id)
+
+            # Also try semantic search if text search found nothing
+            if not matching_facts and self.embedding_model:
+                semantic = self._search_facts_semantic(topic, user_id, top_k=5)
+                matching_facts = [f for f in semantic if f.get("score", 0) >= 0.5]
 
         if not matching_facts:
             return f"I don't have any stored memories about that, {get_honorific()}."
@@ -810,10 +846,16 @@ class MemoryManager:
                 return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
             return f"you prefer {content}"
         elif category == "work":
-            return f"you work {content}"
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|maintains?|manages?)\b', content, re.I):
+                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
+            return f"you work in {content}"
         elif category == "habit":
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, re.I):
+                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
             return f"you {content}"
         elif category == "health":
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|takes?|suffers?)\b', content, re.I):
+                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
             return f"you're {content}"
         elif category == "general":
             # "Remember that..." facts — content is already a full phrase
@@ -1237,6 +1279,20 @@ class MemoryManager:
                     """, (user_id, limit)).fetchall()
 
                 return [dict(row) for row in rows]
+            finally:
+                conn.close()
+
+    def get_fact_by_id(self, fact_id: int, user_id: str = "primary_user") -> dict | None:
+        """Get a single active fact by ID."""
+        with self._db_lock:
+            conn = self._get_conn()
+            try:
+                row = conn.execute("""
+                    SELECT * FROM facts
+                    WHERE fact_id = ? AND user_id = ?
+                          AND deleted = 0 AND superseded_by IS NULL
+                """, (fact_id, user_id)).fetchone()
+                return dict(row) if row else None
             finally:
                 conn.close()
 

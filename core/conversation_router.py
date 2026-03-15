@@ -629,6 +629,24 @@ class ConversationRouter:
     def _handle_readback_session(self, command: str) -> RouteResult | None:
         """P3.1: Intercept commands during an active structured readback."""
         session = self.conv_state.readback_session
+
+        # Cooldown: if readback just completed and user says "next",
+        # tell them there's nothing more instead of falling through to LLM.
+        if not session and self.conv_state.readback_completed_at:
+            import time as _time
+            elapsed = _time.time() - self.conv_state.readback_completed_at
+            if elapsed < 30.0:
+                cmd = command.strip().lower().rstrip(".,!?")
+                if cmd in self._READBACK_CONTINUE:
+                    from core.honorific import get_honorific
+                    self.conv_state.readback_completed_at = 0.0
+                    return RouteResult(
+                        handled=True, intent="readback_complete",
+                        text=f"That's everything, {get_honorific()}. Anything you'd like me to repeat?",
+                    )
+            else:
+                self.conv_state.readback_completed_at = 0.0
+
         if not session or not session.is_active():
             return None
 
@@ -3060,25 +3078,29 @@ class ConversationRouter:
                 for ex_turn, ex_q, ex_a, ex_uid in exchanges[-3:]:
                     q = ex_q[:200]
                     a = ex_a[:800]
+                    # Mark the most recent exchange so ambiguous follow-ups
+                    # like "is that normal?" anchor to the right topic.
+                    tag = "MOST RECENT" if (ex_turn, ex_q) == (exchanges[-1][0], exchanges[-1][1]) else str(ex_turn)
                     if multi_speaker:
                         speaker = self.conversation._get_speaker_label(ex_uid)
                         prior_lines.append(
-                            f"[{ex_turn}] {speaker}: \"{q}\" → You: \"{a}\"")
+                            f"[{tag}] {speaker}: \"{q}\" → You: \"{a}\"")
                     else:
                         prior_lines.append(
-                            f"[{ex_turn}] User: \"{q}\" → You: \"{a}\"")
+                            f"[{tag}] User: \"{q}\" → You: \"{a}\"")
             else:
                 # Short conversation — all exchanges in full (same as before)
                 for ex_turn, ex_q, ex_a, ex_uid in exchanges:
                     q = ex_q[:200]
                     a = ex_a[:800]
+                    tag = "MOST RECENT" if (ex_turn, ex_q) == (exchanges[-1][0], exchanges[-1][1]) else str(ex_turn)
                     if multi_speaker:
                         speaker = self.conversation._get_speaker_label(ex_uid)
                         prior_lines.append(
-                            f"[{ex_turn}] {speaker}: \"{q}\" → You: \"{a}\"")
+                            f"[{tag}] {speaker}: \"{q}\" → You: \"{a}\"")
                     else:
                         prior_lines.append(
-                            f"[{ex_turn}] User: \"{q}\" → You: \"{a}\"")
+                            f"[{tag}] User: \"{q}\" → You: \"{a}\"")
 
             # Inject tool result data for anaphoric follow-ups.
             if self.conv_state.last_tool_result_text:

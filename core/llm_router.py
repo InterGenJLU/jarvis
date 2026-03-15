@@ -545,9 +545,10 @@ class LLMRouter:
     def _estimate_max_tokens(query: str) -> int:
         """Estimate appropriate max_tokens based on query complexity.
 
-        Short (150):  Simple factual, greetings, yes/no
-        Medium (250): General questions, opinions, conversational
-        Long (400):   Explanations, comparisons, deep knowledge, multi-part
+        Short (150):   Simple factual, greetings, yes/no
+        Medium (250):  General questions, opinions, conversational
+        Long (400):    Explanations, comparisons, deep knowledge, multi-part
+        Code (3000):   Code generation, scripts, functions, queries
         """
         q = query.strip().lower()
 
@@ -560,6 +561,17 @@ class LLMRouter:
         for signal in short_signals:
             if signal in q:
                 return 150
+
+        # Code — needs substantial token budget for complete output
+        code_signals = [
+            "write ", "code", "script", "function", "program",
+            "implement", "snippet", "example code", "class ",
+            "regex", "query", "sql", "html", "css", "json",
+            "parse", "algorithm", "boilerplate", "template",
+        ]
+        for signal in code_signals:
+            if signal in q:
+                return 3000
 
         # Long — explanation / deep knowledge queries
         long_signals = [
@@ -1627,12 +1639,12 @@ class LLMRouter:
         formal = get_formal_address()
         if formal:
             honorific_rule = (
-                f"The user is {formal}. If your response is a greeting or farewell, "
-                f"YOU MUST use '{formal}'. For mid-conversation replies, YOU MUST use '{h}'. "
-                f"YOU MUST check your previous response — if you used '{formal}' last time, use '{h}' this time, and vice versa."
+                f"The user is {formal}. Use EXACTLY ONE address per response — "
+                f"either '{formal}' or '{h}', NEVER both. "
+                f"Greetings and farewells: use '{formal}'. All other replies: use '{h}'."
             )
         else:
-            honorific_rule = f"YOU MUST address the user as '{h}' naturally in your response."
+            honorific_rule = ""
         # When tools are available, prepend a chaining instruction so the
         # LLM can call the next tool if the user's request needs multiple.
         # This is combined with the domain-specific prompt (not instead of).
@@ -1655,8 +1667,14 @@ class LLMRouter:
         synth_footer = (
             "DO NOT start with filler like 'Certainly', 'Of course', 'Absolutely'. "
             "Jump straight into the answer. "
+            "NEVER expose your internal reasoning, tool limitations, or decision-making process. "
+            "Do not say things like 'the tool returned', 'I need to search', 'the results show'. "
+            "Present information as though you simply know it. "
             "DO NOT tell the user to check another website or look elsewhere. "
             "You ARE their source of information.\n"
+            "When the user asks an ambiguous follow-up (e.g. 'is that normal?', 'tell me more', "
+            "'why?'), always assume they are referring to the [MOST RECENT] exchange in the "
+            "prior context, not an earlier one.\n"
             f"{honorific_rule}"
         )
 

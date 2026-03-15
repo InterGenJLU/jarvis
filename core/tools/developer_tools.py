@@ -302,7 +302,11 @@ def _devtools_process_info(args: dict) -> str:
     if sort_by not in ("cpu", "memory"):
         sort_by = "cpu"
     sort_key = "-%mem" if sort_by == "memory" else "-%cpu"
-    return _run_cmd(f"ps aux --sort={sort_key} | head -15")
+    output = _run_cmd(f"ps aux --sort={sort_key} | head -15")
+    # Annotate JARVIS's own processes for self-aware reporting
+    lines = output.split('\n')
+    lines = [f"{l}  # (this is me)" if 'jarvis' in l.lower() and 'python' in l.lower() else l for l in lines]
+    return '\n'.join(lines)
 
 
 @_register_devtool("service_status")

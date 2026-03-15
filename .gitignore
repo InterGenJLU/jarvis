@@ -69,8 +69,12 @@ experiments/
 # Research artifacts (session research, not code)
 research/
 
-# V3 test results (per-run output)
+# Test results (local run artifacts)
+tests/iterative_results/
 tests/v3_results/
+
+# Code review artifacts
+reviews/
 
 # Local backups & archives
 .backup/

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # JARVIS Edge Case Test Suite — convenience wrapper
 set -euo pipefail
+export PYTHONUNBUFFERED=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_SCRIPT="$SCRIPT_DIR/test_edge_cases.py"

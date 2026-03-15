@@ -151,6 +151,23 @@ def has_disclaimer(domain: str, desc: str = "") -> tuple[str, str, str]:
     return ("has_disclaimer", domain, desc or f"{domain} disclaimer")
 
 
+def no_negation(*texts: str, desc: str = "") -> tuple[str, str, str]:
+    """Response contains one of *texts* but NOT in a negation context."""
+    return ("no_negation", "|".join(texts), desc or f"'{texts[0]}' without negation")
+
+
+def no_error_pattern(*patterns: str, desc: str = "") -> tuple[str, str, str]:
+    """Response does NOT match any of the given error patterns (regex)."""
+    return ("no_error_pattern", "|".join(patterns),
+            desc or "not an error message")
+
+
+def tool_result_min_chars(tool: str, n: int, desc: str = "") -> tuple[str, str, str]:
+    """Tool *tool* returned at least *n* characters of output."""
+    return ("tool_result_min_chars", f"{tool}|{n}",
+            desc or f"{tool} returned ≥{n} chars")
+
+
 # ── Grading engine ───────────────────────────────────────────────────────
 
 def _extract_tools(info_messages: list[str]) -> list[str]:
@@ -319,6 +336,36 @@ def grade_turn(turn_log: TurnLog, assertions: list[tuple[str, str, str]],
                     passed = False
                     detail = f"starts with '{filler}'"
                     break
+
+        elif atype == "no_negation":
+            keywords = avalue.split("|")
+            negations = ["cannot", "can't", "unable", "won't", "couldn't",
+                         "impossible", "not able", "no way to", "i cannot",
+                         "i can't"]
+            found_keyword = any(kw.lower() in response_lower for kw in keywords)
+            found_negation = any(neg in response_lower for neg in negations)
+            if not found_keyword:
+                passed = False
+                detail = "keyword not found"
+            elif found_negation:
+                passed = False
+                detail = "keyword found in negation context"
+
+        elif atype == "no_error_pattern":
+            import re
+            patterns = avalue.split("|")
+            for pat in patterns:
+                if re.search(pat, response_lower):
+                    passed = False
+                    detail = f"matched error pattern: {pat}"
+                    break
+
+        elif atype == "tool_result_min_chars":
+            tool_name, min_len = avalue.split("|", 1)
+            raw = (turn_log.tool_outputs or {}).get(tool_name, "")
+            if len(raw) < int(min_len):
+                passed = False
+                detail = f"{tool_name} returned {len(raw)} chars (need ≥{min_len})"
 
         elif atype == "has_disclaimer":
             keywords = _DISCLAIMER_KEYWORDS.get(avalue, [])

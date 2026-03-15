@@ -61,6 +61,7 @@ class ConversationState:
 
     # --- Structured readback ---
     readback_session: Optional[ReadbackSession] = None
+    readback_completed_at: float = 0.0  # time.time() when readback finished
 
     # --- Progressive context compression ---
     conversation_topic: str = ""                    # LLM-generated topic anchor (set after turn 1)

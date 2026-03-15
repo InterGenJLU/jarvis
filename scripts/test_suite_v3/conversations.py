@@ -15,7 +15,8 @@ from .grader import (
     contains, not_contains, any_of, min_words, max_words,
     is_empty, routes_to_skill, routes_to_layer, uses_tool, no_tool,
     tool_output_contains, routes_to_llm, has_honorific, no_filler_ending,
-    no_filler_opening, has_disclaimer,
+    no_filler_opening, has_disclaimer, no_negation, no_error_pattern,
+    tool_result_min_chars,
 )
 
 
@@ -129,7 +130,7 @@ def get_conversations() -> list[Conversation]:
             _t("and CPU",
                assertions=[any_of("cpu", "processor", "core", "%", desc="addresses CPU")]),
             _t("is that normal?", "contextual follow-up",
-               assertions=[min_words(10, "contextual synthesis")]),
+               assertions=[min_words(8, "contextual synthesis")]),
         ], tags=["routing:ambiguous"]),
 
         _c("R06", "Greeting to Task to Dismiss", "routing", [
@@ -212,7 +213,12 @@ def get_conversations() -> list[Conversation]:
             _t("show me the directory tree for the core folder",
                assertions=[no_tool("web_search"), min_words(5)]),
             _t("what are the biggest files in the project",
-               assertions=[min_words(10)]),
+               assertions=[uses_tool("find_files"), min_words(10),
+                           not_contains("no files", "returns actual results"),
+                           no_error_pattern(r"no files? .*found", r"under \d+[KMG]B",
+                                            desc="returns actual file list"),
+                           tool_result_min_chars("find_files", 100,
+                                                 desc="tool returned real results")]),
         ], tags=["tool:find_files"]),
 
         _c("T06", "Developer Tools", "tool-routing", [
@@ -363,9 +369,9 @@ def get_conversations() -> list[Conversation]:
 
         _c("M01", "Store Preference", "memory", [
             _t("remember that my favorite restaurant is Dreamland BBQ",
-               assertions=[any_of("noted", "remember", "stored", "got it", "understood", desc="confirms storage")]),
+               assertions=[any_of("noted", "remember", "stored", "got it", "understood", "committed", desc="confirms storage")]),
             _t("and remember I usually order the ribs",
-               assertions=[any_of("noted", "remember", "stored", "got it", "understood", desc="confirms storage")]),
+               assertions=[any_of("noted", "remember", "stored", "got it", "understood", "committed", desc="confirms storage")]),
         ], cleanup=False, tags=["memory:store"]),
 
         _c("M02", "Recall and Forget Preference", "memory", [
@@ -374,9 +380,12 @@ def get_conversations() -> list[Conversation]:
             _t("what do I usually get there",
                assertions=[contains("ribs", "recalls second fact")]),
             _t("forget all of that",
-               assertions=[any_of("remov", "delet", "forget", "confirm", "clear", desc="forget initiated")]),
+               assertions=[any_of("remov", "delet", "forget", "confirm", "clear", desc="forget initiated"),
+                           max_words(80, "scoped to discussed facts, not entire memory")]),
             _t("yes, delete it", "confirm forget",
-               assertions=[any_of("removed", "deleted", "forgotten", "done", "cleared", "confirmed", "deletion", desc="confirms deletion")]),
+               assertions=[any_of("removed", "deleted", "forgotten", "done", "cleared", "confirmed", "deletion", desc="confirms deletion"),
+                           not_contains("cannot", "confirms action, not refusal"),
+                           no_negation("delet", "remov", desc="confirms action, not refusal")]),
         ], cleanup=True, cleanup_for=["M01"], tags=["memory:recall", "memory:forget"]),
 
         _c("M03", "Memory Transparency", "memory", [
@@ -427,7 +436,8 @@ def get_conversations() -> list[Conversation]:
             _t("read it to me", "triggers readback",
                assertions=[min_words(5, "begins readback")]),
             _t("next", "readback navigation",
-               assertions=[min_words(3, "continues readback")]),
+               assertions=[min_words(3, "continues readback"),
+                           no_tool("web_search", "navigates existing content, not new search")]),
         ], tags=["doc:document", "readback"]),
 
         # ════════════════════════════════════════════════════════════════
@@ -492,7 +502,12 @@ def get_conversations() -> list[Conversation]:
             _t("how much disk space am I using",
                assertions=[any_of("gb", "tb", "disk", "space", "gigabyte", "terabyte", "drive", "storage", desc="provides disk info")]),
             _t("what are the biggest files on my system",
-               assertions=[min_words(10)]),
+               assertions=[uses_tool("find_files"), min_words(10),
+                           not_contains("no files", "returns actual results"),
+                           no_error_pattern(r"no files? .*found", r"under \d+[KMG]B",
+                                            desc="returns actual file list"),
+                           tool_result_min_chars("find_files", 100,
+                                                 desc="tool returned real results")]),
         ], tags=["tool:find_files"]),
 
         _c("F02", "Code Directory Analysis", "file-ops", [

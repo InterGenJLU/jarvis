@@ -94,7 +94,7 @@ SCHEMA = {
                     "enum": [
                         "search", "count_files", "count_code", "list_files",
                         "dir_sizes", "disk_usage", "file_info", "recent_files",
-                        "tree", "find_large", "package_info",
+                        "tree", "find_large", "find_largest", "package_info",
                     ],
                     "description": (
                         "search: find files matching a name pattern. "
@@ -107,6 +107,7 @@ SCHEMA = {
                         "recent_files: find files modified within N days. "
                         "tree: show recursive directory structure. "
                         "find_large: find files above a size threshold. "
+                        "find_largest: show the biggest files (top 20 by size, no threshold). "
                         "package_info: check if a package is installed and its version."
                     )
                 },
@@ -178,6 +179,8 @@ SYSTEM_PROMPT_RULE = (
     "'what files did I modify today' → recent_files, "
     "'show me the directory structure' → tree, "
     "'find large files' → find_large, "
+    "'what are the biggest files' → find_largest (shows top 20 by size), "
+    "'find files over 1 gig' → find_large with min_size='1G', "
     "'what are the permissions on this file' → file_info, "
     "'is ffmpeg installed' → package_info, "
     "'what version of python do I have' → package_info. "
@@ -213,6 +216,8 @@ def handler(args: dict) -> str:
             args.get("directory", "home"), int(args.get("depth", 2))),
         "find_large": lambda: _find_large(
             args.get("directory", "home"), args.get("min_size", "100M")),
+        "find_largest": lambda: _find_largest(
+            args.get("directory", "home"), int(args.get("limit", 20))),
         "package_info": lambda: _find_package_info(args.get("package_name", "")),
     }
     fn = dispatch.get(action)
@@ -695,6 +700,50 @@ def _find_large(directory: str, min_size: str = "100M") -> str:
         header += f" (showing top 20)"
     header += ":"
 
+    lines = [header]
+    for size, path in display:
+        rel = path.replace(str(target) + "/", "")
+        lines.append(f"  {_format_size(size):>10s}  {rel}")
+
+    return "\n".join(lines)
+
+
+def _find_largest(directory: str, limit: int = 20) -> str:
+    """Find the largest files in a directory (no size threshold)."""
+    target = _resolve_dir(directory)
+    if not target:
+        return f"Directory '{directory}' does not exist."
+
+    # Find all files, sorted by size
+    output = _run([
+        "find", str(target), "-type", "f",
+        "-not", "-path", "*/.git/*", "-not", "-path", "*/__pycache__/*",
+        "-not", "-path", "*/venv/*", "-not", "-path", "*/.cache/*",
+        "-printf", "%s %p\n",
+    ], timeout=10)
+
+    if not output or output.startswith("Error"):
+        return f"No files found in '{directory}'."
+
+    items = []
+    for line in output.split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split(" ", 1)
+        if len(parts) == 2:
+            try:
+                items.append((int(parts[0]), parts[1]))
+            except ValueError:
+                continue
+
+    if not items:
+        return f"No files found in '{directory}'."
+
+    items.sort(key=lambda x: x[0], reverse=True)
+    cap = min(limit, 20)
+    display = items[:cap]
+
+    header = f"Top {len(display)} largest files in '{directory}':"
     lines = [header]
     for size, path in display:
         rel = path.replace(str(target) + "/", "")

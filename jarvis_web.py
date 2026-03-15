@@ -773,6 +773,12 @@ async def _deliver_readback_chunks(ws, conv_state, tts_proxy) -> str:
                     daemon=True,
                 ).start()
             delivered_text += complete_msg
+            # Clear session but record completion time for cooldown.
+            # "next" within 30s gets "that's everything" instead of
+            # falling through to LLM.
+            conv_state.readback_session = None
+            import time as _time
+            conv_state.readback_completed_at = _time.time()
             break
 
         # Stream this chunk

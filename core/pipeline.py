@@ -1442,11 +1442,17 @@ class Coordinator:
             # Post-process: if LLM omitted the honorific, append it
             # as a final spoken fragment and update full_response.
             if full_response.strip() and chunks_spoken > 0:
-                from core.honorific import get_honorific
+                from core.honorific import get_honorific, get_formal_address
                 h = get_honorific()
-                if h and h.lower() not in full_response.lower():
+                formal = get_formal_address()
+                resp_lower = full_response.lower()
+                honorific_present = (
+                    (h and h.lower() in resp_lower)
+                    or (formal and formal.lower() in resp_lower)
+                )
+                if h and not honorific_present:
                     suffix = f", {h}."
-                    full_response = full_response.rstrip().rstrip('.') + suffix
+                    full_response = full_response.rstrip().rstrip('.!?') + suffix
                     if audio_pipeline:
                         audio_pipeline.put(suffix)
                     else:
