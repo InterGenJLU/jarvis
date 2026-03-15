@@ -3962,13 +3962,13 @@ async def generate_image_handler(request):
                 resp = req.post(
                     "http://127.0.0.1:8190/img2img",
                     json={"prompt": prompt, "image": source_image, "strength": strength, "steps": steps},
-                    timeout=300,
+                    timeout=600,
                 )
             else:
                 resp = req.post(
                     "http://127.0.0.1:8190/generate",
                     json={"prompt": prompt, "width": width, "height": height, "steps": steps},
-                    timeout=300,
+                    timeout=600,
                 )
             if resp.status_code == 200:
                 return resp.json(), 200

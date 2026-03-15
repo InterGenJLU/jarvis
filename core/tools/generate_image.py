@@ -100,7 +100,7 @@ def handler(args: dict) -> str:
         response = requests.post(
             f"{FLUX_SERVER_URL}/generate",
             json={"prompt": prompt, "width": width, "height": height},
-            timeout=120,
+            timeout=600,
         )
 
         if response.status_code != 200:
@@ -122,7 +122,7 @@ def handler(args: dict) -> str:
         )
 
     except requests.Timeout:
-        return "Error: Image generation timed out after 120 seconds."
+        return "Error: Image generation timed out after 600 seconds."
     except requests.ConnectionError:
         return "Error: Could not connect to the Flux server."
     except Exception as e:

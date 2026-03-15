@@ -982,7 +982,7 @@ def _handle_slash_command(command, doc_buffer, console, pt_history):
                 resp = req.post(
                     "http://127.0.0.1:8190/generate",
                     json={"prompt": prompt, "width": 1024, "height": 1024},
-                    timeout=120,
+                    timeout=600,
                 )
                 if resp.status_code == 200:
                     result = resp.json()
