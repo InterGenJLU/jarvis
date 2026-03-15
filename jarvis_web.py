@@ -1307,13 +1307,13 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             # _stream_llm_ws already strips before stream_end
             response = llm.strip_filler(response)
 
-        # Post-process: inject honorific if skill/non-streamed response omitted it
-        # (Streamed LLM responses get this in _stream_llm_ws already)
-        if response and response.strip() and not streamed:
-            from core.honorific import get_honorific
-            _h = get_honorific()
-            if _h and _h.lower() not in response.lower():
-                response = response.rstrip().rstrip('.') + f", {_h}."
+    # Post-process: inject honorific if skill/LLM/non-streamed response omitted it
+    # (Streamed LLM responses get this in _stream_llm_ws already)
+    if response and response.strip() and not streamed:
+        from core.honorific import get_honorific
+        _h = get_honorific()
+        if _h and _h.lower() not in response.lower():
+            response = response.rstrip().rstrip('.') + f", {_h}."
 
     t_end = time.perf_counter()
 

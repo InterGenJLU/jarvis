@@ -1983,7 +1983,7 @@ class ConversationRouter:
     _DOMAIN_MATH = re.compile(
         r'\b(calculat|convert|'
         r'how many(?! (calorie|protein|carb|fat|sodium|sugar))|'
-        r'how much(?! (calorie|protein|carb|fat|sodium|sugar))|'
+        r'how much(?! (calorie|protein|carb|fat|sodium|sugar|notice|time|longer|experience|notice|warning))|'
         r'square feet|square meter|'
         r'gallons?|liters?|grams?|ounces?|pounds?|kilograms?|miles?|'
         r'kilometers?|fahrenheit|celsius|cost estimate|total|subtract|'
@@ -2207,7 +2207,8 @@ class ConversationRouter:
         r'immigration (law|visa|status|petition)|deportat|asylum|'
         r'(is it|am I) (legal|illegal|allowed|liable)|'
         r'(can I|can they) (sue|be sued|file)|'
-        r'eviction (notice|process|law)|tenant (right|law)|landlord (right|law))', re.IGNORECASE)
+        r'eviction (notice|process|law)|tenant (right|law)|'
+        r'(landlord|tenant).{1,30}(is trying|wants to|right|required|can|may|will need|won.t need|notice|eviction|provide|exempt|allowed|obligat))', re.IGNORECASE)
 
     _DOMAIN_HISTORY = re.compile(
         r'\b(ancient (rome|greece|egypt|civilization|world)|'
