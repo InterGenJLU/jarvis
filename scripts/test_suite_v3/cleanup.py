@@ -14,6 +14,7 @@ Deep cleanup targets (direct DB/file access — no API required):
   - memory.db: topic_segments, interaction_log (facts are real — kept)
   - interaction_cache.db: artifacts, artifact_links, consolidated_knowledge
   - web_queries.db: web_queries
+  - reminders.db: cancel test-created reminders AND delete their Google Calendar events
   - FAISS index: memory_faiss/ (only if new files were added during run)
   - Chat history: chat_history.jsonl (truncate to pre-run line count)
   - Sessions meta: sessions_meta.json (restore pre-run keys)
@@ -46,8 +47,80 @@ CHAT_HISTORY = os.path.join(DATA_DIR, "conversations", "chat_history.jsonl")
 SESSIONS_META = os.path.join(DATA_DIR, "conversations", "sessions_meta.json")
 
 
+CONFIG_PATH = os.path.expanduser("~/jarvis/config.yaml")
+GOOGLE_TOKEN_PATH = os.path.join(DATA_DIR, "google_token.json")
+
+
 def _get_share_dir() -> str:
     return os.path.expanduser("~/jarvis/share")
+
+
+def _delete_google_calendar_events(event_ids: set[str]) -> int:
+    """Delete Google Calendar events by ID. Returns count deleted.
+
+    Handles rate limits with backoff, silently skips already-deleted events.
+    Fails gracefully if Google API deps are missing or auth is unavailable.
+    """
+    if not event_ids:
+        return 0
+    try:
+        import yaml
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except ImportError:
+        return 0
+
+    if not os.path.exists(GOOGLE_TOKEN_PATH) or not os.path.exists(CONFIG_PATH):
+        return 0
+
+    try:
+        with open(CONFIG_PATH) as f:
+            config = yaml.safe_load(f)
+        gcal_config = config.get("google_calendar", {})
+        if not gcal_config.get("enabled", False):
+            return 0
+
+        creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_PATH)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            with open(GOOGLE_TOKEN_PATH, 'w') as f:
+                f.write(creds.to_json())
+
+        service = build('calendar', 'v3', credentials=creds)
+
+        # Find the JARVIS calendar
+        cal_name = gcal_config.get("jarvis_calendar_name", "JARVIS")
+        calendars = service.calendarList().list().execute()
+        cal_id = None
+        for cal in calendars.get('items', []):
+            if cal['summary'] == cal_name:
+                cal_id = cal['id']
+                break
+        if not cal_id:
+            return 0
+
+        deleted = 0
+        for eid in event_ids:
+            try:
+                service.events().delete(calendarId=cal_id, eventId=eid).execute()
+                deleted += 1
+            except Exception as e:
+                err = str(e)
+                if "410" in err or "404" in err:
+                    deleted += 1  # Already gone — count as success
+                elif "403" in err and "rateLimitExceeded" in err:
+                    time.sleep(2)
+                    try:
+                        service.events().delete(calendarId=cal_id, eventId=eid).execute()
+                        deleted += 1
+                    except Exception:
+                        pass
+            time.sleep(0.5)  # Avoid rate limits
+
+        return deleted
+    except Exception:
+        return 0
 
 
 # ── State snapshot ───────────────────────────────────────────────────────
@@ -405,7 +478,9 @@ def deep_cleanup(pre_snapshot: StateSnapshot) -> dict[str, int]:
         if lock_removed:
             cleaned["lock_files"] = lock_removed
 
-    # 8. Reminders — cancel any created during the test run
+    # 8. Reminders — cancel test-created reminders AND delete their Google Calendar events.
+    #    Without the Google Calendar delete, the bidirectional sync re-creates cancelled
+    #    reminders on the next sync cycle, causing phantom notifications.
     if os.path.exists(REMINDERS_DB):
         try:
             conn = sqlite3.connect(REMINDERS_DB)
@@ -415,20 +490,43 @@ def deep_cleanup(pre_snapshot: StateSnapshot) -> dict[str, int]:
                 new_ids = {r[0] for r in rows} - pre_snapshot.reminder_ids
                 if new_ids:
                     placeholders = ",".join("?" * len(new_ids))
-                    # Count pending before update (only these get cancelled by us)
+                    id_list = list(new_ids)
+
+                    # Collect Google Calendar event IDs BEFORE cancelling
+                    gcal_rows = conn.execute(
+                        f"SELECT google_event_id FROM reminders "
+                        f"WHERE id IN ({placeholders}) AND google_event_id IS NOT NULL",
+                        id_list
+                    ).fetchall()
+                    # Extract unique base event IDs (strip :offset suffix)
+                    gcal_base_ids: set[str] = set()
+                    for (gid,) in gcal_rows:
+                        idx = gid.rfind(":")
+                        if idx > 0 and gid[idx + 1:].isdigit():
+                            gcal_base_ids.add(gid[:idx])
+                        else:
+                            gcal_base_ids.add(gid)
+
+                    # Cancel pending reminders in DB
                     pending = conn.execute(
                         f"SELECT COUNT(*) FROM reminders "
                         f"WHERE id IN ({placeholders}) AND status = 'pending'",
-                        list(new_ids)
+                        id_list
                     ).fetchone()[0]
                     if pending:
                         conn.execute(
                             f"UPDATE reminders SET status = 'cancelled' "
                             f"WHERE id IN ({placeholders}) AND status = 'pending'",
-                            list(new_ids)
+                            id_list
                         )
                         conn.commit()
                         cleaned["reminders_cancelled"] = pending
+
+                    # Delete corresponding Google Calendar events (breaks sync loop)
+                    if gcal_base_ids:
+                        gcal_deleted = _delete_google_calendar_events(gcal_base_ids)
+                        if gcal_deleted:
+                            cleaned["gcal_events_deleted"] = gcal_deleted
             conn.close()
         except Exception:
             pass
