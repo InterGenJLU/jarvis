@@ -1242,6 +1242,13 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                     daemon=True,
                 ).start()
 
+        elif result.intent == "readback_request":
+            # "Read that to me" — route cached content to structured readback
+            used_llm = True
+            response, streamed = await _start_structured_readback(
+                ws, llm, conv_state, tts_proxy,
+            )
+
     # --- Delivery mode dispatch: user responds to content offer ---
     elif (not result.handled
           and conv_state.jarvis_asked_question

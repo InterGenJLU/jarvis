@@ -863,13 +863,17 @@ class ConversationRouter:
          "news_headlines", None),
     ]
 
-    # Recency references → return the latest synthesis
+    # Readback request → route to structured readback pipeline
+    _READBACK_REQUEST_PATTERNS = re.compile(
+        r'\b(?:read\s+(?:it|that|this)\s+(?:back\s+)?to\s+me)\b', re.I,
+    )
+
+    # Recency references → return the latest synthesis verbatim
     _RECENCY_PATTERNS = re.compile(
         r'\b(?:'
         r'repeat\s+that|say\s+(?:that|it)\s+again|'
         r'what\s+(?:did\s+you|you)\s+(?:just\s+)?sa(?:y|id)|'
-        r'(?:can\s+you\s+)?repeat\s+(?:that|what\s+you\s+said)|'
-        r'read\s+(?:it|that|this)\s+(?:back\s+)?to\s+me'
+        r'(?:can\s+you\s+)?repeat\s+(?:that|what\s+you\s+said)'
         r')\b', re.I,
     )
 
@@ -1421,8 +1425,15 @@ class ConversationRouter:
 
     def _resolve_recency_reference(self, command: str,
                                    cmd: str) -> RouteResult | None:
-        """Resolve 'repeat that', 'what did you say', etc."""
-        if not self._RECENCY_PATTERNS.search(cmd):
+        """Resolve 'repeat that', 'read that to me', etc.
+
+        Readback requests ("read that to me") route to structured readback.
+        Repeat requests ("repeat that", "say that again") return cached text.
+        """
+        is_readback = self._READBACK_REQUEST_PATTERNS.search(cmd)
+        is_repeat = self._RECENCY_PATTERNS.search(cmd)
+
+        if not is_readback and not is_repeat:
             return None
 
         from core.interaction_cache import get_interaction_cache
@@ -1449,6 +1460,16 @@ class ConversationRouter:
         if not text:
             return None
 
+        # "Read that to me" → route to structured readback pipeline
+        if is_readback:
+            logger.info("Readback request detected — routing to readback pipeline")
+            return RouteResult(
+                text=text, intent="readback_request",
+                source="cache", handled=True,
+                open_window=EXTENDED_WINDOW,
+            )
+
+        # "Repeat that" / "say that again" → return cached text verbatim
         return RouteResult(
             text=text, intent="artifact_reference",
             source="cache", handled=True,
