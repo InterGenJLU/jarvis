@@ -74,14 +74,20 @@ class WeatherPoller:
         self.home_lat: float = config.get("location.home_lat", 33.6662)
         self.home_lon: float = config.get("location.home_lon", -86.8128)
 
-        # Polling interval (seconds)
+        # Polling intervals (seconds)
         self.poll_interval: int = config.get("weather.poll_interval_seconds", 900)
+        self.poll_interval_alert: int = config.get(
+            "weather.poll_interval_alert_seconds", 300  # 5 minutes during active alerts
+        )
 
         # NWS User-Agent (required by api.weather.gov)
         self.nws_headers = {
             "User-Agent": "(JARVIS Personal Assistant, contact@example.com)",
             "Accept": "application/geo+json",
         }
+
+        # NWS zone cache: location_key → {"forecast_zone": "ALZ024", "county": "ALC073"}
+        self._nws_zones: Dict[str, Dict[str, str]] = {}
 
         # Background thread
         self._running = False
@@ -173,8 +179,19 @@ class WeatherPoller:
             except Exception as e:
                 self.logger.error("Weather poll error: %s", e, exc_info=True)
 
+            # Adaptive polling: shorter interval when alerts are active
+            try:
+                active_alerts = self.db.get_active_alerts()
+                has_active = bool(active_alerts)
+            except Exception:
+                has_active = False
+
+            interval = self.poll_interval_alert if has_active else self.poll_interval
+            if has_active:
+                self.logger.info("Active alerts detected — polling every %ds", interval)
+
             # Sleep in small increments for responsive shutdown
-            for _ in range(self.poll_interval // 5):
+            for _ in range(interval // 5):
                 if not self._running:
                     return
                 time.sleep(5)
@@ -323,12 +340,12 @@ class WeatherPoller:
 
             rows.append({
                 "date": day_str,
-                "temp_high": round(highs[i], 1) if i < len(highs) else None,
-                "temp_low": round(lows[i], 1) if i < len(lows) else None,
+                "temp_high": round(highs[i], 1) if i < len(highs) and highs[i] is not None else None,
+                "temp_low": round(lows[i], 1) if i < len(lows) and lows[i] is not None else None,
                 "description": description,
                 "weather_main": weather_main,
-                "rain_chance": round(rain_chances[i], 1) if i < len(rain_chances) else 0,
-                "wind_speed": round(wind_speeds[i], 1) if i < len(wind_speeds) else 0,
+                "rain_chance": round(rain_chances[i], 1) if i < len(rain_chances) and rain_chances[i] is not None else 0,
+                "wind_speed": round(wind_speeds[i], 1) if i < len(wind_speeds) and wind_speeds[i] is not None else 0,
             })
 
         self.db.upsert_forecast(rows, location_key="home")
@@ -339,25 +356,45 @@ class WeatherPoller:
     # ------------------------------------------------------------------
 
     def _fetch_alerts_all_locations(self):
-        """Fetch NWS alerts for every tracked location."""
+        """Fetch NWS alerts for every tracked location.
+
+        Queries both zone-based and point-based endpoints for each location.
+        Zone queries surface alerts faster (no geo-indexing delay), while
+        point queries catch hyper-local alerts that may not map to a zone.
+        """
         locations = self.db.get_tracked_locations()
         total_new = 0
 
         for loc in locations:
+            loc_key = loc["location_key"]
+            lat, lon = loc["lat"], loc["lon"]
+
+            # 1. Zone-based query (faster — no geo-indexing delay)
             try:
-                new_ids = self._fetch_alerts_for_point(
-                    lat=loc["lat"],
-                    lon=loc["lon"],
-                    location_key=loc["location_key"],
-                )
+                zones = self._resolve_nws_zones(lat, lon, loc_key)
+                for zone_type in ("forecast_zone", "county"):
+                    zone_id = zones.get(zone_type, "")
+                    if zone_id:
+                        new_ids = self._fetch_alerts_for_zone(zone_id, loc_key)
+                        if new_ids:
+                            total_new += len(new_ids)
+                            self.logger.info("New alerts for %s (zone %s): %d",
+                                            loc_key, zone_id, len(new_ids))
+            except Exception as e:
+                self.logger.error("NWS zone alert fetch failed for %s: %s",
+                                  loc_key, e)
+
+            # 2. Point-based query (catches hyper-local alerts)
+            try:
+                new_ids = self._fetch_alerts_for_point(lat, lon, loc_key)
                 if new_ids:
                     total_new += len(new_ids)
-                    self.logger.info("New alerts for %s: %d (%s)",
-                                    loc["location_key"], len(new_ids),
+                    self.logger.info("New alerts for %s (point): %d (%s)",
+                                    loc_key, len(new_ids),
                                     ", ".join(a[:30] for a in new_ids))
             except Exception as e:
-                self.logger.error("NWS alert fetch failed for %s: %s",
-                                  loc["location_key"], e)
+                self.logger.error("NWS point alert fetch failed for %s: %s",
+                                  loc_key, e)
 
         if total_new:
             self.logger.info("Total new alerts this cycle: %d", total_new)
@@ -367,6 +404,65 @@ class WeatherPoller:
         """Fetch active NWS alerts for a single lat/lon point."""
         url = f"https://api.weather.gov/alerts/active"
         params = {"point": f"{lat:.4f},{lon:.4f}"}
+
+        resp = requests.get(url, params=params, headers=self.nws_headers,
+                            timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+
+        alerts = []
+        for feature in data.get("features", []):
+            props = feature.get("properties", {})
+            alert_id = props.get("id") or feature.get("id", "")
+            if not alert_id:
+                continue
+            alerts.append({
+                "id": alert_id,
+                "event": props.get("event", "Unknown"),
+                "severity": props.get("severity", "Unknown"),
+                "urgency": props.get("urgency", "Unknown"),
+                "headline": props.get("headline", ""),
+                "description": props.get("description", ""),
+                "onset": props.get("onset", ""),
+                "expires": props.get("expires", ""),
+            })
+
+        return self.db.upsert_alerts(alerts, location_key=location_key)
+
+    def _resolve_nws_zones(self, lat: float, lon: float,
+                           location_key: str) -> Dict[str, str]:
+        """Look up NWS forecast zone and county for a lat/lon (cached)."""
+        if location_key in self._nws_zones:
+            return self._nws_zones[location_key]
+
+        try:
+            url = f"https://api.weather.gov/points/{lat:.4f},{lon:.4f}"
+            resp = requests.get(url, headers=self.nws_headers, timeout=10)
+            resp.raise_for_status()
+            props = resp.json().get("properties", {})
+
+            # Extract zone IDs from URLs like ".../zones/forecast/ALZ024"
+            fz_url = props.get("forecastZone", "")
+            county_url = props.get("county", "")
+            zones = {
+                "forecast_zone": fz_url.rsplit("/", 1)[-1] if fz_url else "",
+                "county": county_url.rsplit("/", 1)[-1] if county_url else "",
+            }
+            self._nws_zones[location_key] = zones
+            self.logger.info("Resolved NWS zones for %s: %s", location_key, zones)
+            return zones
+        except Exception as e:
+            self.logger.warning("NWS zone lookup failed for %s: %s", location_key, e)
+            return {}
+
+    def _fetch_alerts_for_zone(self, zone_id: str,
+                               location_key: str) -> List[str]:
+        """Fetch active NWS alerts for a forecast zone (faster than point query)."""
+        if not zone_id:
+            return []
+
+        url = "https://api.weather.gov/alerts/active"
+        params = {"zone": zone_id}
 
         resp = requests.get(url, params=params, headers=self.nws_headers,
                             timeout=15)
@@ -414,12 +510,21 @@ class WeatherPoller:
         "Severe Thunderstorm Watch",
         "Flash Flood Watch",
         "Winter Storm Warning",
+        "Winter Storm Watch",
         "Ice Storm Warning",
         "Blizzard Warning",
         "Hurricane Watch",
         "Tropical Storm Warning",
         "Flood Warning",
+        "Freeze Warning",
+        "Freeze Watch",
+        "Wind Chill Warning",
+        "Wind Chill Watch",
         "Fire Weather Watch",
+        "Heat Advisory",
+        "Excessive Heat Warning",
+        "Excessive Heat Watch",
+        "Wind Advisory",
     }
 
     def _process_alert_notifications(self):
