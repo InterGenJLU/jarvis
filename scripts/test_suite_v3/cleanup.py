@@ -530,20 +530,17 @@ def deep_cleanup(pre_snapshot: StateSnapshot) -> dict[str, int]:
                         else:
                             gcal_base_ids.add(gid)
 
-                    # Cancel pending reminders in DB
-                    pending = conn.execute(
-                        f"SELECT COUNT(*) FROM reminders "
-                        f"WHERE id IN ({placeholders}) AND status = 'pending'",
+                    # Hard-delete ALL test-created reminders regardless of status.
+                    # Reminders that fire during a test run transition to 'confirmed'
+                    # before cleanup runs — cancelling only 'pending' misses them,
+                    # leaving orphaned rows that can re-sync to Google Calendar.
+                    deleted_count = len(new_ids)
+                    conn.execute(
+                        f"DELETE FROM reminders WHERE id IN ({placeholders})",
                         id_list
-                    ).fetchone()[0]
-                    if pending:
-                        conn.execute(
-                            f"UPDATE reminders SET status = 'cancelled' "
-                            f"WHERE id IN ({placeholders}) AND status = 'pending'",
-                            id_list
-                        )
-                        conn.commit()
-                        cleaned["reminders_cancelled"] = pending
+                    )
+                    conn.commit()
+                    cleaned["reminders_deleted"] = deleted_count
 
                     # Delete corresponding Google Calendar events (breaks sync loop)
                     if gcal_base_ids:
