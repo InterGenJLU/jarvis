@@ -765,7 +765,13 @@ class ConversationRouter:
                     r"^(?:remember|don't forget|keep in mind)\s+(?:that\s+)?",
                     "", command, flags=_re.IGNORECASE
                 ).strip().rstrip(".,!?;:")
-                if len(content) > 3:
+                # Quality filter: reject short/meaningless content
+                words = [w for w in content.split() if len(w) > 1]
+                if len(content) >= 10 and len(words) >= 3:
+                    # Prefix with speaker name for consistent fact format
+                    display_name = mm._get_display_name(user_id)
+                    if not content.lower().startswith(display_name.lower()):
+                        content = f"{display_name} {content}"
                     mm.store_fact({
                         "user_id": user_id,
                         "category": "general",

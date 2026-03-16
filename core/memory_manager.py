@@ -953,6 +953,18 @@ class MemoryManager:
                 # Clean up trailing punctuation from fact content
                 fact_content = fact_content.rstrip(".,!?;:")
 
+                # Quality filter: reject captures that are too short or lack
+                # meaningful content (e.g. "get there", "it", single words)
+                words = [w for w in fact_content.split() if len(w) > 1]
+                if len(fact_content) < 10 or len(words) < 3:
+                    continue
+
+                # Prefix with speaker's display name so stored facts read as
+                # "the user likes X" instead of raw "likes X"
+                display_name = self._get_display_name(user_id)
+                if not fact_content.lower().startswith(display_name.lower()):
+                    fact_content = f"{display_name} {fact_content}"
+
                 # Negation windowing: if a negation word appears near a positive
                 # preference verb, reduce confidence (may be contextual negation
                 # like "I don't think I like X")
@@ -1044,14 +1056,18 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     BATCH_EXTRACTION_PROMPT = (
-        "Analyze these recent conversation messages from {user_name} and extract any personal facts, "
-        "preferences, relationships, habits, plans, or opinions.\n\n"
+        "Analyze these recent conversation messages from {user_name} and extract personal facts "
+        "that define WHO {user_name} IS as a person.\n\n"
         "For each fact found, output a JSON line with:\n"
-        '- "category": one of [preference, relationship, habit, plan, opinion, location, work, health, general]\n'
+        '- "category": one of [preference, relationship, habit, opinion, location, work, health, general]\n'
         '- "subject": brief topic (1-3 words)\n'
-        '- "content": the fact in third person using their name (e.g. "{user_name} prefers dark roast coffee")\n\n'
-        "Only extract DURABLE facts — things that will still be true next week.\n"
-        "DO NOT extract: transient state (current location, what they are doing right now, what is on screen).\n\n"
+        '- "content": the fact in third person, ALWAYS using their name "{user_name}" (never "User")\n\n'
+        "RULES:\n"
+        "- Only extract DURABLE identity facts — things true next month (hobbies, relationships, preferences, where they live, what they do).\n"
+        "- Use NEUTRAL phrasing. Say 'mentioned' or 'likes' — NOT 'prefers' or 'favorite' unless they explicitly said those words.\n"
+        "- DO NOT extract: appointments, reminders, calendar events, scheduled calls, one-time plans, "
+        "transient tasks, what they are doing right now, what is on screen, commands to the assistant.\n"
+        "- Each fact must be at least 10 characters with 3+ meaningful words.\n\n"
         "Messages:\n{messages}\n\n"
         "Output only JSON lines, one per fact. If no facts found, output nothing."
     )
@@ -1126,15 +1142,17 @@ class MemoryManager:
     PER_TURN_EXTRACTION_PROMPT = (
         "{user_name} just said:\n\"{user_message}\"\n\n"
         "The assistant responded:\n\"{assistant_message}\"\n\n"
-        "Extract any NEW personal facts about {user_name} from this exchange "
-        "(preferences, relationships, work, location, health, habits, plans).\n\n"
+        "Extract any NEW personal facts that define WHO {user_name} IS from this exchange.\n\n"
         "For each fact, output a JSON line:\n"
-        '- "category": one of [preference, relationship, habit, plan, opinion, location, work, health, general]\n'
+        '- "category": one of [preference, relationship, habit, opinion, location, work, health, general]\n'
         '- "subject": brief topic (1-3 words)\n'
-        '- "content": the fact in third person using their name (e.g. "{user_name} prefers dark roast coffee")\n\n'
-        "Only extract DURABLE facts — things that will still be true next week.\n"
-        "DO NOT extract: greetings, questions, commands, transient state "
-        "(e.g. current location, what they are doing right now, what is on screen).\n"
+        '- "content": the fact in third person, ALWAYS using their name "{user_name}" (never "User")\n\n'
+        "RULES:\n"
+        "- Only extract DURABLE identity facts — things true next month (hobbies, relationships, preferences, where they live, what they do).\n"
+        "- Use NEUTRAL phrasing. Say 'mentioned' or 'likes' — NOT 'prefers' or 'favorite' unless they explicitly said those words.\n"
+        "- DO NOT extract: greetings, questions, commands, appointments, reminders, calendar events, "
+        "scheduled calls, one-time plans, transient tasks, what is on screen.\n"
+        "- Each fact must be at least 10 characters with 3+ meaningful words.\n"
         "If no facts found, output nothing."
     )
 
@@ -1784,12 +1802,18 @@ class MemoryManager:
         return content
 
     def _find_similar_fact(self, user_id: str, subject: str, content: str) -> Optional[dict]:
-        """Find an existing active fact with the same subject (for dedup/supersede)."""
+        """Find an existing active fact with a similar subject (for dedup/supersede).
+
+        Uses normalized substring matching to catch near-duplicates like
+        "Mt. Olive Group" vs "Mt. Olive Group meetings".
+        """
         if not subject:
             return None
+        norm_subject = subject.lower().strip()
         with self._db_lock:
             conn = self._get_conn()
             try:
+                # First try exact match
                 row = conn.execute("""
                     SELECT * FROM facts
                     WHERE user_id = ? AND subject = ?
@@ -1797,6 +1821,24 @@ class MemoryManager:
                     ORDER BY created_at DESC
                     LIMIT 1
                 """, (user_id, subject)).fetchone()
-                return dict(row) if row else None
+                if row:
+                    return dict(row)
+
+                # Fuzzy match: check if new subject contains or is contained
+                # by an existing subject (normalized, case-insensitive)
+                rows = conn.execute("""
+                    SELECT * FROM facts
+                    WHERE user_id = ? AND deleted = 0 AND superseded_by IS NULL
+                    ORDER BY created_at DESC
+                """, (user_id,)).fetchall()
+                for row in rows:
+                    existing_subject = (row["subject"] or "").lower().strip()
+                    if not existing_subject:
+                        continue
+                    # Substring containment in either direction
+                    if (norm_subject in existing_subject or
+                            existing_subject in norm_subject):
+                        return dict(row)
+                return None
             finally:
                 conn.close()

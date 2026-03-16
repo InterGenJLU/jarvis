@@ -360,13 +360,32 @@ def deep_cleanup(pre_snapshot: StateSnapshot) -> dict[str, int]:
     cleaned: dict[str, int] = {}
     cutoff = pre_snapshot.timestamp
 
-    # 1. memory.db — delete rows created during run (KEEP facts always)
+    # 1. memory.db — delete rows created during run (including test-created facts)
     n = _delete_since(MEMORY_DB, "topic_segments", "created_at", cutoff)
     if n:
         cleaned["memory.db:topic_segments"] = n
     n = _delete_since(MEMORY_DB, "interaction_log", "created_at", cutoff)
     if n:
         cleaned["memory.db:interaction_log"] = n
+    # Soft-delete facts created during the test run (delta-based, safe for real data)
+    if os.path.exists(MEMORY_DB):
+        try:
+            conn = sqlite3.connect(MEMORY_DB)
+            if _has_table(conn, "facts"):
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM facts WHERE created_at >= ? AND deleted = 0",
+                    (cutoff,)
+                ).fetchone()[0]
+                if count > 0:
+                    conn.execute(
+                        "UPDATE facts SET deleted = 1 WHERE created_at >= ? AND deleted = 0",
+                        (cutoff,)
+                    )
+                    conn.commit()
+                    cleaned["memory.db:facts"] = count
+            conn.close()
+        except Exception:
+            pass
 
     # 2. interaction_cache.db — delete rows created during run
     n = _delete_since(CACHE_DB, "artifacts", "created_at", cutoff)
