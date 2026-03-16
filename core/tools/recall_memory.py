@@ -69,10 +69,19 @@ def handler(args: dict) -> str:
         if len(combined) >= 5:
             break
 
-    # Track recalled fact IDs for broad forget scoping
-    _memory_manager._last_recalled_fact_ids = [
-        f["fact_id"] for f in combined if "fact_id" in f
+    # Accumulate recalled fact IDs for broad forget scoping ("forget all of that").
+    # Threshold filters out low-relevance results; accumulation preserves IDs from
+    # earlier recalls in the same conversation window so nothing discussed is lost.
+    _FORGET_SCORE_THRESHOLD = 0.45
+    _new_ids = [
+        f["fact_id"] for f in combined
+        if "fact_id" in f
+        and f.get("score", 1.0) >= _FORGET_SCORE_THRESHOLD
     ]
+    _existing = set(_memory_manager._last_recalled_fact_ids)
+    _memory_manager._last_recalled_fact_ids.extend(
+        fid for fid in _new_ids if fid not in _existing
+    )
 
     if not combined:
         return "No memories found matching that query."

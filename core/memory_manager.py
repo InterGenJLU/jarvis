@@ -555,11 +555,19 @@ class MemoryManager:
         if not results["facts"] and not results["history"] and not interactions:
             return None  # Let LLM handle with "I don't have any record of that"
 
-        # Track recalled fact IDs for broad forget ("forget all of that")
+        # Accumulate recalled fact IDs for broad forget ("forget all of that").
+        # Threshold filters junk; accumulation preserves earlier recalls.
+        _FORGET_SCORE_THRESHOLD = 0.45
         if results["facts"]:
-            self._last_recalled_fact_ids = [
-                f["fact_id"] for f in results["facts"] if "fact_id" in f
+            _new_ids = [
+                f["fact_id"] for f in results["facts"]
+                if "fact_id" in f
+                and f.get("score", 1.0) >= _FORGET_SCORE_THRESHOLD
             ]
+            _existing = set(self._last_recalled_fact_ids)
+            self._last_recalled_fact_ids.extend(
+                fid for fid in _new_ids if fid not in _existing
+            )
 
         return self.format_recall_context(results)
 
