@@ -256,6 +256,22 @@ class InteractionCache:
                     CREATE INDEX IF NOT EXISTS idx_ck_promoted
                     ON consolidated_knowledge(promoted)
                 """)
+
+                # Migration: add subject column to consolidated_knowledge
+                try:
+                    conn.execute(
+                        "SELECT subject FROM consolidated_knowledge LIMIT 1"
+                    )
+                except sqlite3.OperationalError:
+                    conn.execute(
+                        "ALTER TABLE consolidated_knowledge "
+                        "ADD COLUMN subject TEXT NOT NULL DEFAULT ''"
+                    )
+                    self.logger.info(
+                        "Migrated consolidated_knowledge table: "
+                        "added subject column"
+                    )
+
                 conn.commit()
             finally:
                 conn.close()
@@ -1757,12 +1773,12 @@ class InteractionCache:
                 UPDATE consolidated_knowledge
                 SET evidence_count = ?, evidence_ids = ?,
                     last_seen = ?, confidence = ?, content = ?,
-                    updated_at = ?
+                    subject = ?, updated_at = ?
                 WHERE knowledge_id = ?
             """, (
                 new_count, json.dumps(new_ids),
                 insight["last_seen"], confidence, insight["content"],
-                now, kid,
+                topic_key, now, kid,
             ))
             return kid
         else:
@@ -1776,8 +1792,8 @@ class InteractionCache:
                     (knowledge_id, user_id, pattern_type, content,
                      evidence_count, evidence_ids, first_seen, last_seen,
                      confidence, promoted, superseded_by,
-                     created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+                     subject, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)
             """, (
                 kid,
                 insight.get("user_id", "primary_user"),
@@ -1788,7 +1804,7 @@ class InteractionCache:
                 insight["first_seen"],
                 insight["last_seen"],
                 confidence,
-                now, now,
+                topic_key, now, now,
             ))
             return kid
 
@@ -1808,7 +1824,7 @@ class InteractionCache:
             fact_id = memory_manager.store_fact({
                 "user_id": user_id,
                 "category": row["pattern_type"],
-                "subject": row["pattern_type"],
+                "subject": row["subject"] or row["pattern_type"],
                 "content": row["content"],
                 "source": "consolidated",
                 "confidence": row["confidence"],
