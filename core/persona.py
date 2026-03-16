@@ -117,10 +117,10 @@ _POOLS = {
     # Task planner: plan cancelled
     # {h} = honorific
     "task_cancelled": [
-        "Understood, {h}. I've stopped the plan.",
+        "Understood, {h}. Cancelled.",
         "Cancelled, {h}.",
-        "Very well, {h}. Plan stopped.",
-        "Of course, {h}. I've halted the plan.",
+        "Very well, {h}. Stopped.",
+        "Right, {h}. Cancelled.",
     ],
 
     # Task planner: partial completion

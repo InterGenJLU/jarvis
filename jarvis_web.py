@@ -529,6 +529,15 @@ def _detect_delivery_mode(command: str, last_response: str) -> str | None:
     return None
 
 
+def _ensure_honorific_tail(text: str) -> str:
+    """Append honorific near the end of *text* if not already present there."""
+    from core.honorific import get_honorific
+    _h = get_honorific()
+    if _h and _h.lower() not in text[-200:].lower():
+        text = text.rstrip().rstrip('.') + f", {_h}."
+    return text
+
+
 async def _stream_readback(ws, llm, cached_tool_result: str,
                                    conv_state=None,
                                    prior_synthesis: str = None) -> tuple:
@@ -746,6 +755,9 @@ async def _start_structured_readback(ws, llm, conv_state, tts_proxy) -> tuple:
     chunk_text = await _deliver_readback_chunks(ws, conv_state, tts_proxy)
     full_text += chunk_text
 
+    # Ensure honorific appears near the end of delivered content
+    full_text = _ensure_honorific_tail(full_text)
+
     if ws:
         await ws.send_json({"type": "stream_end", "full_response": full_text})
 
@@ -822,19 +834,21 @@ async def _deliver_readback_section(ws, conv_state, tts_proxy, section_name: str
     if not chunk:
         return (f"I don't have a {section_name} section in the current content.", False)
 
+    section_text = _ensure_honorific_tail(chunk.content)
+
     if ws:
         await ws.send_json({"type": "stream_start"})
-        await ws.send_json({"type": "stream_token", "token": chunk.content + "\n"})
-        await ws.send_json({"type": "stream_end", "full_response": chunk.content})
+        await ws.send_json({"type": "stream_token", "token": section_text + "\n"})
+        await ws.send_json({"type": "stream_end", "full_response": section_text})
 
     if tts_proxy.hybrid and tts_proxy.real_tts:
         threading.Thread(
             target=tts_proxy.real_tts.speak,
-            args=(chunk.content,),
+            args=(section_text,),
             daemon=True,
         ).start()
 
-    return (chunk.content, True)
+    return (section_text, True)
 
 
 # ---------------------------------------------------------------------------
@@ -1199,7 +1213,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             if ws:
                 await ws.send_json({"type": "stream_start"})
             chunk_text = await _deliver_readback_chunks(ws, conv_state, tts_proxy)
-            response = chunk_text
+            response = _ensure_honorific_tail(chunk_text)
             streamed = True
             if ws:
                 await ws.send_json({"type": "stream_end", "full_response": response})
@@ -1212,20 +1226,22 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
 
         elif result.intent == "readback_repeat":
             # result.text already has the content
+            _repeat_text = _ensure_honorific_tail(result.text)
             if ws:
                 await ws.send_json({"type": "stream_start"})
-                await ws.send_json({"type": "stream_token", "token": result.text})
-                await ws.send_json({"type": "stream_end", "full_response": result.text})
+                await ws.send_json({"type": "stream_token", "token": _repeat_text})
+                await ws.send_json({"type": "stream_end", "full_response": _repeat_text})
             streamed = True
             if tts_proxy.hybrid and tts_proxy.real_tts:
                 threading.Thread(
                     target=tts_proxy.real_tts.speak,
-                    args=(result.text,),
+                    args=(_repeat_text,),
                     daemon=True,
                 ).start()
 
         elif result.intent == "readback_recall":
             # Step or ingredient lookup — result.text has the answer
+            result.text = _ensure_honorific_tail(result.text)
             if tts_proxy.hybrid and tts_proxy.real_tts:
                 threading.Thread(
                     target=tts_proxy.real_tts.speak,

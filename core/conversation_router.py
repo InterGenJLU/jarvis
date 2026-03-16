@@ -1851,7 +1851,7 @@ class ConversationRouter:
             tp.set_pending_confirmation(plan)
             logger.info(f"Plan requires confirmation (destructive step: {desc})")
             return RouteResult(
-                text=f"This plan includes running a command on your system: {desc}. Shall I proceed, {persona.get_honorific()}?",
+                text=f"That involves running a command on your system: {desc}. Shall I proceed, {persona.get_honorific()}?",
                 intent="task_plan_confirm",
                 source="planner",
                 handled=True,

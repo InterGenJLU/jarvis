@@ -414,7 +414,7 @@ def get_conversations() -> list[Conversation]:
                "3-step compound",
                assertions=[min_words(5, "plan announced or executed")]),
             _t("cancel", "task planner interrupt",
-               assertions=[any_of("cancel", "stopped", "understood", desc="acknowledges cancel")]),
+               assertions=[any_of("cancel", "stopped", "understood", "halted", desc="acknowledges cancel")]),
         ], tags=["planner:cancel"]),
 
         # ════════════════════════════════════════════════════════════════
