@@ -11,7 +11,7 @@ are purged. Pre-existing user data (chat history, FAISS vectors, cached artifact
 is preserved intact. This is safe to run while real users are active.
 
 Deep cleanup targets (direct DB/file access — no API required):
-  - memory.db: topic_segments, interaction_log (facts are real — kept)
+  - memory.db: topic_segments, interaction_log, facts (hard-deleted — test data must not persist)
   - interaction_cache.db: artifacts, artifact_links, consolidated_knowledge
   - web_queries.db: web_queries
   - reminders.db: cancel test-created reminders AND delete their Google Calendar events
@@ -26,11 +26,14 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
 import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 import aiohttp
 
@@ -191,8 +194,9 @@ def _delete_since(db_path: str, table: str, ts_column: str,
             conn.commit()
         conn.close()
         return count
-    except Exception:
-        return 0
+    except Exception as e:
+        logger.warning("CLEANUP FAILED: %s:%s — %s", db_path, table, e)
+        return -1
 
 
 # ── Snapshot functions ───────────────────────────────────────────────────
@@ -367,25 +371,25 @@ def deep_cleanup(pre_snapshot: StateSnapshot) -> dict[str, int]:
     n = _delete_since(MEMORY_DB, "interaction_log", "created_at", cutoff)
     if n:
         cleaned["memory.db:interaction_log"] = n
-    # Soft-delete facts created during the test run (delta-based, safe for real data)
+    # Hard-delete facts created during the test run — test data should not persist
     if os.path.exists(MEMORY_DB):
         try:
             conn = sqlite3.connect(MEMORY_DB)
             if _has_table(conn, "facts"):
                 count = conn.execute(
-                    "SELECT COUNT(*) FROM facts WHERE created_at >= ? AND deleted = 0",
+                    "SELECT COUNT(*) FROM facts WHERE created_at >= ?",
                     (cutoff,)
                 ).fetchone()[0]
                 if count > 0:
                     conn.execute(
-                        "UPDATE facts SET deleted = 1 WHERE created_at >= ? AND deleted = 0",
+                        "DELETE FROM facts WHERE created_at >= ?",
                         (cutoff,)
                     )
                     conn.commit()
                     cleaned["memory.db:facts"] = count
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("CLEANUP FAILED: memory.db:facts — %s", e)
 
     # 2. interaction_cache.db — delete rows created during run
     n = _delete_since(CACHE_DB, "artifacts", "created_at", cutoff)
@@ -417,8 +421,8 @@ def deep_cleanup(pre_snapshot: StateSnapshot) -> dict[str, int]:
                     conn.commit()
                     cleaned["web_queries.db:web_queries"] = count
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("CLEANUP FAILED: web_queries.db — %s", e)
 
     # 4. FAISS — remove only files added during run
     if os.path.isdir(FAISS_DIR):
@@ -547,8 +551,8 @@ def deep_cleanup(pre_snapshot: StateSnapshot) -> dict[str, int]:
                         if gcal_deleted:
                             cleaned["gcal_events_deleted"] = gcal_deleted
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("CLEANUP FAILED: reminders.db — %s", e)
 
     # 9. Temp files (always safe — these are ephemeral by nature)
     removed = 0
@@ -602,4 +606,62 @@ async def verify_clean_state(pre_snapshot: StateSnapshot,
     # Deep cleanup — always runs (these are transient stores with no permanent value)
     report.deep_cleaned = deep_cleanup(pre_snapshot)
 
+    # Post-cleanup verification — confirm nothing leaked through
+    residual = _verify_cleanup(pre_snapshot.timestamp)
+    if residual:
+        for table, count in residual.items():
+            report.leaks.append(f"CLEANUP INCOMPLETE: {count} residual row(s) in {table}")
+        logger.error("Post-cleanup verification FAILED: %s", residual)
+
     return report
+
+
+def _verify_cleanup(cutoff: float) -> dict[str, int]:
+    """Verify no test artifacts remain after cleanup. Returns {table: count} for failures."""
+    residual: dict[str, int] = {}
+
+    # Check each DB table that deep_cleanup targets
+    checks = [
+        (MEMORY_DB, "facts", "created_at"),
+        (MEMORY_DB, "topic_segments", "created_at"),
+        (MEMORY_DB, "interaction_log", "created_at"),
+        (CACHE_DB, "artifacts", "created_at"),
+        (CACHE_DB, "artifact_links", "created_at"),
+        (CACHE_DB, "consolidated_knowledge", "created_at"),
+    ]
+
+    for db_path, table, ts_col in checks:
+        if not os.path.exists(db_path):
+            continue
+        try:
+            conn = sqlite3.connect(db_path)
+            if _has_table(conn, table):
+                count = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {ts_col} >= ?",
+                    (cutoff,)
+                ).fetchone()[0]
+                if count > 0:
+                    residual[f"{os.path.basename(db_path)}:{table}"] = count
+            conn.close()
+        except Exception as e:
+            residual[f"{os.path.basename(db_path)}:{table}"] = -1
+            logger.warning("Verification query failed for %s:%s — %s", db_path, table, e)
+
+    # Check web_queries with datetime comparison
+    cutoff_dt = datetime.fromtimestamp(cutoff, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    if os.path.exists(WEB_DB):
+        try:
+            conn = sqlite3.connect(WEB_DB)
+            if _has_table(conn, "web_queries"):
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM web_queries WHERE timestamp >= ?",
+                    (cutoff_dt,)
+                ).fetchone()[0]
+                if count > 0:
+                    residual["web_queries.db:web_queries"] = count
+            conn.close()
+        except Exception as e:
+            residual["web_queries.db:web_queries"] = -1
+            logger.warning("Verification query failed for web_queries — %s", e)
+
+    return residual
