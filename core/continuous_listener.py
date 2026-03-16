@@ -96,6 +96,7 @@ class ContinuousListener:
         self.conversation_window_active = False
         self._conversation_lock = threading.Lock()
         self._conversation_timer = None
+        self._conversation_epoch = 0  # guards against stale timer callbacks
 
         # Conversation window durations (from config)
         self._default_duration = config.get("conversation.follow_up_window.default_duration", 5.0)
@@ -406,30 +407,42 @@ class ContinuousListener:
             traceback.print_exc()
     
     def _find_mic_device(self) -> Optional[int]:
-        """Find microphone device index by name, with default fallback.
+        """Find microphone device index, routing through PipeWire.
 
-        Mirrors the pattern in wake_word.py:_find_mic_device().
-        Returns device index or None if no input device exists at all.
-        Sets self._using_fallback_device when preferred mic isn't found.
+        Prefers the 'pulse' or 'pipewire' virtual device so that capture
+        goes through PipeWire's gain staging and processing pipeline.
+        Falls back to direct ALSA only if PipeWire isn't available.
         """
-        # Try configured device name, retrying if PipeWire hasn't registered it yet
+        devices = sd.query_devices()
+
+        # First, verify the configured mic exists in the system at all
         if self.device:
+            hw_found = False
             max_retries = 6
             for attempt in range(max_retries):
                 devices = sd.query_devices()
-                for i, dev in enumerate(devices):
+                for dev in devices:
                     if (self.device in dev['name'] and
                             dev.get('max_input_channels', 0) > 0):
-                        self._using_fallback_device = False
-                        if attempt > 0:
-                            self.logger.info(f"Found mic '{self.device}' on retry {attempt}")
-                        return i
+                        hw_found = True
+                        break
+                if hw_found:
+                    if attempt > 0:
+                        self.logger.info(f"Found mic '{self.device}' on retry {attempt}")
+                    break
                 if attempt < max_retries - 1:
                     self.logger.debug(f"Mic '{self.device}' not yet available, retrying in 3s ({attempt + 1}/{max_retries - 1})")
                     time.sleep(3)
-            self.logger.warning(f"Configured mic '{self.device}' not found after retries, trying default")
-        else:
-            devices = sd.query_devices()
+
+            if not hw_found:
+                self.logger.warning(f"Configured mic '{self.device}' not found after retries")
+
+        # Prefer PipeWire/PulseAudio virtual device for gain staging
+        for i, dev in enumerate(devices):
+            if dev['name'] in ('pulse', 'pipewire') and dev.get('max_input_channels', 0) > 0:
+                self._using_fallback_device = False
+                self.logger.info(f"Using PipeWire capture device: {dev['name']} (index {i})")
+                return i
 
         # Fall back to system default input
         try:
@@ -438,11 +451,19 @@ class ContinuousListener:
                 dev = sd.query_devices(default_idx)
                 if dev.get('max_input_channels', 0) > 0:
                     self.logger.info(f"Using default input device: {dev['name']}")
-                    if self.device:
-                        self._using_fallback_device = True
+                    self._using_fallback_device = True
                     return default_idx
         except Exception:
             pass
+
+        # Last resort: direct ALSA match by name
+        if self.device:
+            for i, dev in enumerate(devices):
+                if (self.device in dev['name'] and
+                        dev.get('max_input_channels', 0) > 0):
+                    self.logger.warning(f"Using direct ALSA device: {dev['name']} (no PipeWire)")
+                    self._using_fallback_device = True
+                    return i
 
         return None
 
@@ -591,24 +612,24 @@ class ContinuousListener:
                     self.logger.warning(f"Stream health check failed: {e}")
                     self._handle_stream_lost()
 
-                # Case 1b: Stream alive but on fallback — check if preferred mic appeared
-                if self._using_fallback_device and self.device and self.stream is not None:
+                # Case 1b: Verify PipeWire still has the right mic as default source
+                if self.device and self.stream is not None:
+                    self._check_pipewire_source()
+
+                # Case 1c: Stream alive but on fallback — check if preferred path appeared
+                if self._using_fallback_device and self.stream is not None:
                     try:
                         devices = sd.query_devices()
                         for dev in devices:
-                            if (self.device in dev.get('name', '') and
-                                    dev.get('max_input_channels', 0) > 0):
-                                self.logger.info(
-                                    f"🎤 Preferred mic '{self.device}' appeared — switching..."
-                                )
-                                # Tear down fallback stream and restart on preferred device
+                            if dev['name'] in ('pulse', 'pipewire') and dev.get('max_input_channels', 0) > 0:
+                                self.logger.info("🎤 PipeWire device appeared — switching from fallback...")
                                 self._handle_stream_lost()
                                 if self.start():
-                                    self.logger.info("🎤 Switched to preferred microphone!")
-                                    print("🎤 Preferred microphone connected!")
+                                    self.logger.info("🎤 Switched to PipeWire capture!")
+                                    print("🎤 PipeWire audio restored!")
                                 break
                     except Exception as e:
-                        self.logger.debug(f"Preferred mic check failed: {e}")
+                        self.logger.debug(f"PipeWire device check failed: {e}")
 
             # Case 2: No stream — try to reconnect
             else:
@@ -624,6 +645,45 @@ class ContinuousListener:
                             self.logger.error(f"Mic state callback error: {e}")
 
         self.logger.info("Device monitor stopped")
+
+    def _check_pipewire_source(self):
+        """Verify PipeWire's default source is still the configured mic.
+
+        If PipeWire switched the default source away from our mic (e.g.
+        after a system settings change), fix it with wpctl.
+        """
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["pactl", "get-default-source"],
+                capture_output=True, text=True, timeout=5,
+            )
+            default_source = result.stdout.strip()
+            # Check if our configured mic name appears in the default source
+            if self.device and self.device.lower().replace(' ', '_') not in default_source.lower().replace(' ', '_'):
+                # Also accept partial matches (e.g. "usb_pnp" in source name)
+                mic_key = self.device.lower().split()[0]  # e.g. "usb" from "USB PnP Audio Device"
+                if mic_key not in default_source.lower():
+                    self.logger.warning(
+                        f"PipeWire default source changed to '{default_source}' "
+                        f"(expected '{self.device}') — resetting"
+                    )
+                    # Find and set the correct source
+                    list_result = subprocess.run(
+                        ["pactl", "list", "sources", "short"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    for line in list_result.stdout.splitlines():
+                        if self.device.lower().replace(' ', '_') in line.lower().replace(' ', '_'):
+                            source_name = line.split('\t')[1]
+                            subprocess.run(
+                                ["pactl", "set-default-source", source_name],
+                                timeout=5,
+                            )
+                            self.logger.info(f"🎤 Reset PipeWire default source to: {source_name}")
+                            break
+        except Exception as e:
+            self.logger.debug(f"PipeWire source check failed: {e}")
 
     def _handle_stream_lost(self):
         """Clean up after detecting the audio stream has died."""
@@ -672,8 +732,12 @@ class ContinuousListener:
         self.collecting_speech = False
         self.speech_buffer = []
 
-        # Reset VAD state so residual TTS energy doesn't count as speech
-        self.vad.reset()
+        # NOTE: We intentionally do NOT call vad.reset() here.
+        # During TTS + settling delay, _speaking_event is set so no frames
+        # reach the VAD — there's no residual TTS energy in the counters.
+        # Resetting would zero speech_frames, requiring ~300ms of fresh
+        # speech before detection, causing missed utterances if the user
+        # speaks immediately after TTS finishes.
 
         # Acoustic settling delay — let room echo/reverb dissipate before
         # re-enabling the audio callback.  _speaking_event is still set
@@ -815,8 +879,15 @@ class ContinuousListener:
             was_active = self.conversation_window_active
             self.conversation_window_active = True
 
-            # Start new auto-close timer
-            self._conversation_timer = threading.Timer(duration, self._conversation_timeout)
+            # Bump epoch so any stale timer callback (already past cancel
+            # but blocked on the lock) will see a mismatch and no-op.
+            self._conversation_epoch += 1
+            epoch = self._conversation_epoch
+
+            # Start new auto-close timer, capturing current epoch
+            self._conversation_timer = threading.Timer(
+                duration, self._conversation_timeout, args=(epoch,)
+            )
             self._conversation_timer.daemon = True
             self._conversation_timer.start()
 
@@ -845,10 +916,15 @@ class ContinuousListener:
             self._conversation_timer.cancel()
             self._conversation_timer = None
 
-    def _conversation_timeout(self):
+    def _conversation_timeout(self, epoch: int = None):
         """Called by timer when conversation window expires due to silence."""
         timed_out = False
         with self._conversation_lock:
+            # If epoch doesn't match, a newer window superseded this timer
+            if epoch is not None and epoch != self._conversation_epoch:
+                self.logger.debug("Stale conversation timer (epoch %d != %d) — ignoring",
+                                  epoch, self._conversation_epoch)
+                return
             if self.conversation_window_active:
                 self.conversation_window_active = False
                 self._conversation_timer = None
