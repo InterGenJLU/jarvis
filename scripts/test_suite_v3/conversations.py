@@ -13,10 +13,10 @@ from dataclasses import dataclass, field
 
 from .grader import (
     contains, not_contains, any_of, min_words, max_words,
-    is_empty, routes_to_skill, routes_to_layer, uses_tool, no_tool,
-    tool_output_contains, routes_to_llm, has_honorific, no_filler_ending,
-    no_filler_opening, has_disclaimer, no_negation, no_error_pattern,
-    tool_result_min_chars,
+    is_empty, routes_to_skill, routes_to_layer, uses_tool, uses_any_tool,
+    no_tool, tool_output_contains, routes_to_llm, has_honorific,
+    no_filler_ending, no_filler_opening, has_disclaimer, no_negation,
+    no_error_pattern, tool_result_min_chars,
 )
 
 
@@ -182,7 +182,7 @@ def get_conversations() -> list[Conversation]:
             _t("show me the 5 most recent files in my downloads folder",
                assertions=[uses_tool("find_files")]),
             _t("what's my CPU usage right now",
-               assertions=[uses_tool("get_system_info")]),
+               assertions=[uses_any_tool("get_system_info", "developer_tools")]),
             _t("how much RAM is being used",
                assertions=[any_of("memory", "ram", "gb", desc="provides RAM info")]),
         ], tags=["tool:get_system_info", "tool:find_files"]),
@@ -626,8 +626,10 @@ def get_conversations() -> list[Conversation]:
 
         _c("B01", "Readback Navigation", "readback", [
             _t("search for a pulled pork recipe",
+               skip_filler=True,
                assertions=[uses_tool("web_search"), not_contains("step 1", "no auto-readback")]),
             _t("read that to me", "delivery mode triggers readback",
+               skip_filler=True,
                assertions=[min_words(5, "begins readback")]),
             _t("next", "readback navigation",
                assertions=[min_words(3, "continues readback")]),

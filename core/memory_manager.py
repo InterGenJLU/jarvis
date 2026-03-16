@@ -655,11 +655,9 @@ class MemoryManager:
                     if fact:
                         matching_facts.append(fact)
             else:
-                # No recent recalls — fall back to all facts
-                matching_facts = self.get_facts(user_id, limit=50)
-                matching_facts = [f for f in matching_facts
-                                  if f.get("category") != "plan"
-                                  and not f.get("content", "").startswith("The user ")]
+                # No recent recalls — ask for clarification instead of dumping everything
+                return (f"I'm not sure what you'd like me to forget, {get_honorific()}. "
+                        f"Could you be more specific about which memories to remove?")
         else:
             matching_facts = self.search_facts_text(topic, user_id)
 

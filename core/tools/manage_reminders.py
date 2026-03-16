@@ -170,7 +170,7 @@ def _reminders_add(mgr, args: dict) -> str:
 def _reminders_list(mgr) -> str:
     """List upcoming and fired reminders."""
     created_by = _current_user_fn() if _current_user_fn else 'christopher'
-    pending = mgr.list_reminders("pending", limit=25, created_by=created_by)
+    pending = mgr.list_reminders("pending", limit=50, created_by=created_by)
     fired = mgr.list_reminders("fired", limit=5, created_by=created_by)
     all_reminders = fired + pending
 

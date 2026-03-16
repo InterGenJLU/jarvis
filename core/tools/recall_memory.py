@@ -69,6 +69,11 @@ def handler(args: dict) -> str:
         if len(combined) >= 5:
             break
 
+    # Track recalled fact IDs for broad forget scoping
+    _memory_manager._last_recalled_fact_ids = [
+        f["fact_id"] for f in combined if "fact_id" in f
+    ]
+
     if not combined:
         return "No memories found matching that query."
 

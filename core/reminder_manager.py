@@ -417,20 +417,31 @@ class ReminderManager:
                 return r
 
         # Pass 2: token overlap — strip stop-words, match stems via prefix
+        def _stem(word):
+            """Minimal stemmer for cancel matching."""
+            for suffix in ('ing', 'ed', 'es', 's'):
+                if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+                    return word[:-len(suffix)]
+            return word
+
         frag_tokens = {w for w in re.split(r'\W+', fragment_lower)
                        if w and w not in self._CANCEL_STOP_WORDS and len(w) > 2}
         if len(frag_tokens) < 2:
             return None
+
+        frag_stems = {_stem(w) for w in frag_tokens}
 
         best_match = None
         best_overlap = 0
         for r in pending:
             title_tokens = {w for w in re.split(r'\W+', r["title"].lower())
                             if w and w not in self._CANCEL_STOP_WORDS and len(w) > 2}
-            # Count overlapping tokens (prefix match handles plurals: "change" ∈ "changes")
+            title_stems = {_stem(w) for w in title_tokens}
+            # Count overlapping tokens (prefix match + stem match)
             overlap = sum(1 for ft in frag_tokens
                           if any(ft.startswith(tt[:4]) or tt.startswith(ft[:4])
-                                 for tt in title_tokens))
+                                 for tt in title_tokens)
+                          or _stem(ft) in title_stems)
             if overlap >= 2 and overlap > best_overlap:
                 best_overlap = overlap
                 best_match = r

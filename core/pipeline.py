@@ -1345,6 +1345,8 @@ class Coordinator:
                 # Scale max_tokens with chain depth — multi-source answers
                 # (e.g. trip cost: gas + tolls + food) need more output budget.
                 _synth_max_tokens = 400 + (tool_chain_count * 100)
+                # Buffer intermediate text — discard if followed by a chained tool call
+                _intermediate_buffer = ""
                 for item in self.llm.continue_after_tool_call(
                     tool_call_request, tool_result,
                     max_tokens=_synth_max_tokens,
@@ -1354,28 +1356,33 @@ class Coordinator:
                     synthesis_category=synthesis_category,
                 ):
                     if isinstance(item, ToolCallRequest):
-                        self.logger.debug("Chained tool call from synthesis: %s", item.name)
+                        self.logger.debug("Chained tool call from synthesis: %s "
+                                          "(discarding %d chars intermediate text)",
+                                          item.name, len(_intermediate_buffer))
                         next_tool_call = item
                         break
 
-                    token = item
+                    _intermediate_buffer += item
                     _synth_token_count += 1
+
+                if next_tool_call is None and _intermediate_buffer:
+                    # Final synthesis — commit buffered text to response
                     if not self._llm_responded:
                         self._llm_responded = True
-
-                    full_response += token
-                    chunk = chunker.feed(token)
-
-                    if chunk:
-                        chunks_spoken, first_chunk_checked, pending_chunk, audio_pipeline = \
-                            self._process_speech_chunk(
-                                chunk, command, history, memory_context,
-                                conversation_messages, chunks_spoken,
-                                first_chunk_checked, pending_chunk,
-                                audio_pipeline, use_pipeline,
-                            )
-                        if chunks_spoken == -1:
-                            return pending_chunk
+                    full_response += _intermediate_buffer
+                    # Re-feed buffered text through chunker for TTS
+                    for char in _intermediate_buffer:
+                        chunk = chunker.feed(char)
+                        if chunk:
+                            chunks_spoken, first_chunk_checked, pending_chunk, audio_pipeline = \
+                                self._process_speech_chunk(
+                                    chunk, command, history, memory_context,
+                                    conversation_messages, chunks_spoken,
+                                    first_chunk_checked, pending_chunk,
+                                    audio_pipeline, use_pipeline,
+                                )
+                            if chunks_spoken == -1:
+                                return pending_chunk
 
                 self.logger.debug("Synthesis complete: %d tokens, response_len=%d",
                                   _synth_token_count, len(full_response))

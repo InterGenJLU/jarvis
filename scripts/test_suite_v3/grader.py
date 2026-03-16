@@ -116,6 +116,12 @@ def uses_tool(name: str, desc: str = "") -> tuple[str, str, str]:
     return ("uses_tool", name, desc or f"uses {name}")
 
 
+def uses_any_tool(*names: str, desc: str = "") -> tuple[str, str, str]:
+    """Any of the listed tools appears in tools_called."""
+    joined = "|".join(names)
+    return ("uses_any_tool", joined, desc or f"uses any of {joined}")
+
+
 def no_tool(name: str, desc: str = "") -> tuple[str, str, str]:
     """Tool does NOT appear in tools_called."""
     return ("no_tool", name, desc or f"avoids {name}")
@@ -294,6 +300,12 @@ def grade_turn(turn_log: TurnLog, assertions: list[tuple[str, str, str]],
 
         elif atype == "uses_tool":
             if avalue not in tools:
+                passed = False
+                detail = f"tools: {tools or 'none'}"
+
+        elif atype == "uses_any_tool":
+            allowed = set(avalue.split("|"))
+            if not allowed.intersection(tools):
                 passed = False
                 detail = f"tools: {tools or 'none'}"
 

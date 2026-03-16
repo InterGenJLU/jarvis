@@ -1546,8 +1546,9 @@ class LLMRouter:
             "or details the user asked for? If YES — STOP. Do not offer a readthrough. "
             "You already provided the information.\n"
             "(b) Does the content require a WALKTHROUGH to be useful — step-by-step cooking instructions, "
-            "assembly procedures, installation guides? If YES — give a 1-2 sentence summary "
-            "(count of steps, source) and offer a readthrough. Do NOT list any items.\n"
+            "assembly procedures, installation guides? If YES — pick the SINGLE BEST result from the search results. "
+            "Describe it briefly (title, source, why it's a good pick) and offer a readthrough. "
+            "Do NOT list ingredients or steps. Do NOT list multiple results.\n"
             "(c) For everything else — product comparisons, recommendations, rankings, factual answers, "
             "code, travel, general knowledge — just answer completely and stop. Never offer a readthrough.\n"
             "2. YOU MUST give a direct answer. "
@@ -1657,6 +1658,8 @@ class LLMRouter:
                 "If the search results above contain the answer, give a direct answer — do NOT "
                 "search again with a rephrased query. Only search again if the results are "
                 "completely irrelevant to the question asked.\n"
+                "If you need to call another tool, call it IMMEDIATELY — do NOT emit any text "
+                "before the tool call. Only produce text in your FINAL response.\n"
             )
         # ── Common header / footer ──────────────────────────────────
         synth_header = (
