@@ -487,9 +487,14 @@ class ContinuousListener:
                 self.running = False
                 return False
 
-            # Get actual device sample rate
+            # Force 48000 Hz to match PipeWire's native clock rate.
+            # sounddevice reports 44100 for the "pipewire" virtual device,
+            # but PipeWire actually runs at 48000.  Opening at 44100 forces
+            # PipeWire's SPA resampler (non-integer 160:147 ratio) whose
+            # filter state is non-deterministic across restarts — this broke
+            # speaker ID embeddings.  48000 bypasses the resampler entirely.
             device_info = sd.query_devices(device_index)
-            device_sr = int(device_info['default_samplerate'])
+            device_sr = 48000
             self.device_sample_rate = device_sr
 
             self.logger.info(f"Using device: {device_info['name']}")
@@ -682,6 +687,18 @@ class ContinuousListener:
                             )
                             self.logger.info(f"🎤 Reset PipeWire default source to: {source_name}")
                             break
+
+            # Enforce 100% source volume — prevents drift from GNOME, USB re-enum, etc.
+            vol_result = subprocess.run(
+                ["pactl", "get-source-volume", "@DEFAULT_SOURCE@"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "100%" not in vol_result.stdout:
+                subprocess.run(
+                    ["pactl", "set-source-volume", "@DEFAULT_SOURCE@", "100%"],
+                    timeout=5,
+                )
+                self.logger.info(f"🎤 Source volume drifted ({vol_result.stdout.strip()}), reset to 100%")
         except Exception as e:
             self.logger.debug(f"PipeWire source check failed: {e}")
 

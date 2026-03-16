@@ -26,6 +26,13 @@ from core.config import Config
 from core.user_profile import get_profile_manager
 from core.speaker_id import SpeakerIdentifier
 
+# Force 48000 Hz to match PipeWire's native clock rate.  sounddevice reports
+# 44100 for the "pipewire" virtual device, but PipeWire runs at 48000.
+# Opening at 44100 triggers a non-deterministic SPA resampler (48k→44.1k)
+# that breaks speaker ID embeddings across reboots.  Must match the rate
+# used by continuous_listener.py.
+CAPTURE_SAMPLE_RATE = 48000
+
 
 def get_mic_device(config):
     """Resolve the microphone device index from config."""
@@ -109,8 +116,7 @@ def enroll_interactive(config, user_id: str, num_clips: int = 3,
 
     import sounddevice as sd
     mic_device = get_mic_device(config)
-    device_info = sd.query_devices(mic_device if mic_device is not None else sd.default.device[0])
-    sample_rate = int(device_info['default_samplerate'])
+    sample_rate = CAPTURE_SAMPLE_RATE
 
     print(f"\n  Enrolling: {profile['name']} ({profile['honorific']})")
     print(f"  Clips: {num_clips} x {clip_duration}s")
@@ -224,8 +230,7 @@ def test_identification(config, clip_duration: float = 3.0):
 
     import sounddevice as sd
     mic_device = get_mic_device(config)
-    device_info = sd.query_devices(mic_device if mic_device is not None else sd.default.device[0])
-    sample_rate = int(device_info['default_samplerate'])
+    sample_rate = CAPTURE_SAMPLE_RATE
 
     input(f"\n  Press Enter to record a test clip ({clip_duration}s)...")
     for sec in [3, 2, 1]:
@@ -308,8 +313,7 @@ def diagnose_speaker_id(config, clip_duration: float = 3.0, num_clips: int = 5):
 
     import sounddevice as sd
     mic_device = get_mic_device(config)
-    device_info = sd.query_devices(mic_device if mic_device is not None else sd.default.device[0])
-    sample_rate = int(device_info['default_samplerate'])
+    sample_rate = CAPTURE_SAMPLE_RATE
 
     print(f"\n  We'll record {num_clips} clips. Speak naturally — vary your "
           f"sentences, volume, and distance from mic.")
