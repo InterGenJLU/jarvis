@@ -1730,6 +1730,10 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             def _synthesis_producer(tcr=_current_tcr, tr=_current_tr, img=_current_img,
                                     mt=_current_max_tokens,
                                     st=synthesis_temperature, sc=synthesis_category):
+                # Propagate user identity so get_honorific() resolves correctly
+                from core.honorific import set_thread_user, clear_thread_user
+                if user_id:
+                    set_thread_user(user_id)
                 logger.debug("_synthesis_producer: tool=%s result_len=%d image=%s max_tokens=%d synth_temp=%s cat=%s",
                              tcr.name, len(tr) if tr else 0,
                              f"yes ({len(img)//1024}KB)" if img else "no", mt, st, sc)
@@ -1757,6 +1761,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     asyncio.run_coroutine_threadsafe(
                         synthesis_queue.put(('done', None)), loop
                     )
+                    clear_thread_user()
 
             syn_thread = threading.Thread(
                 target=_synthesis_producer, daemon=True,

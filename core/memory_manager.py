@@ -73,8 +73,6 @@ class MemoryManager:
         (re.compile(r"\bmy (?:favorite|favourite)\s+(\w+)\s+is\s+(.+)", re.IGNORECASE), "preference"),
         # Preferences (negative)
         (re.compile(r"\b(?:i|I) (?:don't|do not|hate|dislike|can't stand|never use)\s+(.+)", re.IGNORECASE), "preference"),
-        # Explicit memory requests (imperative only — exclude "do you remember", "what do you remember")
-        (re.compile(r"(?<!\byou )(?:remember|don't forget|keep in mind)\s+that\s+(.+)", re.IGNORECASE), "general"),
         # Relationships
         (re.compile(r"\bmy (\w+(?:'s)?)\s+name is\s+(\w+)", re.IGNORECASE), "relationship"),
         (re.compile(r"\bmy (\w+)\s+is\s+(?:called|named)\s+(\w+)", re.IGNORECASE), "relationship"),
@@ -85,9 +83,10 @@ class MemoryManager:
         (re.compile(r"\b(?:i|I) live (?:in|at|on)\s+(.+)", re.IGNORECASE), "location"),
         # Health
         (re.compile(r"\b(?:i|I)(?:'m| am| have)\s+(?:allergic to|intolerant of)\s+(.+)", re.IGNORECASE), "health"),
-        # Habits: removed — "I usually/always X" lacks context (where? when?)
-        # and produces incomplete facts. LLM paths 2/3 handle habit extraction
-        # with full conversation context.
+        # Catch-all: explicit memory requests — MUST BE LAST so specific patterns
+        # above match first (e.g., "remember that my favorite X is Y" hits preference
+        # before this generic catch-all fires)
+        (re.compile(r"(?<!\byou )(?:remember|don't forget|keep in mind)\s+that\s+(.+)", re.IGNORECASE), "general"),
     ]
 
     @classmethod
