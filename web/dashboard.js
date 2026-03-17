@@ -183,7 +183,7 @@
                 },
             });
 
-            // Token usage chart
+            // Token usage chart — Input vs Output
             if (chartTokens) chartTokens.destroy();
             chartTokens = new Chart(document.getElementById('chart-tokens'), {
                 type: 'bar',
@@ -191,19 +191,14 @@
                     labels,
                     datasets: [
                         {
-                            label: 'Prompt',
+                            label: 'Input',
                             data: promptTok,
                             backgroundColor: 'rgba(56, 189, 248, 0.6)',
                         },
                         {
-                            label: 'Completion',
+                            label: 'Output',
                             data: completionTok,
                             backgroundColor: 'rgba(52, 211, 153, 0.6)',
-                        },
-                        {
-                            label: 'Estimated',
-                            data: estimatedTok,
-                            backgroundColor: 'rgba(148, 163, 184, 0.4)',
                         },
                     ],
                 },

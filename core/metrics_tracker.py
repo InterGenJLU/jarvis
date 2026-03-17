@@ -343,13 +343,13 @@ class MetricsTracker:
         try:
             rows = conn.execute("""
                 SELECT
-                    COALESCE(route_layer, 'Unknown') as route_layer,
+                    route_layer,
                     COUNT(*) as interactions,
                     SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)
                         + COALESCE(estimated_tokens, 0)) as total_tokens,
                     AVG(latency_ms) as avg_latency
                 FROM llm_interactions
-                WHERE timestamp >= ?
+                WHERE timestamp >= ? AND route_layer IS NOT NULL
                 GROUP BY route_layer
                 ORDER BY interactions DESC
             """, (cutoff,)).fetchall()

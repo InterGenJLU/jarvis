@@ -106,12 +106,15 @@ SCHEMA = {
 
 SYSTEM_PROMPT_RULE = (
     "ALWAYS use this when the user asks to search the codebase, grep for code, "
+    "search inside files, find files containing specific text, "
     "check git status, or view commits. "
     "For developer operations (git, codebase search, processes, "
     "services, network info, packages, logs, or shell commands), call "
     "developer_tools. For codebase_search, extract the pattern. For "
     "run_command, provide the exact shell command. "
     "Examples: 'git status' → git_status, 'search for TODO' → codebase_search, "
+    "'find files containing synthesis' → codebase_search with pattern='synthesis', "
+    "'grep for error' → codebase_search with pattern='error', "
     "'is nginx running?' → service_status. "
     "NOT for: general programming questions, code explanations, learning git."
 )

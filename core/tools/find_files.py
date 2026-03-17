@@ -195,7 +195,10 @@ SYSTEM_PROMPT_RULE = (
     "Use list_files when the user asks to see/list/show the files in a directory. "
     "'show me the 5 most recent files in downloads' → list_files with directory=downloads, sort_by=modified, limit=5. "
     "'what are the newest files on my desktop' → list_files with directory=desktop, sort_by=modified. "
-    "NOT for: reading file contents, editing files, web downloads."
+    "NOT for: reading file contents, editing files, web downloads, "
+    "or searching INSIDE files for text/code. "
+    "If the user says 'find files containing X', 'search for X in files', or "
+    "'grep for X', use developer_tools codebase_search instead — NOT find_files."
 )
 
 
