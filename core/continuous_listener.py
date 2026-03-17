@@ -62,15 +62,13 @@ class ContinuousListener:
         # Device sample rate (will be determined when stream starts)
         self.device_sample_rate = None
         
-        # VAD configuration
-        self.frame_duration_ms = 30
-        self.frame_size = int(self.sample_rate * self.frame_duration_ms / 1000)
-        
+        # Initialize VAD (determines frame size)
+        self.vad = VoiceActivityDetector(config, on_speech_detected=self._on_speech_start)
+        self.frame_duration_ms = self.vad.frame_duration_ms
+        self.frame_size = self.vad.frame_size
+
         # Wake word configuration
         self.wake_word = config.get("wake_word.keyword", "jarvis").lower()
-        
-        # Initialize VAD
-        self.vad = VoiceActivityDetector(config, on_speech_detected=self._on_speech_start)
         
         # State
         self.running = False

@@ -5,7 +5,7 @@ sounddevice>=0.4.6
 soundfile>=0.12.1
 
 # Voice Activity Detection
-webrtcvad>=2.0.10
+silero-vad>=6.0.0
 
 # Wake Word Detection
 pvporcupine>=3.0.0
