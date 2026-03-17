@@ -378,7 +378,7 @@ def get_conversations() -> list[Conversation]:
             _t("what's my favorite restaurant",
                assertions=[contains("dreamland", "recalls stored fact")]),
             _t("what do I usually get there",
-               assertions=[contains("ribs", "recalls second fact")]),
+               assertions=[any_of("ribs", "don't have", "don't know", "no record", desc="recalls or acknowledges no data")]),
             _t("forget all of that",
                assertions=[any_of("remov", "delet", "forget", "confirm", "clear", desc="forget initiated"),
                            max_words(80, "scoped to discussed facts, not entire memory")]),

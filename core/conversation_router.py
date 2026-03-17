@@ -546,6 +546,7 @@ class ConversationRouter:
             return RouteResult(
                 text=text, intent="forget_cancel",
                 source="memory", handled=True,
+                match_info={"layer": "P3.5-memory", "skill_name": "memory"},
             )
         if any(_word_match(w, cmd_lower) for w in affirm):
             text = mm.confirm_forget()
@@ -553,6 +554,7 @@ class ConversationRouter:
             return RouteResult(
                 text=text, intent="forget_confirm",
                 source="memory", handled=True,
+                match_info={"layer": "P3.5-memory", "skill_name": "memory"},
             )
         if any(_word_match(w, cmd_lower) for w in deny):
             text = mm.cancel_forget()
@@ -560,6 +562,7 @@ class ConversationRouter:
             return RouteResult(
                 text=text, intent="forget_cancel",
                 source="memory", handled=True,
+                match_info={"layer": "P3.5-memory", "skill_name": "memory"},
             )
         return None
 
@@ -741,6 +744,7 @@ class ConversationRouter:
             return RouteResult(
                 text=text, intent="memory_forget",
                 source="memory", handled=True,
+                match_info={"layer": "P3.5-memory", "skill_name": "memory"},
                 open_window=30.0,
             )
 
@@ -750,6 +754,7 @@ class ConversationRouter:
             return RouteResult(
                 text=text, intent="memory_transparency",
                 source="memory", handled=True,
+                match_info={"layer": "P3.5-memory", "skill_name": "memory"},
                 open_window=15.0,
             )
 
@@ -784,7 +789,8 @@ class ConversationRouter:
             logger.info("Handled by memory fact request")
             return RouteResult(
                 text=persona.pick("fact_stored"), intent="fact_stored",
-                source="canned", handled=True,
+                source="memory", handled=True,
+                match_info={"layer": "P3.5-memory", "skill_name": "memory"},
             )
 
         if mm.is_recall_query(command):
@@ -834,7 +840,8 @@ class ConversationRouter:
                 )
                 return RouteResult(
                     text=response, intent="memory_recall",
-                    source="memory", handled=True, used_llm=True,
+                    source="memory", handled=True,
+                match_info={"layer": "P3.5-memory", "skill_name": "memory"}, used_llm=True,
                     open_window=30.0,
                 )
             # Nothing found — fall through to LLM
