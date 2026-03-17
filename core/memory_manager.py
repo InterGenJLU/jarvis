@@ -85,8 +85,9 @@ class MemoryManager:
         (re.compile(r"\b(?:i|I) live (?:in|at|on)\s+(.+)", re.IGNORECASE), "location"),
         # Health
         (re.compile(r"\b(?:i|I)(?:'m| am| have)\s+(?:allergic to|intolerant of)\s+(.+)", re.IGNORECASE), "health"),
-        # Habits
-        (re.compile(r"\b(?:i|I) (?:usually|typically|normally|always)\s+(.+?)(?:\s+(?:every|each|in the|at)\s+.+)?$", re.IGNORECASE), "habit"),
+        # Habits: removed — "I usually/always X" lacks context (where? when?)
+        # and produces incomplete facts. LLM paths 2/3 handle habit extraction
+        # with full conversation context.
     ]
 
     @classmethod

@@ -841,6 +841,8 @@ class LLMRouter:
         first_token_time = None
         total_chars = 0
         stream_error = None
+        _stream_input_tokens = None
+        _stream_output_tokens = None
         try:
             response = requests.post(
                 self.local_endpoint,
@@ -902,6 +904,11 @@ class LLMRouter:
                         break
                     try:
                         chunk = json.loads(data)
+                        # Capture token counts from the final chunk's timings
+                        timings = chunk.get("timings")
+                        if timings:
+                            _stream_input_tokens = timings.get("prompt_n")
+                            _stream_output_tokens = timings.get("predicted_n")
                         delta = chunk["choices"][0].get("delta", {})
                         token = delta.get("content", "")
                         if token:
@@ -919,8 +926,9 @@ class LLMRouter:
         finally:
             self.last_call_info = {
                 "provider": "qwen", "method": "stream",
-                "input_tokens": None, "output_tokens": None,
-                "estimated_tokens": total_chars // 4 if total_chars else None,
+                "input_tokens": _stream_input_tokens,
+                "output_tokens": _stream_output_tokens,
+                "estimated_tokens": total_chars // 4 if total_chars and not _stream_output_tokens else None,
                 "model": model_name,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
@@ -1121,6 +1129,8 @@ class LLMRouter:
         first_token_time = None
         total_chars = 0
         stream_error = None
+        _stream_input_tokens = None
+        _stream_output_tokens = None
         try:
             response = requests.post(
                 self.local_endpoint,
@@ -1176,6 +1186,11 @@ class LLMRouter:
 
                 try:
                     chunk = json.loads(data)
+                    # Capture token counts from the final chunk's timings
+                    timings = chunk.get("timings")
+                    if timings:
+                        _stream_input_tokens = timings.get("prompt_n")
+                        _stream_output_tokens = timings.get("predicted_n")
                     delta = chunk["choices"][0].get("delta", {})
                     finish_reason = chunk["choices"][0].get("finish_reason")
 
@@ -1242,8 +1257,9 @@ class LLMRouter:
         finally:
             self.last_call_info = {
                 "provider": "qwen", "method": "stream_with_tools",
-                "input_tokens": None, "output_tokens": None,
-                "estimated_tokens": total_chars // 4 if total_chars else None,
+                "input_tokens": _stream_input_tokens,
+                "output_tokens": _stream_output_tokens,
+                "estimated_tokens": total_chars // 4 if total_chars and not _stream_output_tokens else None,
                 "model": model_name,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
@@ -1736,6 +1752,8 @@ class LLMRouter:
         is_tool_call = False
         tc_name = ""
         tc_args = ""
+        _stream_input_tokens = None
+        _stream_output_tokens = None
         tc_id = None
 
         # Payload-aware timeout: scale with message content length.
@@ -1770,6 +1788,11 @@ class LLMRouter:
                     break
                 try:
                     chunk = json.loads(data)
+                    # Capture token counts from the final chunk's timings
+                    timings = chunk.get("timings")
+                    if timings:
+                        _stream_input_tokens = timings.get("prompt_n")
+                        _stream_output_tokens = timings.get("predicted_n")
                     choice = chunk["choices"][0]
                     delta = choice.get("delta", {})
                     finish = choice.get("finish_reason")
@@ -1831,8 +1854,9 @@ class LLMRouter:
                 f", TTFT={ttft:.0f}ms" if ttft else ", TTFT=none (zero tokens)")
             self.last_call_info = {
                 "provider": "qwen", "method": "continue_after_tool_call",
-                "input_tokens": None, "output_tokens": None,
-                "estimated_tokens": total_chars // 4 if total_chars else None,
+                "input_tokens": _stream_input_tokens,
+                "output_tokens": _stream_output_tokens,
+                "estimated_tokens": total_chars // 4 if total_chars and not _stream_output_tokens else None,
                 "model": model_name,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,

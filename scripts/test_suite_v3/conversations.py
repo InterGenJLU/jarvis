@@ -385,7 +385,7 @@ def get_conversations() -> list[Conversation]:
             _t("yes, delete it", "confirm forget",
                assertions=[any_of("removed", "deleted", "forgotten", "done", "cleared", "confirmed", "deletion", desc="confirms deletion"),
                            not_contains("cannot", "confirms action, not refusal"),
-                           no_negation("delet", "remov", desc="confirms action, not refusal")]),
+                           no_negation("delet", "remov", "forgotten", desc="confirms action, not refusal")]),
         ], cleanup=True, cleanup_for=["M01"], tags=["memory:recall", "memory:forget"]),
 
         _c("M03", "Memory Transparency", "memory", [

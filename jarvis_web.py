@@ -1152,11 +1152,12 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
         t_end = time.perf_counter()
         return {'response': '', 'stats': {}, 'used_llm': False, 'streamed': False}
 
+    match_info = result.match_info  # Capture for metrics regardless of handler path
+
     if result.handled:
         response = result.text
         skill_handled = True
         used_llm = result.used_llm
-        match_info = result.match_info
 
         # Task plan: stream announcement + progress + final result
         task_planner = components.get('task_planner')
@@ -1904,7 +1905,12 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 "conversation", raw_command, full_response,
                 user_id=user_id or 'christopher',
             )
-        # Short enough to send as non-streaming response
+        # Short enough to send as non-streaming response — still inject honorific
+        if full_response and full_response.strip():
+            from core.honorific import get_honorific
+            _h = get_honorific()
+            if _h and _h.lower() not in full_response.lower():
+                full_response = full_response.rstrip().rstrip('.') + f", {_h}."
         return (full_response, False, None)
 
     # --- Deflection safety net ---
