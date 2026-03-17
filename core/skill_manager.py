@@ -27,11 +27,53 @@ _keyword_aliases = {"google", "codebase"}
 
 # Keyword negative contexts: when the regex matches, suppress that keyword
 # to prevent false routing (e.g. "Google Home" ≠ search intent)
+# Informational query pattern — suppresses site-keyword navigation when the user
+# is asking ABOUT the company/site rather than asking to SEARCH ON it.
+# Matches: question words near the site name, possessive forms, business terms.
+# Navigation verbs — if the query starts with these, it's navigational
+# regardless of question words in the search terms.
+_NAV_PREFIX = re.compile(
+    r'^\s*(?:please\s+|do\s+a\s+)?'
+    r'(search|open|go\s+to|pull\s+up|check|look\s+up|look\s+for|browse|show\s+me|'
+    r'find\s+me|find\s+.*\bon|look\s+.*\bon)\s+',
+    re.I)
+
+def _make_informational_pattern(keyword: str) -> re.Pattern:
+    """Build an informational-query suppressor for a site keyword.
+
+    Matches when the query is asking ABOUT the company (informational)
+    rather than asking to SEARCH ON the site (navigational).
+    Navigation prefix bypass is handled separately in the caller.
+    """
+    kw = re.escape(keyword)
+    return re.compile(
+        r'('
+        # Question word anywhere before or after the keyword
+        r'\b(does|what|when|where|why|how|who|is|are|did|has|have|will|can|should|could|would)\b'
+        r'.*\b(' + kw + r')\b'
+        r'|'
+        r'\b(' + kw + r')\b.*\b(does|what|when|where|why|how|who|is|are|did|has|have|will|can|should|could|would)\b'
+        r'|'
+        # Possessive or business terms adjacent to keyword
+        r'\b(' + kw + r')(\'s|s)?\s*(stock|price|earnings|profit|revenue|report|ceo|founder|'
+        r'employee|layoff|policy|headquarter|worth|valuation|ipo|market\s*cap|'
+        r'outage|down|announce|acqui|merg|lawsuit|settl)\b'
+        r')', re.I)
+
 _keyword_negative_contexts = {
-    "google": re.compile(
-        r'\bgoogle\s+(home|nest|assistant|calendar|drive|maps|photos|docs|'
-        r'sheets|pixel|chrome|play|cloud|fi|meet|classroom|lens|earth|'
-        r'translate|flights|store|workspace|one|hub)\b', re.I),
+    # Site keywords — suppress when query is about the company, not navigation
+    "amazon": _make_informational_pattern("amazon"),
+    "youtube": _make_informational_pattern("youtube"),
+    "google": _make_informational_pattern("google"),
+    "reddit": _make_informational_pattern("reddit"),
+    "github": _make_informational_pattern("github"),
+    "wikipedia": _make_informational_pattern("wikipedia"),
+    "facebook": _make_informational_pattern("facebook"),
+    "instagram": _make_informational_pattern("instagram"),
+    "twitter": _make_informational_pattern("twitter"),
+    "yahoo": _make_informational_pattern("yahoo"),
+    "aol": _make_informational_pattern("aol"),
+    # Non-site keywords
     "find": re.compile(
         r'(script.*\bfind\b|command.*\bfind\b|\bfind\s+\.'
         r'|\bdoes\s+find\b|\bthat\s+(does\s+)?find\b)', re.I),
@@ -410,16 +452,19 @@ class SkillManager:
             # handles the "bare generic" case.
             score = 0
             matched_kws = []
+            is_nav = bool(_NAV_PREFIX.match(normalized_text))
             for keyword in keywords:
                 if re.search(r'\b' + re.escape(keyword.lower()) + r'\b', normalized_text):
                     # Suppress keyword if negative context matches
-                    neg_ctx = _keyword_negative_contexts.get(keyword.lower())
-                    if neg_ctx and neg_ctx.search(normalized_text):
-                        self.logger.debug(
-                            "Keyword '%s' suppressed by negative context in: %s",
-                            keyword, normalized_text[:80],
-                        )
-                        continue
+                    # (skip suppression if query starts with navigation verb)
+                    if not is_nav:
+                        neg_ctx = _keyword_negative_contexts.get(keyword.lower())
+                        if neg_ctx and neg_ctx.search(normalized_text):
+                            self.logger.debug(
+                                "Keyword '%s' suppressed by negative context in: %s",
+                                keyword, normalized_text[:80],
+                            )
+                            continue
                     if keyword.lower() in _keyword_aliases:
                         score += 2
                         matched_kws.append(f"{keyword}(+2)")
@@ -557,11 +602,15 @@ class SkillManager:
             self.skill_metadata.get(skill_name), 'keywords', [],
         )
         user_text_lower = user_text.lower()
+        # If query starts with a navigation verb, skip negative context checks —
+        # "search Amazon for X" is always navigational even if X contains question words.
+        is_nav_command = bool(_NAV_PREFIX.match(user_text_lower))
         matched_kws = sorted(
             [kw for kw in skill_keywords
              if re.search(r'\b' + re.escape(kw.lower()) + r'\b', user_text_lower)
-             and not (kw.lower() in _keyword_negative_contexts
-                      and _keyword_negative_contexts[kw.lower()].search(user_text_lower))],
+             and (is_nav_command
+                  or kw.lower() not in _keyword_negative_contexts
+                  or not _keyword_negative_contexts[kw.lower()].search(user_text_lower))],
             key=len, reverse=True,
         )
 
