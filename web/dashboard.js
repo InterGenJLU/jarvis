@@ -94,7 +94,11 @@
         if (bucket === 'day') {
             return `${d.getMonth() + 1}/${d.getDate()}`;
         }
-        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        // Show hour in 12h format: "5am", "2pm"
+        let h = d.getHours();
+        const ampm = h >= 12 ? 'pm' : 'am';
+        h = h % 12 || 12;
+        return `${h}${ampm}`;
     }
 
     function buildFilterParams() {
@@ -230,13 +234,35 @@
                 providers = d.provider_breakdown;
             }
 
-            const labels = Object.keys(providers);
-            const values = Object.values(providers);
-            const colors = labels.map(l => {
-                if (l === 'qwen') return '#34d399';
-                if (l === 'claude') return '#fbbf24';
-                return '#94a3b8';
-            });
+            // Method distribution (Tool Select vs Tool Synthesis vs Direct)
+            const METHOD_LABELS = {
+                'stream': 'Direct',
+                'stream_with_tools': 'Tool Select',
+                'continue_after_tool_call': 'Tool Synthesis',
+                'generate': 'Direct',
+                'chat': 'Direct (API)',
+            };
+            const METHOD_COLORS = {
+                'Tool Select': '#38bdf8',
+                'Tool Synthesis': '#34d399',
+                'Direct': '#fbbf24',
+                'Direct (API)': '#f87171',
+            };
+
+            // Aggregate by human-readable method
+            const methodCounts = {};
+            const r2 = await fetch(authUrl(`/api/metrics/interactions?limit=200`));
+            if (r2.ok) {
+                const d2 = await r2.json();
+                for (const row of d2.rows) {
+                    const label = METHOD_LABELS[row.method] || row.method || 'Other';
+                    methodCounts[label] = (methodCounts[label] || 0) + 1;
+                }
+            }
+
+            const labels = Object.keys(methodCounts);
+            const values = Object.values(methodCounts);
+            const colors = labels.map(l => METHOD_COLORS[l] || '#94a3b8');
 
             if (chartProviders) chartProviders.destroy();
             chartProviders = new Chart(document.getElementById('chart-providers'), {
@@ -265,14 +291,25 @@
 
     async function fetchSkillsChart() {
         try {
-            const r = await fetch(authUrl(`/api/metrics/routes?hours=${currentHours}`));
+            // Aggregate tools_called from recent interactions
+            const r = await fetch(authUrl(`/api/metrics/interactions?limit=200`));
             if (!r.ok) return;
             const data = await r.json();
 
-            // Top 10 routes
-            const top = data.slice(0, 10);
-            const labels = top.map(d => d.route_layer || d.skill || 'Unknown');
-            const values = top.map(d => d.interactions);
+            const toolCounts = {};
+            for (const row of data.rows) {
+                if (row.tools_called) {
+                    for (const tool of row.tools_called.split(', ')) {
+                        const t = tool.trim();
+                        if (t) toolCounts[t] = (toolCounts[t] || 0) + 1;
+                    }
+                }
+            }
+
+            // Sort by count descending, take top 10
+            const sorted = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            const labels = sorted.map(d => d[0]);
+            const values = sorted.map(d => d[1]);
 
             if (chartSkills) chartSkills.destroy();
             chartSkills = new Chart(document.getElementById('chart-skills'), {
