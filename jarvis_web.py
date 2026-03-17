@@ -273,7 +273,10 @@ def init_components(config, tts_proxy):
     # News
     components['news_manager'] = None
     if config.get("news.enabled", False):
-        nm = get_news_manager(config, tts_proxy, conversation, components['llm'])
+        nm = get_news_manager(
+            config, tts_proxy, conversation, components['llm'],
+            embedding_model=components['skill_manager']._embedding_model,
+        )
         nm.set_listener_callbacks(pause=lambda: None, resume=lambda: None)
         nm.set_window_callback(lambda d: None)
         nm.start()

@@ -1107,7 +1107,10 @@ def run_console(config, mode, user_id="user"):
     # News system
     news_manager = None
     if config.get("news.enabled", False):
-        news_manager = get_news_manager(config, tts_proxy, conversation, llm)
+        news_manager = get_news_manager(
+            config, tts_proxy, conversation, llm,
+            embedding_model=skill_manager._embedding_model,
+        )
         news_manager.set_listener_callbacks(pause=lambda: None, resume=lambda: None)
         news_manager.set_window_callback(lambda d: None)
         news_manager.start()

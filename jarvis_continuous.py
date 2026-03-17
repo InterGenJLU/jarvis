@@ -256,7 +256,10 @@ class JarvisContinuous:
         # Initialize news system
         if config.get("news.enabled", False):
             if self.event_mode:
-                self.news_manager = get_news_manager(config, self.bg_tts, self.conversation, self.llm)
+                self.news_manager = get_news_manager(
+                    config, self.bg_tts, self.conversation, self.llm,
+                    embedding_model=self.skill_manager._embedding_model,
+                )
                 self.news_manager.set_listener_callbacks(
                     pause=self.bridge.pause_listening,
                     resume=self.bridge.resume_listening,
@@ -265,7 +268,10 @@ class JarvisContinuous:
                     lambda duration: self.bridge.open_conversation_window(duration)
                 )
             else:
-                self.news_manager = get_news_manager(config, self.tts, self.conversation, self.llm)
+                self.news_manager = get_news_manager(
+                    config, self.tts, self.conversation, self.llm,
+                    embedding_model=self.skill_manager._embedding_model,
+                )
                 self.news_manager.set_listener_callbacks(
                     pause=self.listener.pause_listening,
                     resume=self.listener.resume_listening,

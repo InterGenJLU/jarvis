@@ -29,7 +29,8 @@ from core.honorific import get_honorific
 _instance: Optional["NewsManager"] = None
 
 
-def get_news_manager(config=None, tts=None, conversation=None, llm=None) -> Optional["NewsManager"]:
+def get_news_manager(config=None, tts=None, conversation=None, llm=None,
+                     embedding_model=None) -> Optional["NewsManager"]:
     """Get or create the singleton NewsManager.
 
     Call with all args on first invocation (from jarvis_continuous.py).
@@ -38,6 +39,8 @@ def get_news_manager(config=None, tts=None, conversation=None, llm=None) -> Opti
     global _instance
     if _instance is None and config is not None:
         _instance = NewsManager(config, tts, conversation, llm)
+        if embedding_model is not None:
+            _instance._embedding_model = embedding_model
     return _instance
 
 
@@ -449,9 +452,9 @@ class NewsManager:
                 cache_dir = self.config.get("semantic_matching.cache_dir", None)
                 self._embedding_model = SentenceTransformer(
                     "nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True,
-                    device="cuda:0", cache_folder=cache_dir
+                    device="cpu", cache_folder=cache_dir
                 )
-                self.logger.info("News dedup embedding model loaded (nomic-embed-text-v1.5)")
+                self.logger.info("News dedup embedding model loaded (nomic-embed-text-v1.5, CPU fallback)")
             except Exception as e:
                 self.logger.warning(f"Failed to load embedding model for dedup: {e}")
 
