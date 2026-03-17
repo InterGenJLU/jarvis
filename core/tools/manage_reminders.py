@@ -23,11 +23,12 @@ SCHEMA = {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["add", "list", "cancel", "acknowledge", "snooze"],
+                    "enum": ["add", "list", "cancel", "cancel_all", "acknowledge", "snooze"],
                     "description": (
                         "add: set a new reminder. "
                         "list: show upcoming reminders. "
                         "cancel: remove a reminder by name. "
+                        "cancel_all: cancel ALL user-created reminders. "
                         "acknowledge: mark the last-fired reminder as done. "
                         "snooze: delay the last-fired reminder."
                     )
@@ -78,8 +79,10 @@ SYSTEM_PROMPT_RULE = (
     "time from the user's words. "
     "Examples: 'remind me to call Mom at 3pm' → add with title='call Mom', time_text='3pm'. "
     "'set a reminder for 3pm to call the dentist' → add with title='call the dentist', time_text='3pm'. "
+    "'remind me at 2pm to call mom' → add with title='call mom', time_text='2pm'. "
     "'what reminders do I have?' → list. "
     "'cancel the dentist reminder' → cancel with cancel_fragment='dentist'. "
+    "'cancel all my reminders' → cancel_all. "
     "DISMISSING REMINDERS: If a reminder just fired (was spoken aloud) and the user says "
     "'cancel that', 'dismiss that', 'you can cancel that notification', 'stop reminding me', "
     "'never mind', or similar dismissive language → use action='acknowledge' (NOT cancel). "
@@ -120,6 +123,8 @@ def handler(args: dict) -> str:
         return _reminders_list(_reminder_manager)
     elif action == "cancel":
         return _reminders_cancel(_reminder_manager, args)
+    elif action == "cancel_all":
+        return _reminders_cancel_all(_reminder_manager)
     elif action == "acknowledge":
         return _reminders_acknowledge(_reminder_manager)
     elif action == "snooze":
@@ -190,6 +195,20 @@ def _reminders_list(mgr) -> str:
     count = len(all_reminders)
     header = f"{count} reminder{'s' if count != 1 else ''}:"
     return header + "\n" + "\n".join(lines)
+
+
+def _reminders_cancel_all(mgr) -> str:
+    """Cancel all user-created pending/fired reminders (not Google Calendar synced)."""
+    created_by = _current_user_fn() if _current_user_fn else 'christopher'
+    pending = mgr.list_reminders("pending", limit=500, created_by=created_by)
+    pending.extend(mgr.list_reminders("fired", limit=500, created_by=created_by))
+    # Only cancel reminders the user created, not Google Calendar synced ones
+    user_reminders = [r for r in pending if r.get("origin_endpoint") != "google_calendar"]
+    if not user_reminders:
+        return "No user-created reminders to cancel."
+    for r in user_reminders:
+        mgr.cancel_reminder(r["id"])
+    return f"Cancelled {len(user_reminders)} reminder{'s' if len(user_reminders) != 1 else ''}."
 
 
 def _reminders_cancel(mgr, args: dict) -> str:

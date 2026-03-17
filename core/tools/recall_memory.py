@@ -88,9 +88,16 @@ def handler(args: dict) -> str:
 
     lines = []
     for f in combined:
-        cat = f.get("category", "general")
-        content = f.get("content", "")
+        # Convert to natural second-person phrasing; fall back to raw content
+        # with the user's name stripped to avoid "the user prefers X" leaking
+        phrase = _memory_manager._fact_to_phrase(f)
+        if not phrase:
+            phrase = f.get("content", "")
+            # Strip subject name prefix to avoid "the user owns X" in output
+            subject = f.get("subject", "")
+            if subject:
+                phrase = phrase.replace(subject, "").strip(" ,.")
         confidence = f.get("confidence", 0)
-        lines.append(f"[{cat}] {content} (confidence: {confidence:.0%})")
+        lines.append(f"{phrase} (confidence: {confidence:.0%})")
 
     return "\n".join(lines)

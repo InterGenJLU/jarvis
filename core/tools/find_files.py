@@ -99,7 +99,7 @@ SCHEMA = {
                     "description": (
                         "search: find files matching a name pattern. "
                         "count_files: count files in a directory. "
-                        "count_code: count lines of code in the codebase. "
+                        "count_code: count lines of code in the codebase (use per_file=true for per-file ranking). "
                         "list_files: list files and folders in a directory with sizes. "
                         "dir_sizes: show recursive sizes of subdirectories. "
                         "disk_usage: show disk space usage across mount points. "
@@ -159,6 +159,14 @@ SCHEMA = {
                         "modified (most recent first), or size (largest first)."
                     )
                 },
+                "per_file": {
+                    "type": "boolean",
+                    "description": (
+                        "For 'count_code': show per-file breakdown (top 20) "
+                        "instead of aggregate total. Use when the user asks "
+                        "which file is biggest or wants a per-file ranking."
+                    )
+                },
             },
             "required": ["action"]
         }
@@ -201,7 +209,7 @@ def handler(args: dict) -> str:
     dispatch = {
         "search": lambda: _find_search(args.get("pattern", "")),
         "count_files": lambda: _find_count_files(args.get("directory", "home")),
-        "count_code": lambda: _find_count_code(),
+        "count_code": lambda: _find_count_code(per_file=args.get("per_file", False)),
         "list_files": lambda: _find_list_files(
             args.get("directory", "home"),
             limit=args.get("limit"),
@@ -367,8 +375,11 @@ def _find_list_files(directory: str, limit: int = None,
     return header + "\n" + "\n".join(lines)
 
 
-def _find_count_code() -> str:
-    """Count lines of Python code in the JARVIS codebase."""
+def _find_count_code(per_file: bool = False) -> str:
+    """Count lines of Python code in the JARVIS codebase.
+
+    When per_file is True, returns the top 20 files sorted by line count.
+    """
     jarvis_path = Path.home() / "jarvis"
     if not jarvis_path.exists():
         return "JARVIS codebase not found."
@@ -380,14 +391,23 @@ def _find_count_code() -> str:
     py_files = [f for f in result.stdout.strip().split("\n") if f]
     if not py_files:
         return "No Python files found."
+    file_counts = []
     total_lines = 0
     for py_file in py_files:
         try:
             with open(py_file, "r") as f:
-                total_lines += sum(1 for _ in f)
+                count = sum(1 for _ in f)
+                total_lines += count
+                if per_file:
+                    file_counts.append((py_file, count))
         except Exception:
             continue
-    return f"Codebase: {total_lines:,} lines of Python across {len(py_files)} files."
+    summary = f"Codebase: {total_lines:,} lines of Python across {len(py_files)} files."
+    if per_file:
+        file_counts.sort(key=lambda x: x[1], reverse=True)
+        lines = [f"{count:>6,} lines  {path}" for path, count in file_counts[:20]]
+        return summary + "\n\nTop 20 files by line count:\n" + "\n".join(lines)
+    return summary
 
 
 # ---------------------------------------------------------------------------

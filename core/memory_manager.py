@@ -797,13 +797,23 @@ class MemoryManager:
             return phrase
 
     @staticmethod
+    def _user_to_you(text: str) -> str:
+        """Replace 'User' (and possessive 'User's') with 'you'/'your'."""
+        text = re.sub(r"\bUser's\b", "your", text)
+        text = re.sub(r"\bUser\b", "you", text)
+        return text
+
+    @staticmethod
     def _fix_verb_conjugation(text: str) -> str:
         """Fix third-person verbs after 'User' → 'you' substitution."""
         for third, second in [('owns', 'own'), ('has', 'have'), ('is', 'are'),
                               ('drives', 'drive'), ('likes', 'like'),
                               ('favors', 'favor'), ('prefers', 'prefer'),
                               ('uses', 'use'), ('works', 'work'),
-                              ('plays', 'play'), ('lives', 'live')]:
+                              ('plays', 'play'), ('lives', 'live'),
+                              ('maintains', 'maintain'), ('manages', 'manage'),
+                              ('attends', 'attend'), ('communicates', 'communicate'),
+                              ('takes', 'take'), ('suffers', 'suffer')]:
             text = re.sub(rf'\byou {third}\b', f'you {second}', text, flags=re.I)
         return text
 
@@ -815,6 +825,13 @@ class MemoryManager:
 
         if not content:
             return None
+
+        # Normalize: replace the user's actual name (and possessive) with "User"
+        # so all downstream category handlers only need one pattern to match.
+        uid = fact.get("user_id", "")
+        if uid:
+            content = re.sub(rf"\b{re.escape(uid)}'s\b", "User's", content, count=1, flags=re.I)
+            content = re.sub(rf"\b{re.escape(uid)}\b", "User", content, count=1, flags=re.I)
 
         # Two-part facts (from "my X is Y" patterns) have "subject: value" format
         if ": " in content:
@@ -843,31 +860,36 @@ class MemoryManager:
                 return None  # Suppress transient per_turn observations
             # Fallback: detect full sentences (subject+verb) to avoid
             # garbled "you live in User owns a Jeep Wrangler"
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, re.I):
-                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
+                return self._fix_verb_conjugation(self._user_to_you(content))
             return f"you live in {content}"  # fallback
         elif category == "preference":
             # Detect full sentences to avoid "you prefer User owns a black chair"
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, re.I):
-                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
+                return self._fix_verb_conjugation(self._user_to_you(content))
+            # Convert first-person content: "I love X" → "you love X"
+            if re.match(r"^I\b", content):
+                phrase = re.sub(r"^I\b", "you", content)
+                phrase = re.sub(r"\bmy\b", "your", phrase, flags=re.I)
+                return phrase
             return f"you prefer {content}"
         elif category == "work":
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|maintains?|manages?)\b', content, re.I):
-                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
+                return self._fix_verb_conjugation(self._user_to_you(content))
             return f"you work in {content}"
         elif category == "habit":
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?)\b', content, re.I):
-                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
+                return self._fix_verb_conjugation(self._user_to_you(content))
             return f"you {content}"
         elif category == "health":
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|takes?|suffers?)\b', content, re.I):
-                return self._fix_verb_conjugation(re.sub(r'\bUser\b', 'you', content))
+            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?|takes?|suffers?)\b', content, re.I):
+                return self._fix_verb_conjugation(self._user_to_you(content))
             return f"you're {content}"
         elif category == "general":
             # "Remember that..." facts — content is already a full phrase
-            # Convert first-person to second-person for natural delivery
+            # Convert first-person/third-person to second-person for natural delivery
             phrase = content
-            phrase = re.sub(r"\bUser\b", "you", phrase)  # third-person "User" → "you"
+            phrase = self._user_to_you(phrase)
             phrase = self._fix_verb_conjugation(phrase)
             phrase = re.sub(r"\bmy\b", "your", phrase, flags=re.IGNORECASE)
             phrase = re.sub(r"\bI am\b", "you are", phrase, flags=re.IGNORECASE)
@@ -880,7 +902,8 @@ class MemoryManager:
             # Compute age for birthday facts so the LLM doesn't have to do date math
             phrase = self._enrich_birthday(phrase)
             return phrase
-        return content
+        # Fallback for unhandled categories — still apply User→you conversion
+        return self._fix_verb_conjugation(self._user_to_you(content))
 
     def list_facts_by_category(self, user_id: str, category: str = None) -> str:
         """Detailed listing for voice or console delivery."""

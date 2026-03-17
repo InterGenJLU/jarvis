@@ -1432,6 +1432,11 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
 
     def _producer():
         """Sync thread: run LLM streaming, push items to async queue."""
+        # Propagate user identity to this thread so get_honorific() resolves
+        # correctly during tool execution and synthesis (not just during route()).
+        from core.honorific import set_thread_user, clear_thread_user
+        if user_id:
+            set_thread_user(user_id)
         try:
             from core.debug_logger import get_debug_logger
             _dbg = get_debug_logger()
@@ -1471,6 +1476,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             logger.error("LLM streaming producer error: %s", e)
         finally:
             asyncio.run_coroutine_threadsafe(queue.put(('done', None)), loop)
+            clear_thread_user()
 
     thread = threading.Thread(target=_producer, daemon=True)
     thread.start()
