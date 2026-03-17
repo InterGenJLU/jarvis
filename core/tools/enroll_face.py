@@ -1,12 +1,14 @@
 """Tool definition: enroll_face — capture and save a face for presence recognition.
 
 Voice-triggered: "remember my face", "learn my face", "this is what I look like"
-Captures a webcam frame, extracts the face encoding, and saves it for
-future presence detection greetings.
+Multi-turn guided enrollment: captures with glasses on, then glasses off,
+user-paced via "ready" signals. Produces averaged 128-dim encoding for
+robust recognition across angles and conditions.
 """
 
 import asyncio
 import logging
+import time
 
 logger = logging.getLogger("jarvis.tools.enroll_face")
 
@@ -30,10 +32,9 @@ SCHEMA = {
     "function": {
         "name": "enroll_face",
         "description": (
-            "Capture multiple photos and save the user's face for automatic recognition. "
-            "Used for presence detection — JARVIS greets the user when they "
-            "sit down at the desk. Captures 5 images from different angles "
-            "and with/without glasses for robust recognition."
+            "Start face enrollment for automatic recognition. "
+            "Guides the user through multiple captures with and without glasses. "
+            "User-paced — waits for 'ready' between phases."
         ),
         "parameters": {
             "type": "object",
@@ -54,13 +55,13 @@ SCHEMA = {
 SYSTEM_PROMPT_RULE = (
     "RULE: Face enrollment. Use enroll_face when the user wants JARVIS to "
     "remember or learn their face for automatic recognition. "
-    "Captures multiple images for robust recognition across angles and conditions. "
-    "Only one person should be in frame during enrollment."
+    "This starts a multi-step guided process — the user will be prompted "
+    "to say 'ready' between phases."
 )
 
 
 def handler(args: dict) -> str:
-    """Capture a frame and enroll the face."""
+    """Start phase 1 of face enrollment — sets up state for multi-turn flow."""
     if _presence_detector is None:
         return (
             "Face enrollment is not available — presence detection is not initialized. "
@@ -78,11 +79,9 @@ def handler(args: dict) -> str:
     if person_name:
         person = pm.get_person_by_name(person_name)
         if not person:
-            # Create a new person record
             person_id = pm.add_person(person_name, relationship="contact")
             person = {"person_id": person_id, "name": person_name}
     else:
-        # Default to owner
         person_name = "User"
         person = pm.get_person_by_name(person_name)
         if not person:
@@ -91,45 +90,92 @@ def handler(args: dict) -> str:
 
     person_id = person["person_id"]
 
-    # Multi-image guided enrollment for robust recognition.
-    # Captures 5 frames with spoken prompts between each.
-    # TTS is accessed via the presence detector's TTS proxy.
-    tts = getattr(_presence_detector, '_tts', None)
+    # Set enrollment state on the presence detector for the router to check
+    _presence_detector._enrollment_state = {
+        "person_id": person_id,
+        "person_name": person_name,
+        "phase": "glasses_on",  # glasses_on → glasses_off → complete
+        "frames": [],
+        "expires": time.time() + 300,  # 5 minute total timeout
+    }
 
+    return (
+        f"Let's enroll you in the vision recognition system, {person_name}. "
+        "We'll start with glasses on first, so go ahead and put them on. "
+        "Say 'ready' when you're set."
+    )
+
+
+def handle_enrollment_ready(presence_detector) -> tuple[str, bool]:
+    """Called by conversation router when user says 'ready' during enrollment.
+
+    Captures 3 frames for the current phase, then either advances to
+    next phase or completes enrollment.
+
+    Returns:
+        (response_text, is_complete)
+    """
+    state = presence_detector._enrollment_state
+    if not state or time.time() > state["expires"]:
+        presence_detector._enrollment_state = None
+        return "Enrollment timed out. Please start again with 'remember my face'.", True
+
+    tts = getattr(presence_detector, '_tts', None)
+    phase = state["phase"]
+
+    # Capture 3 poses for this phase
     poses = [
-        ("Look straight at the camera", 2.0),
-        ("Now turn slightly to your left", 2.5),
-        ("Turn slightly to your right", 2.5),
-        ("Put your glasses on if you have them, or take them off if you're wearing them", 4.0),
-        ("One more — look straight at the camera again", 2.0),
+        ("Look straight at the camera.", 1.5),
+        ("Now turn slightly to your left.", 2.0),
+        ("And slightly to your right.", 2.0),
     ]
 
-    frames = []
-    for i, (instruction, wait_time) in enumerate(poses):
-        if tts and i > 0:
-            # Speak instruction between captures (skip first — tool synthesis handles it)
-            import time
+    for instruction, wait_time in poses:
+        if tts:
             tts.speak(instruction)
-            time.sleep(wait_time)
-        elif i == 0:
-            # First capture — just give a moment to settle
-            import time
-            time.sleep(1.0)
+        time.sleep(wait_time)
 
         frame_bytes = _capture_frame()
         if isinstance(frame_bytes, str):
-            logger.warning("Enrollment frame %d failed: %s", i + 1, frame_bytes)
-            continue
-        frames.append(frame_bytes)
+            logger.warning("Enrollment frame failed (%s): %s", phase, frame_bytes)
+        else:
+            state["frames"].append(frame_bytes)
 
-    if not frames:
-        return "Could not capture any frames. Please check the webcam."
+    if phase == "glasses_on":
+        # Advance to glasses-off phase
+        state["phase"] = "glasses_off"
+        captured = len(state["frames"])
+        return (
+            f"Great shots, those will work well. "
+            f"Now I'll need you to take your glasses off for the last few captures. "
+            f"Please do so, and say 'ready' when you're set."
+        ), False
 
-    # Enroll using averaged multi-image encoding
-    success, message = _presence_detector.enroll_face_multi(
-        person_id, frames, person_name=person_name
-    )
-    return message
+    elif phase == "glasses_off":
+        # Complete enrollment
+        frames = state["frames"]
+        person_id = state["person_id"]
+        person_name = state["person_name"]
+        presence_detector._enrollment_state = None
+
+        if not frames:
+            return "No frames captured. Please try again.", True
+
+        success, message = presence_detector.enroll_face_multi(
+            person_id, frames, person_name=person_name
+        )
+        if success:
+            return (
+                f"All done. {message} "
+                "To activate presence detection, set vision.presence.enabled to true "
+                "in the config and restart."
+            ), True
+        else:
+            return message, True
+
+    # Shouldn't reach here
+    presence_detector._enrollment_state = None
+    return "Enrollment error. Please try again.", True
 
 
 def _capture_frame() -> bytes | str:

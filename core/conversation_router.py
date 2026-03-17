@@ -287,6 +287,11 @@ class ConversationRouter:
             if result:
                 return result
 
+            # --- Priority 2.55: Face enrollment ready signal ---
+            result = self._handle_enrollment_ready(command)
+            if result:
+                return result
+
             # --- Priority 2.6: Introduction state machine (multi-turn) ---
             result = self._handle_intro_state(command)
             if result:
@@ -565,6 +570,42 @@ class ConversationRouter:
                 match_info={"layer": "P3.5-memory", "skill_name": "memory"},
             )
         return None
+
+    def _handle_enrollment_ready(self, command: str) -> RouteResult | None:
+        """P2.55: Face enrollment 'ready' signal during multi-turn enrollment."""
+        # Get presence detector from the enroll_face tool's injected dependency
+        try:
+            from core.tools.enroll_face import _presence_detector as pd
+        except ImportError:
+            return None
+
+        if not pd or not getattr(pd, '_enrollment_state', None):
+            return None
+
+        import time as _t
+        state = pd._enrollment_state
+        if _t.time() > state.get("expires", 0):
+            pd._enrollment_state = None
+            return None
+
+        # Check for ready signals
+        cmd_lower = command.lower().strip()
+        _READY_SIGNALS = {"ready", "i'm ready", "ok ready", "yes ready",
+                          "ok i'm ready", "go ahead", "go", "yes"}
+        if not any(sig in cmd_lower for sig in _READY_SIGNALS):
+            return None
+
+        logger.info("Enrollment ready signal received (phase: %s)", state["phase"])
+
+        from core.tools.enroll_face import handle_enrollment_ready
+        text, is_complete = handle_enrollment_ready(pd)
+
+        return RouteResult(
+            text=text, intent="enrollment_ready",
+            source="vision", handled=True,
+            match_info={"layer": "P2.55-enrollment", "skill_name": "enroll_face"},
+            open_window=60.0 if not is_complete else None,
+        )
 
     def _handle_intro_state(self, command: str) -> RouteResult | None:
         """P2.6: Active introduction flow continuation.
