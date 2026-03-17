@@ -454,53 +454,99 @@ class PresenceDetector:
 
     def enroll_face(self, person_id: str, frame_bytes: bytes,
                     person_name: str = "") -> tuple[bool, str]:
-        """Extract face encoding from JPEG frame and save.
+        """Extract face encoding from a single JPEG frame and save.
 
-        Args:
-            person_id: ID from people_manager
-            frame_bytes: Raw JPEG bytes
-            person_name: Display name for logging
+        For single-shot enrollment. Prefer enroll_face_multi() for better
+        accuracy across angles and conditions (glasses, lighting).
 
         Returns:
             (success, message)
         """
         import face_recognition
 
-        # Decode JPEG to numpy
+        encoding = self._extract_encoding(frame_bytes)
+        if isinstance(encoding, str):
+            return False, encoding  # Error message
+
+        self._save_encoding(person_id, encoding, person_name)
+        name_label = person_name or person_id
+        return True, f"Face enrolled successfully for {name_label}."
+
+    def enroll_face_multi(self, person_id: str, frames: list[bytes],
+                          person_name: str = "") -> tuple[bool, str]:
+        """Extract face encodings from multiple frames and save the average.
+
+        Multiple angles and conditions (glasses on/off) produce a more robust
+        encoding that handles real-world variation better than a single shot.
+
+        Args:
+            person_id: ID from people_manager
+            frames: List of JPEG byte frames
+            person_name: Display name for logging
+
+        Returns:
+            (success, message) — message includes count of successful extractions
+        """
+        encodings = []
+        errors = []
+        for i, frame_bytes in enumerate(frames):
+            result = self._extract_encoding(frame_bytes)
+            if isinstance(result, str):
+                errors.append(f"Frame {i + 1}: {result}")
+                self.logger.debug("Enrollment frame %d failed: %s", i + 1, result)
+            else:
+                encodings.append(result)
+
+        if not encodings:
+            return False, "No faces could be extracted from any frame. Please try again."
+
+        # Average all successful encodings for a robust representation
+        avg_encoding = np.mean(encodings, axis=0)
+
+        self._save_encoding(person_id, avg_encoding, person_name)
+        name_label = person_name or person_id
+        self.logger.info(
+            f"Multi-image enrollment for {name_label}: "
+            f"{len(encodings)}/{len(frames)} frames successful"
+        )
+        return True, (
+            f"Face enrolled for {name_label} using {len(encodings)} images. "
+            f"Recognition should work across different angles and conditions."
+        )
+
+    def _extract_encoding(self, frame_bytes: bytes):
+        """Extract a single 128-dim face encoding from JPEG bytes.
+
+        Returns numpy array on success, or error string on failure.
+        """
+        import face_recognition
+
         arr = np.frombuffer(frame_bytes, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
-            return False, "Could not decode the camera frame."
+            return "Could not decode the camera frame."
 
-        # Convert BGR to RGB
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        # Detect faces
         locations = face_recognition.face_locations(rgb)
         if not locations:
-            return False, "No face detected in the frame. Please face the camera directly."
+            return "No face detected in the frame."
 
         if len(locations) > 1:
-            return False, (
-                f"Multiple faces detected ({len(locations)}). "
-                "Please ensure only one person is in frame."
-            )
+            return f"Multiple faces detected ({len(locations)}). Please ensure only one person is in frame."
 
-        # Extract encoding
         encodings = face_recognition.face_encodings(rgb, locations)
         if not encodings:
-            return False, "Could not extract face features. Please try again."
+            return "Could not extract face features."
 
-        encoding = encodings[0]
+        return encodings[0]
 
-        # Save to disk
+    def _save_encoding(self, person_id: str, encoding, person_name: str = ""):
+        """Save encoding to disk and update caches."""
         embed_path = self._embeddings_dir / f"face_{person_id}.npy"
         np.save(str(embed_path), encoding)
 
-        # Update in-memory cache
         self._face_cache[person_id] = encoding
 
-        # Update people_manager with embedding path
         if self._people_manager:
             self._people_manager.set_face_embedding_path(
                 person_id, str(embed_path)
@@ -511,8 +557,6 @@ class PresenceDetector:
             f"Enrolled face for {name_label} "
             f"(saved to {embed_path}, {len(encoding)}-dim encoding)"
         )
-
-        return True, f"Face enrolled successfully for {name_label}."
 
     def _load_face_embeddings(self):
         """Load all enrolled face embeddings from disk."""
