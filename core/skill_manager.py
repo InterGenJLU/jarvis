@@ -119,8 +119,10 @@ class SkillManager:
         # (avoids audio input overflow from blocking during lazy load)
         try:
             from sentence_transformers import SentenceTransformer
-            self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
-            self.logger.info("Semantic embedding model pre-loaded")
+            self._embedding_model = SentenceTransformer(
+                'nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True, device='cuda:0'
+            )
+            self.logger.info("Semantic embedding model pre-loaded (nomic-embed-text-v1.5, RX 7600)")
         except Exception as e:
             self.logger.warning(f"Failed to pre-load embedding model: {e}")
 

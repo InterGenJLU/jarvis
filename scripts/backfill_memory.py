@@ -40,9 +40,9 @@ def main():
     eligible = [m for m in all_messages if len(m.get("content", "").strip()) >= 10]
     print(f"Found {len(all_messages)} total messages, {len(eligible)} eligible for indexing")
 
-    print("Loading sentence-transformer model (all-MiniLM-L6-v2)...")
+    print("Loading sentence-transformer model (nomic-embed-text-v1.5)...")
     from sentence_transformers import SentenceTransformer
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    embedding_model = SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True, device="cuda:0")
 
     print("Initializing MemoryManager...")
     from core.memory_manager import get_memory_manager

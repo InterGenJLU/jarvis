@@ -99,7 +99,7 @@ class MemoryManager:
     def __init__(self, config, conversation, embedding_model=None):
         self.config = config
         self.conversation = conversation
-        self.embedding_model = embedding_model  # all-MiniLM-L6-v2, shared from skill_manager
+        self.embedding_model = embedding_model  # nomic-embed-text-v1.5, shared from skill_manager
 
         self.logger = get_logger(__name__, config)
 
@@ -226,6 +226,11 @@ class MemoryManager:
     # FAISS vector index (Phase 2)
     # ------------------------------------------------------------------
 
+    def _get_embedding_dim(self) -> int:
+        """Get the embedding dimension from the loaded model."""
+        dim = self.embedding_model.get_sentence_embedding_dimension()
+        return dim if dim else 768
+
     def _init_faiss(self):
         """Load or create FAISS index for semantic search over history."""
         if not self.embedding_model:
@@ -239,6 +244,7 @@ class MemoryManager:
             self.logger.warning("faiss-cpu not installed — FAISS indexing disabled")
             return
 
+        embed_dim = self._get_embedding_dim()
         self.faiss_index_path.mkdir(parents=True, exist_ok=True)
         index_file = self.faiss_index_path / "default.index"
         meta_file = self.faiss_index_path / "default_meta.jsonl"
@@ -246,6 +252,17 @@ class MemoryManager:
         if index_file.exists():
             self.faiss_index = faiss.read_index(str(index_file))
             self._load_faiss_metadata(meta_file)
+
+            # Detect embedding model dimension change (e.g. MiniLM 384 → nomic 768)
+            if self.faiss_index.d != embed_dim:
+                self.logger.warning(
+                    f"⚠️ FAISS dimension mismatch: index={self.faiss_index.d}, "
+                    f"model={embed_dim}. Discarding old index — backfill will rebuild."
+                )
+                self.faiss_index = faiss.IndexFlatIP(embed_dim)
+                self.faiss_metadata = []
+                self._save_faiss_index()
+                return
 
             # Validate index/metadata consistency — a past crash during
             # non-atomic save could leave them out of sync.
@@ -264,10 +281,10 @@ class MemoryManager:
                     # FAISS IndexFlatIP doesn't support remove_ids, so rebuild.
                     import numpy as np
                     old_index = self.faiss_index
-                    self.faiss_index = faiss.IndexFlatIP(384)
+                    self.faiss_index = faiss.IndexFlatIP(embed_dim)
                     if n_meta > 0:
-                        vectors = faiss.rev_swig_ptr(old_index.get_xb(), n_vectors * 384)
-                        vectors = np.array(vectors, dtype=np.float32).reshape(n_vectors, 384)
+                        vectors = faiss.rev_swig_ptr(old_index.get_xb(), n_vectors * embed_dim)
+                        vectors = np.array(vectors, dtype=np.float32).reshape(n_vectors, embed_dim)
                         self.faiss_index.add(vectors[:n_meta])
                 # Persist the corrected state
                 self._save_faiss_index()
@@ -283,10 +300,9 @@ class MemoryManager:
                     tmp_file.unlink()
                     self.logger.debug(f"Cleaned up stale temp file: {tmp_name}")
         else:
-            # 384-dim for all-MiniLM-L6-v2; inner product (cosine after L2 normalization)
-            self.faiss_index = faiss.IndexFlatIP(384)
+            self.faiss_index = faiss.IndexFlatIP(embed_dim)
             self.faiss_metadata = []
-            self.logger.info("Created new FAISS index (384-dim, inner product)")
+            self.logger.info(f"Created new FAISS index ({embed_dim}-dim, inner product)")
 
     def _load_faiss_metadata(self, meta_file: Path):
         """Load FAISS metadata from JSONL file."""

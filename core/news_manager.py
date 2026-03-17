@@ -448,9 +448,10 @@ class NewsManager:
                 from sentence_transformers import SentenceTransformer
                 cache_dir = self.config.get("semantic_matching.cache_dir", None)
                 self._embedding_model = SentenceTransformer(
-                    "all-MiniLM-L6-v2", cache_folder=cache_dir
+                    "nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True,
+                    device="cuda:0", cache_folder=cache_dir
                 )
-                self.logger.info("News dedup embedding model loaded")
+                self.logger.info("News dedup embedding model loaded (nomic-embed-text-v1.5)")
             except Exception as e:
                 self.logger.warning(f"Failed to load embedding model for dedup: {e}")
 

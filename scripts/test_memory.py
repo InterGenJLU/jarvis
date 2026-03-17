@@ -414,8 +414,8 @@ def main():
     embedding_model = None
     try:
         from sentence_transformers import SentenceTransformer
-        print("Loading embedding model (all-MiniLM-L6-v2)...")
-        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        print("Loading embedding model (nomic-embed-text-v1.5)...")
+        embedding_model = SentenceTransformer("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True, device="cuda:0")
         print("Embedding model loaded")
     except ImportError:
         print("sentence-transformers not available — FAISS tests will be skipped")
