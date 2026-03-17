@@ -279,6 +279,10 @@ class SpeakerIdentifier:
         all_scores = {}
 
         for user_id, (enrolled_emb, _honorific) in self._cache.items():
+            # Skip embeddings from a different model (e.g. old 256-dim resemblyzer)
+            if enrolled_emb.shape[0] != embedding.shape[0]:
+                all_scores[user_id] = -1.0
+                continue
             # Cosine similarity
             score = float(np.dot(embedding, enrolled_emb) / (
                 np.linalg.norm(embedding) * np.linalg.norm(enrolled_emb) + 1e-8
@@ -321,6 +325,8 @@ class SpeakerIdentifier:
             return False, 0.0
 
         enrolled_emb, _ = self._cache[user_id]
+        if enrolled_emb.shape[0] != embedding.shape[0]:
+            return False, 0.0
         score = float(np.dot(embedding, enrolled_emb) / (
             np.linalg.norm(embedding) * np.linalg.norm(enrolled_emb) + 1e-8
         ))
