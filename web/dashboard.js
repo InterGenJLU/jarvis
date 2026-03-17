@@ -221,66 +221,88 @@
         }
     }
 
-    async function fetchProviderChart(summaryData) {
-        // Uses summary data already fetched, or fetch fresh
+    async function fetchProviderChart() {
+        // Web Search Performance — pages fetched and latency
         try {
-            let providers;
-            if (summaryData) {
-                providers = summaryData;
-            } else {
-                const r = await fetch(authUrl(`/api/metrics/summary?hours=${currentHours}`));
-                if (!r.ok) return;
-                const d = await r.json();
-                providers = d.provider_breakdown;
+            const r = await fetch(authUrl(`/api/metrics/search_stats?hours=${currentHours}`));
+            if (!r.ok) return;
+            const data = await r.json();
+
+            if (!data.length) {
+                // No search data — show empty state
+                if (chartProviders) chartProviders.destroy();
+                chartProviders = null;
+                const canvas = document.getElementById('chart-providers');
+                const ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#64748b';
+                ctx.font = '14px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('No web searches yet', canvas.width / 2, canvas.height / 2);
+                return;
             }
 
-            // Method distribution (Tool Select vs Tool Synthesis vs Direct)
-            const METHOD_LABELS = {
-                'stream': 'Direct',
-                'stream_with_tools': 'Tool Select',
-                'continue_after_tool_call': 'Tool Synthesis',
-                'generate': 'Direct',
-                'chat': 'Direct (API)',
-            };
-            const METHOD_COLORS = {
-                'Tool Select': '#38bdf8',
-                'Tool Synthesis': '#34d399',
-                'Direct': '#fbbf24',
-                'Direct (API)': '#f87171',
-            };
-
-            // Aggregate by human-readable method
-            const methodCounts = {};
-            const r2 = await fetch(authUrl(`/api/metrics/interactions?limit=200`));
-            if (r2.ok) {
-                const d2 = await r2.json();
-                for (const row of d2.rows) {
-                    const label = METHOD_LABELS[row.method] || row.method || 'Other';
-                    methodCounts[label] = (methodCounts[label] || 0) + 1;
-                }
-            }
-
-            const labels = Object.keys(methodCounts);
-            const values = Object.values(methodCounts);
-            const colors = labels.map(l => METHOD_COLORS[l] || '#94a3b8');
+            const labels = data.map(d => {
+                const dt = new Date(d.timestamp * 1000);
+                let h = dt.getHours();
+                const ampm = h >= 12 ? 'pm' : 'am';
+                h = h % 12 || 12;
+                return `${h}:${String(dt.getMinutes()).padStart(2, '0')}${ampm}`;
+            });
+            const pagesOk = data.map(d => d.search_pages_ok || 0);
+            const pagesFailed = data.map(d => (d.search_pages_total || 0) - (d.search_pages_ok || 0));
+            const latency = data.map(d => d.search_latency_ms ? d.search_latency_ms / 1000 : 0);
 
             if (chartProviders) chartProviders.destroy();
             chartProviders = new Chart(document.getElementById('chart-providers'), {
-                type: 'doughnut',
+                type: 'bar',
                 data: {
                     labels,
-                    datasets: [{
-                        data: values,
-                        backgroundColor: colors,
-                        borderColor: '#0a0e1a',
-                        borderWidth: 2,
-                    }],
+                    datasets: [
+                        {
+                            label: 'Pages OK',
+                            data: pagesOk,
+                            backgroundColor: 'rgba(52, 211, 153, 0.7)',
+                            yAxisID: 'y',
+                        },
+                        {
+                            label: 'Pages Failed',
+                            data: pagesFailed,
+                            backgroundColor: 'rgba(148, 163, 184, 0.5)',
+                            yAxisID: 'y',
+                        },
+                        {
+                            label: 'Latency (s)',
+                            data: latency,
+                            type: 'line',
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            yAxisID: 'y1',
+                        },
+                    ],
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {
-                        legend: { position: 'bottom' },
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            beginAtZero: true,
+                            ticks: { precision: 0 },
+                            title: { display: true, text: 'Pages' },
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            beginAtZero: true,
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: 'Seconds' },
+                        },
+                        x: { stacked: true },
                     },
                 },
             });
@@ -455,16 +477,11 @@
         await Promise.all([
             fetchSummary(),
             fetchTimeseries(),
+            fetchProviderChart(),
             fetchSkillsChart(),
             fetchInteractions(),
             fetchFilters(),
         ]);
-        // Provider chart uses summary data, fetch separately
-        const r = await fetch(authUrl(`/api/metrics/summary?hours=${currentHours}`));
-        if (r.ok) {
-            const d = await r.json();
-            await fetchProviderChart(d.provider_breakdown);
-        }
     }
 
     // --- WebSocket ---

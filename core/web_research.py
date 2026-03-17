@@ -84,6 +84,7 @@ class WebResearcher:
         self._rate_limit_gap = 1.0  # seconds between searches
         self._serper_key = os.environ.get("SERPER_API_KEY")
         self.last_backend = None  # "serper" or "ddg" — set by search()
+        self.last_search_stats = None  # Set after each search+fetch cycle
         if self._serper_key:
             self.logger.info("WebResearcher initialized (serper primary, ddg fallback)")
         else:
@@ -332,6 +333,12 @@ class WebResearcher:
             f"Parallel fetch: {len(page_sections)}/{len(urls)} pages "
             f"in {elapsed:.1f}s"
         )
+        self.last_search_stats = {
+            "pages_ok": len(page_sections),
+            "pages_total": len(urls),
+            "fetch_latency_ms": round(elapsed * 1000),
+            "backend": self.last_backend,
+        }
         return page_sections
 
     def clear_cache(self):

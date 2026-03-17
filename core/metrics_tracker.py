@@ -70,7 +70,10 @@ class MetricsTracker:
                     session_id        TEXT,
                     route_layer       TEXT,
                     tools_called      TEXT,
-                    synthesis_category TEXT
+                    synthesis_category TEXT,
+                    search_pages_ok   INTEGER,
+                    search_pages_total INTEGER,
+                    search_latency_ms REAL
                 );
                 CREATE INDEX IF NOT EXISTS idx_llm_ts ON llm_interactions(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_llm_provider ON llm_interactions(provider);
@@ -80,7 +83,9 @@ class MetricsTracker:
             """)
             # Migrate: add new columns if missing (safe for existing DBs)
             existing = {r[1] for r in conn.execute("PRAGMA table_info(llm_interactions)").fetchall()}
-            for col in [("route_layer", "TEXT"), ("tools_called", "TEXT"), ("synthesis_category", "TEXT")]:
+            for col in [("route_layer", "TEXT"), ("tools_called", "TEXT"), ("synthesis_category", "TEXT"),
+                        ("search_pages_ok", "INTEGER"), ("search_pages_total", "INTEGER"),
+                        ("search_latency_ms", "REAL")]:
                 if col[0] not in existing:
                     conn.execute(f"ALTER TABLE llm_interactions ADD COLUMN {col[0]} {col[1]}")
             conn.commit()
@@ -106,7 +111,8 @@ class MetricsTracker:
                model=None, latency_ms=None, ttft_ms=None, skill=None,
                intent=None, input_method=None, quality_gate=False,
                is_fallback=False, error=None, session_id=None,
-               route_layer=None, tools_called=None, synthesis_category=None):
+               route_layer=None, tools_called=None, synthesis_category=None,
+               search_pages_ok=None, search_pages_total=None, search_latency_ms=None):
         """Insert a single LLM interaction record."""
         if timestamp is None:
             timestamp = time.time()
@@ -130,6 +136,9 @@ class MetricsTracker:
             "route_layer": route_layer,
             "tools_called": tools_called,
             "synthesis_category": synthesis_category,
+            "search_pages_ok": search_pages_ok,
+            "search_pages_total": search_pages_total,
+            "search_latency_ms": search_latency_ms,
         }
         with self._db_lock:
             conn = sqlite3.connect(str(self.db_path))
@@ -139,12 +148,14 @@ class MetricsTracker:
                         (timestamp, provider, method, prompt_tokens, completion_tokens,
                          estimated_tokens, model, latency_ms, ttft_ms, skill, intent,
                          input_method, quality_gate, is_fallback, error, session_id,
-                         route_layer, tools_called, synthesis_category)
+                         route_layer, tools_called, synthesis_category,
+                         search_pages_ok, search_pages_total, search_latency_ms)
                     VALUES
                         (:timestamp, :provider, :method, :prompt_tokens, :completion_tokens,
                          :estimated_tokens, :model, :latency_ms, :ttft_ms, :skill, :intent,
                          :input_method, :quality_gate, :is_fallback, :error, :session_id,
-                         :route_layer, :tools_called, :synthesis_category)
+                         :route_layer, :tools_called, :synthesis_category,
+                         :search_pages_ok, :search_pages_total, :search_latency_ms)
                 """, row)
                 conn.commit()
             finally:
@@ -352,6 +363,26 @@ class MetricsTracker:
                 WHERE timestamp >= ? AND route_layer IS NOT NULL
                 GROUP BY route_layer
                 ORDER BY interactions DESC
+            """, (cutoff,)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_search_stats(self, hours=24) -> list:
+        """Search performance data points for charting."""
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            rows = conn.execute("""
+                SELECT
+                    timestamp,
+                    search_pages_ok,
+                    search_pages_total,
+                    search_latency_ms
+                FROM llm_interactions
+                WHERE timestamp >= ?
+                  AND search_pages_total IS NOT NULL
+                ORDER BY timestamp ASC
             """, (cutoff,)).fetchall()
             return [dict(r) for r in rows]
         finally:

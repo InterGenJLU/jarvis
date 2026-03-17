@@ -1368,6 +1368,8 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             _tools_available = match_info.get('skill_name') if match_info else None
             _tools_used = ', '.join(conv_state.last_tools_called) if conv_state and conv_state.last_tools_called else None
             _synth_cat = getattr(result, 'synthesis_category', None)
+            # Web search stats (if a search was performed this interaction)
+            _search_stats = getattr(web_researcher, 'last_search_stats', None) if web_researcher else None
             metrics.record(
                 provider=info.get('provider', 'unknown'),
                 method=info.get('method', 'unknown'),
@@ -1386,7 +1388,13 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 route_layer=_route_layer,
                 tools_called=_tools_used,
                 synthesis_category=_synth_cat,
+                search_pages_ok=_search_stats.get('pages_ok') if _search_stats else None,
+                search_pages_total=_search_stats.get('pages_total') if _search_stats else None,
+                search_latency_ms=_search_stats.get('fetch_latency_ms') if _search_stats else None,
             )
+            # Clear search stats so they don't bleed into non-search interactions
+            if web_researcher:
+                web_researcher.last_search_stats = None
         except Exception as e:
             logger.error("Metrics recording failed: %s", e)
 
@@ -3277,6 +3285,21 @@ async def metrics_skills_handler(request):
     return web.json_response(data)
 
 
+async def metrics_search_stats_handler(request):
+    """GET /api/metrics/search_stats?hours=24 — Web search performance data."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    hours = int(request.query.get('hours', 24))
+    data = await asyncio.to_thread(metrics.get_search_stats, hours)
+    return web.json_response(data)
+
+
 async def metrics_routes_handler(request):
     """GET /api/metrics/routes?hours=24 — Route layer breakdown."""
     components = request.app.get('components')
@@ -4111,6 +4134,7 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/metrics/timeseries', metrics_timeseries_handler)
     app.router.add_get('/api/metrics/skills', metrics_skills_handler)
     app.router.add_get('/api/metrics/routes', metrics_routes_handler)
+    app.router.add_get('/api/metrics/search_stats', metrics_search_stats_handler)
     app.router.add_get('/api/metrics/interactions', metrics_interactions_handler)
     app.router.add_get('/api/metrics/filters', metrics_filters_handler)
     app.router.add_get('/api/metrics/export', metrics_export_handler)
