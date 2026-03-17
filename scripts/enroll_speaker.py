@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Enroll a speaker's voice for JARVIS speaker identification.
 
-Records short audio clips from the microphone, extracts d-vector embeddings
-via resemblyzer, and saves the averaged embedding to the user's profile.
+Records short audio clips from the microphone, extracts ECAPA-TDNN embeddings
+via SpeechBrain, and saves the averaged embedding to the user's profile.
 
 Usage:
     python3 scripts/enroll_speaker.py                    # Interactive enrollment
@@ -201,8 +201,6 @@ def _compute_all_scores(sid, audio, sample_rate):
 
 def test_identification(config, clip_duration: float = 3.0):
     """Record a clip and identify the speaker (with full diagnostics)."""
-    from resemblyzer import preprocess_wav
-
     pm = get_profile_manager(config)
     sid = SpeakerIdentifier(config, pm)
     sid.load_embeddings()
@@ -243,21 +241,6 @@ def test_identification(config, clip_duration: float = 3.0):
     print(f"    Duration: {len(audio)/sample_rate:.2f}s at {sample_rate}Hz")
     print(f"    RMS: {rms:.4f}")
 
-    # Show post-preprocessing stats
-    if sample_rate != 16000:
-        duration = len(audio) / sample_rate
-        target_len = int(duration * 16000)
-        audio_16k = np.interp(
-            np.linspace(0, len(audio) - 1, target_len),
-            np.arange(len(audio)),
-            audio,
-        ).astype(np.float32)
-    else:
-        audio_16k = audio
-    processed = preprocess_wav(audio_16k, source_sr=16000)
-    print(f"    After preprocess_wav: {len(processed)/16000:.2f}s "
-          f"({len(processed)} samples)")
-
     # Per-speaker scores
     embedding, scores = _compute_all_scores(sid, audio, sample_rate)
     emb_norm = float(np.linalg.norm(embedding))
@@ -282,8 +265,6 @@ def test_identification(config, clip_duration: float = 3.0):
 
 def diagnose_speaker_id(config, clip_duration: float = 3.0, num_clips: int = 5):
     """Comprehensive speaker ID diagnostic: multiple clips + statistical analysis."""
-    from resemblyzer import preprocess_wav
-
     pm = get_profile_manager(config)
     sid = SpeakerIdentifier(config, pm)
     sid.load_embeddings()
@@ -322,7 +303,6 @@ def diagnose_speaker_id(config, clip_duration: float = 3.0, num_clips: int = 5):
     # Collect clips and scores
     all_scores = {uid: [] for uid in ids}
     all_rms = []
-    all_post_duration = []
 
     for clip_num in range(1, num_clips + 1):
         input(f"  Press Enter for clip {clip_num}/{num_clips}...")
@@ -334,21 +314,6 @@ def diagnose_speaker_id(config, clip_duration: float = 3.0, num_clips: int = 5):
         rms = check_audio_level(audio)
         all_rms.append(rms)
 
-        # Preprocess stats
-        if sample_rate != 16000:
-            duration = len(audio) / sample_rate
-            target_len = int(duration * 16000)
-            audio_16k = np.interp(
-                np.linspace(0, len(audio) - 1, target_len),
-                np.arange(len(audio)),
-                audio,
-            ).astype(np.float32)
-        else:
-            audio_16k = audio
-        processed = preprocess_wav(audio_16k, source_sr=16000)
-        post_dur = len(processed) / 16000
-        all_post_duration.append(post_dur)
-
         # Scores
         _emb, scores = _compute_all_scores(sid, audio, sample_rate)
         for uid in ids:
@@ -358,7 +323,7 @@ def diagnose_speaker_id(config, clip_duration: float = 3.0, num_clips: int = 5):
         best_s = scores[best_uid]
         scores_str = " | ".join(f"{u}={s:.3f}" for u, s in scores.items())
         match = "✓" if best_s >= threshold else "✗"
-        print(f"    RMS={rms:.4f} post={post_dur:.2f}s | {scores_str} {match}\n")
+        print(f"    RMS={rms:.4f} | {scores_str} {match}\n")
 
     # Statistical summary
     print("=" * 60)
@@ -367,9 +332,6 @@ def diagnose_speaker_id(config, clip_duration: float = 3.0, num_clips: int = 5):
     print(f"\n  Audio quality:")
     print(f"    RMS range: {min(all_rms):.4f} – {max(all_rms):.4f} "
           f"(mean={np.mean(all_rms):.4f})")
-    print(f"    Post-preprocess duration: {min(all_post_duration):.2f}s – "
-          f"{max(all_post_duration):.2f}s "
-          f"(mean={np.mean(all_post_duration):.2f}s)")
 
     print(f"\n  Per-speaker score statistics:")
     for uid in ids:

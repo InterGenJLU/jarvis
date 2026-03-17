@@ -1,12 +1,13 @@
 """
 Speaker Identification
 
-Uses resemblyzer d-vectors (256-dim) for speaker verification and
-identification. Runs on CPU only — the model is tiny (~5MB).
+Uses SpeechBrain ECAPA-TDNN (192-dim) for speaker verification and
+identification. 0.80% EER on VoxCeleb — 10x more accurate than resemblyzer.
+Runs on CPU only (<100ms per utterance).
 
 Workflow:
-    1. Enrollment: record audio → extract d-vector → save as .npy
-    2. Identification: incoming audio → extract d-vector → cosine similarity
+    1. Enrollment: record audio → extract embedding → save as .npy
+    2. Identification: incoming audio → extract embedding → cosine similarity
        against enrolled profiles → return best match (or "unknown")
 
 Designed to run in parallel with Whisper inside STTWorker (Phase 4).
@@ -18,9 +19,12 @@ from typing import Optional, Tuple, List, Dict
 
 from core.logger import get_logger
 
+# Embedding dimensionality for ECAPA-TDNN
+EMBEDDING_DIM = 192
+
 
 class SpeakerIdentifier:
-    """Speaker identification using resemblyzer d-vectors."""
+    """Speaker identification using SpeechBrain ECAPA-TDNN embeddings."""
 
     def __init__(self, config, profile_manager):
         """
@@ -34,10 +38,10 @@ class SpeakerIdentifier:
 
         # Config
         self.similarity_threshold = config.get(
-            "user_profiles.similarity_threshold", 0.70  # Lowered from 0.85 — mic distance affects scores significantly
+            "user_profiles.similarity_threshold", 0.70
         )
 
-        # Lazy-loaded resemblyzer encoder
+        # Lazy-loaded SpeechBrain encoder
         self._encoder = None
 
         # In-memory cache: user_id -> (embedding_np, honorific)
@@ -50,16 +54,24 @@ class SpeakerIdentifier:
     # ------------------------------------------------------------------
 
     def _get_encoder(self):
-        """Lazy-load the resemblyzer voice encoder (CPU only)."""
+        """Lazy-load the SpeechBrain ECAPA-TDNN encoder (CPU only)."""
         if self._encoder is None:
-            self.logger.info("Loading resemblyzer VoiceEncoder...")
+            self.logger.info("Loading SpeechBrain ECAPA-TDNN...")
             import warnings
+
+            # Patch torchaudio for compatibility with torch 2.10+
+            import torchaudio
+            if not hasattr(torchaudio, 'list_audio_backends'):
+                torchaudio.list_audio_backends = lambda: ['default']
+
             with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=".*dropout option adds dropout.*")
-                warnings.filterwarnings("ignore", message=".*weight_norm.*is deprecated.*")
-                from resemblyzer import VoiceEncoder
-                self._encoder = VoiceEncoder(device="cpu")
-            self.logger.info("VoiceEncoder loaded")
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                from speechbrain.inference.speaker import EncoderClassifier
+                self._encoder = EncoderClassifier.from_hparams(
+                    source="speechbrain/spkrec-ecapa-voxceleb",
+                    run_opts={"device": "cpu"},
+                )
+            self.logger.info("ECAPA-TDNN loaded")
         return self._encoder
 
     # ------------------------------------------------------------------
@@ -102,22 +114,24 @@ class SpeakerIdentifier:
     # ------------------------------------------------------------------
 
     def extract_embedding(self, audio: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
-        """Extract a d-vector embedding from audio.
+        """Extract an ECAPA-TDNN embedding from audio.
 
         Args:
             audio: Float32 audio samples (mono)
-            sample_rate: Sample rate (resemblyzer expects 16kHz)
+            sample_rate: Sample rate (will resample to 16kHz if needed)
 
         Returns:
-            256-dim d-vector (numpy float32 array)
+            192-dim embedding (numpy float32 array), or zeros if too short
         """
+        import torch
+
         encoder = self._get_encoder()
 
-        # resemblyzer expects float64 or float32, mono, 16kHz
+        # Ensure float32
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
 
-        # Resample if needed
+        # Resample to 16kHz if needed
         if sample_rate != 16000:
             duration = len(audio) / sample_rate
             target_len = int(duration * 16000)
@@ -127,30 +141,28 @@ class SpeakerIdentifier:
                 audio,
             ).astype(np.float32)
 
-        # resemblyzer preprocess_wav expects raw samples
-        from resemblyzer import preprocess_wav
-        processed = preprocess_wav(audio, source_sr=16000)
-
-        if len(processed) < 1600:  # <100ms, too short
+        # Minimum audio length: 100ms = 1600 samples at 16kHz
+        if len(audio) < 1600:
             self.logger.warning(
                 f"Audio too short for speaker embedding: "
-                f"{len(processed)} samples ({len(processed)/16000:.2f}s) "
-                f"after preprocessing (input was {len(audio)} samples)"
+                f"{len(audio)} samples ({len(audio)/16000:.2f}s)"
             )
-            return np.zeros(256, dtype=np.float32)
+            return np.zeros(EMBEDDING_DIM, dtype=np.float32)
 
         self.logger.debug(
-            f"extract_embedding: input={len(audio)} samples "
-            f"({len(audio)/16000:.2f}s), after preprocess={len(processed)} "
-            f"samples ({len(processed)/16000:.2f}s)"
+            f"extract_embedding: {len(audio)} samples "
+            f"({len(audio)/16000:.2f}s) at 16kHz"
         )
 
-        embedding = encoder.embed_utterance(processed)
-        return embedding
+        # SpeechBrain expects a torch tensor: (batch, time)
+        waveform = torch.tensor(audio).unsqueeze(0)
+        embedding = encoder.encode_batch(waveform)
+        # Shape: (1, 1, 192) → flatten to (192,)
+        return embedding.squeeze().cpu().numpy().astype(np.float32)
 
     def enroll(self, user_id: str, audio: np.ndarray,
                sample_rate: int = 16000) -> bool:
-        """Enroll a speaker by saving their d-vector embedding.
+        """Enroll a speaker by saving their embedding.
 
         Args:
             user_id: Profile ID to enroll
@@ -171,7 +183,6 @@ class SpeakerIdentifier:
             return False
 
         # L2-normalize for consistent cosine similarity matching
-        # (enroll_from_multiple does this; single-enroll must too)
         embedding = embedding / np.linalg.norm(embedding)
 
         # Save embedding

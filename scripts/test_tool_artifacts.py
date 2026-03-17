@@ -26,8 +26,10 @@ sys.path.insert(0, "/home/user/jarvis")
 # Stub heavy imports before they're pulled in
 sys.modules.setdefault("porcupine", MagicMock())
 sys.modules.setdefault("pvporcupine", MagicMock())
-sys.modules.setdefault("resemblyzer", MagicMock())
-sys.modules.setdefault("resemblyzer.VoiceEncoder", MagicMock())
+sys.modules.setdefault("speechbrain", MagicMock())
+sys.modules.setdefault("speechbrain.inference", MagicMock())
+sys.modules.setdefault("speechbrain.inference.speaker", MagicMock())
+sys.modules.setdefault("torchaudio", MagicMock())
 
 # ─── Imports ───────────────────────────────────────────────────────────────
 
