@@ -2479,6 +2479,14 @@ class ConversationRouter:
             tools = [t for t in tools
                      if t["function"]["name"] not in self._MOBILE_EXCLUDED_TOOLS]
 
+        # Merge always-included tools (web_search, recall_memory, enroll_face, etc.)
+        # so they're available even when domain pruning selected other tools.
+        from core.tool_registry import ALWAYS_INCLUDED_TOOLS
+        tool_names_set = {t["function"]["name"] for t in tools}
+        for name, schema in ALWAYS_INCLUDED_TOOLS.items():
+            if name not in tool_names_set:
+                tools.append(schema)
+
         logger.debug(f"P4-LLM: selected {len(tools)} tools, routing to LLM")
 
         from core.debug_logger import get_debug_logger
