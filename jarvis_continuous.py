@@ -291,45 +291,51 @@ class JarvisContinuous:
             self.logger.info("Weather poller started")
 
         # --- Presence detection (face recognition greetings) ---
+        # Always initialize the detector (needed for enrollment even when
+        # presence monitoring is disabled). Only start the polling loop
+        # when vision.presence.enabled is true.
         self.presence_detector = None
-        if config.get("vision.presence.enabled", False):
+        try:
             from core.presence_detector import get_presence_detector
             from core.webcam_manager import get_webcam_manager
             from core.people_manager import get_people_manager
-            try:
-                webcam_mgr = get_webcam_manager(config)
-                people_mgr = get_people_manager(config)
-                tts_proxy = self.bg_tts if self.event_mode else self.tts
-                self.presence_detector = get_presence_detector(
-                    config, tts_proxy, webcam_mgr, people_mgr,
-                    self.conversation,
-                    reminder_manager=self.reminder_manager,
+            webcam_mgr = get_webcam_manager(config)
+            people_mgr = get_people_manager(config)
+            tts_proxy = self.bg_tts if self.event_mode else self.tts
+            self.presence_detector = get_presence_detector(
+                config, tts_proxy, webcam_mgr, people_mgr,
+                self.conversation,
+                reminder_manager=self.reminder_manager,
+            )
+            if self.event_mode:
+                self.presence_detector.set_listener_callbacks(
+                    pause=self.bridge.pause_listening,
+                    resume=self.bridge.resume_listening,
                 )
-                if self.event_mode:
-                    self.presence_detector.set_listener_callbacks(
-                        pause=self.bridge.pause_listening,
-                        resume=self.bridge.resume_listening,
-                    )
-                    self.presence_detector.set_window_callback(
-                        lambda duration: self.bridge.open_conversation_window(duration)
-                    )
-                else:
-                    self.presence_detector.set_listener_callbacks(
-                        pause=self.listener.pause_listening,
-                        resume=self.listener.resume_listening,
-                    )
-                    self.presence_detector.set_window_callback(
-                        lambda duration: self.listener.open_conversation_window(duration)
-                    )
+                self.presence_detector.set_window_callback(
+                    lambda duration: self.bridge.open_conversation_window(duration)
+                )
+            else:
+                self.presence_detector.set_listener_callbacks(
+                    pause=self.listener.pause_listening,
+                    resume=self.listener.resume_listening,
+                )
+                self.presence_detector.set_window_callback(
+                    lambda duration: self.listener.open_conversation_window(duration)
+                )
 
-                # Wire for enroll_face tool
-                from core.tool_executor import set_presence_detector
-                set_presence_detector(self.presence_detector)
+            # Wire for enroll_face tool
+            from core.tool_executor import set_presence_detector
+            set_presence_detector(self.presence_detector)
 
+            # Only start active monitoring when enabled
+            if config.get("vision.presence.enabled", False):
                 self.presence_detector.start()
                 self.logger.info("Presence detection started")
-            except Exception as e:
-                self.logger.warning(f"Presence detection init failed: {e}")
+            else:
+                self.logger.info("Presence detector initialized (monitoring disabled — enrollment available)")
+        except Exception as e:
+            self.logger.warning(f"Presence detection init failed: {e}")
 
         # --- Create pipeline workers and coordinator (event mode) ---
         if self.event_mode:
