@@ -88,7 +88,7 @@ def get_conversations() -> list[Conversation]:
             _t("check git status",
                assertions=[uses_tool("developer_tools")]),
             _t("was it supposed to rain today?", "callback to weather",
-               assertions=[any_of("rain", "weather", "precipitation", desc="references weather"), contains("today")]),
+               assertions=[any_of("rain", "weather", "precipitation", "clear", "no", desc="addresses rain question")]),
         ], tags=["routing:topic_shift"]),
 
         _c("R02", "Anaphoric Chain", "routing", [

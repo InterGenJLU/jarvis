@@ -534,7 +534,14 @@ def _ensure_honorific_tail(text: str) -> str:
     from core.honorific import get_honorific
     _h = get_honorific()
     if _h and _h.lower() not in text[-200:].lower():
-        text = text.rstrip().rstrip('.') + f", {_h}."
+        stripped = text.rstrip()
+        # Preserve original end punctuation (? ! .) and insert honorific before it
+        if stripped and stripped[-1] in '.?!':
+            end_punct = stripped[-1]
+            stripped = stripped[:-1].rstrip()
+        else:
+            end_punct = '.'
+        text = f"{stripped}, {_h}{end_punct}"
     return text
 
 
@@ -1340,10 +1347,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     # Post-process: inject honorific if skill/LLM/non-streamed response omitted it
     # (Streamed LLM responses get this in _stream_llm_ws already)
     if response and response.strip() and not streamed:
-        from core.honorific import get_honorific
-        _h = get_honorific()
-        if _h and _h.lower() not in response.lower():
-            response = response.rstrip().rstrip('.') + f", {_h}."
+        response = _ensure_honorific_tail(response)
 
     t_end = time.perf_counter()
 
@@ -1844,10 +1848,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
         cleaned = llm.strip_filler(synthesis) if synthesis else ""
         # Post-process: inject honorific if LLM omitted it
         if cleaned.strip():
-            from core.honorific import get_honorific
-            _h = get_honorific()
-            if _h and _h.lower() not in cleaned.lower():
-                cleaned = cleaned.rstrip().rstrip('.') + f", {_h}."
+            cleaned = _ensure_honorific_tail(cleaned)
         logger.debug("stream_end: synthesis_len=%d cleaned_len=%d has_image=%s",
                       len(synthesis), len(cleaned), bool(_tool_image_path))
         stream_end_msg = {
@@ -1927,10 +1928,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
             )
         # Short enough to send as non-streaming response — still inject honorific
         if full_response and full_response.strip():
-            from core.honorific import get_honorific
-            _h = get_honorific()
-            if _h and _h.lower() not in full_response.lower():
-                full_response = full_response.rstrip().rstrip('.') + f", {_h}."
+            full_response = _ensure_honorific_tail(full_response)
         return (full_response, False, None)
 
     # --- Deflection safety net ---
@@ -1950,10 +1948,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
     cleaned = llm.strip_filler(full_response) if full_response else ""
     # Post-process: inject honorific if LLM omitted it
     if cleaned.strip():
-        from core.honorific import get_honorific
-        _h = get_honorific()
-        if _h and _h.lower() not in cleaned.lower():
-            cleaned = cleaned.rstrip().rstrip('.') + f", {_h}."
+        cleaned = _ensure_honorific_tail(cleaned)
     await ws.send_json({
         'type': 'stream_end',
         'full_response': cleaned,
