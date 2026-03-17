@@ -369,7 +369,7 @@ def get_conversations() -> list[Conversation]:
 
         _c("M01", "Store Preference", "memory", [
             _t("remember that my favorite restaurant is Dreamland BBQ",
-               assertions=[any_of("noted", "remember", "stored", "got it", "understood", "committed", desc="confirms storage")]),
+               assertions=[any_of("noted", "remember", "stored", "got it", "understood", "committed", "of course", desc="confirms storage")]),
             _t("and remember I usually order the ribs",
                assertions=[any_of("noted", "remember", "stored", "got it", "understood", "committed", desc="confirms storage")]),
         ], cleanup=False, tags=["memory:store"]),
@@ -717,7 +717,7 @@ def get_conversations() -> list[Conversation]:
 
         _c("Z01", "Unavailable Capability", "edge-cases", [
             _t("email this document to my work address",
-               assertions=[any_of("not", "can't", "don't", "unable", "unavailable",
+               assertions=[any_of("not", "can't", "don't", "unable", "unavailable", "isn't",
                                   desc="email not available")]),
             _t("add this to my calendar",
                assertions=[any_of("not", "don't", "can't", "calendar", desc="calendar unavailable")]),

@@ -1,0 +1,13 @@
+========================================
+  JARVIS Weekly Journal Audit — 2026-03-17
+========================================
+
+=== VOICE PIPELINE (jarvis.service) ===
+
+Watchdog false alarms (listener stuck):
+1207
+CUDA/HIP OOM:
+4
+Audio device failures:
+1
+Google Calendar sync errors:

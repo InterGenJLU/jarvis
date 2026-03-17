@@ -91,6 +91,7 @@ class ContinuousListener:
         self.speech_buffer = []
         self._buffer_lock = threading.Lock()  # protects speech_buffer access across threads
         self._vad_timestamps = []  # rate-limit VAD triggers (noise burst detection)
+        self._last_vad_activity_ts = 0.0  # monotonic timestamp of last VAD speech detection
         
         # Conversation window - allow responses without wake word during conversation
         self.conversation_window_active = False
@@ -144,6 +145,7 @@ class ContinuousListener:
 
         # Rate-limit VAD triggers to avoid wasting CPU on ambient noise floods
         now = time.monotonic()
+        self._last_vad_activity_ts = now
         self._vad_timestamps.append(now)
         # Keep only last 3 seconds of timestamps
         self._vad_timestamps = [t for t in self._vad_timestamps if now - t <= 3.0]

@@ -160,7 +160,14 @@ class Watchdog(threading.Thread):
             return False
         if self._listener.speaking or self._listener._speaking_event.is_set():
             return False
-        idle_duration = time.monotonic() - self._coordinator._last_transcription_ts
+        # Only consider "stuck" if VAD has detected speech activity since the
+        # last transcription — otherwise it's just silence (nobody talking),
+        # which is normal and doesn't need recovery.
+        last_vad = getattr(self._listener, '_last_vad_activity_ts', 0.0)
+        last_tx = self._coordinator._last_transcription_ts
+        if last_vad <= last_tx:
+            return False  # No VAD activity since last transcription — just silence
+        idle_duration = time.monotonic() - last_tx
         return idle_duration > self._listener_stuck_threshold
 
     def _recover_listener_stuck(self):

@@ -535,8 +535,16 @@ class WeatherPoller:
             self._check_alert_reminders()
             return
 
-        from core.honorific import get_honorific
-        honorific = get_honorific()
+        # Proactive announcements are addressed to the owner — look up from
+        # ProfileManager rather than the global honorific, which may be stale
+        # ("friend" if guest mode was last active).
+        honorific = "sir"  # safe default
+        try:
+            from core.user_profile import ProfileManager
+            pm = ProfileManager(self.config)
+            honorific = pm.get_honorific_for("primary_user")
+        except Exception:
+            pass
 
         for alert in unnotified:
             event = alert.get("event", "")
@@ -624,9 +632,14 @@ class WeatherPoller:
             if elapsed < self.alert_remind_interval:
                 continue
 
-            # Re-announce
-            from core.honorific import get_honorific
-            honorific = get_honorific()
+            # Re-announce — use owner honorific, not stale global
+            honorific = "sir"
+            try:
+                from core.user_profile import ProfileManager
+                pm = ProfileManager(self.config)
+                honorific = pm.get_honorific_for("primary_user")
+            except Exception:
+                pass
             headline = alert.get("headline", "")
             location_key = alert.get("location_key", "home")
 
