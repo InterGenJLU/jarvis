@@ -52,7 +52,7 @@
 
     // Filters
     const filterProvider = document.getElementById('filter-provider');
-    const filterSkill = document.getElementById('filter-skill');
+    const filterRoute = document.getElementById('filter-route');
     const filterMethod = document.getElementById('filter-method');
     const filterInput = document.getElementById('filter-input');
     const filterErrors = document.getElementById('filter-errors');
@@ -100,7 +100,7 @@
     function buildFilterParams() {
         const params = new URLSearchParams();
         if (filterProvider.value) params.set('provider', filterProvider.value);
-        if (filterSkill.value) params.set('skill', filterSkill.value);
+        if (filterRoute.value) params.set('route_layer', filterRoute.value);
         if (filterMethod.value) params.set('method', filterMethod.value);
         if (filterInput.value) params.set('input_method', filterInput.value);
         if (filterErrors.checked) params.set('error_only', '1');
@@ -270,13 +270,13 @@
 
     async function fetchSkillsChart() {
         try {
-            const r = await fetch(authUrl(`/api/metrics/skills?hours=${currentHours}`));
+            const r = await fetch(authUrl(`/api/metrics/routes?hours=${currentHours}`));
             if (!r.ok) return;
             const data = await r.json();
 
-            // Top 10 skills
+            // Top 10 routes
             const top = data.slice(0, 10);
-            const labels = top.map(d => d.skill || 'Unknown');
+            const labels = top.map(d => d.route_layer || d.skill || 'Unknown');
             const values = top.map(d => d.interactions);
 
             if (chartSkills) chartSkills.destroy();
@@ -339,6 +339,25 @@
             return;
         }
 
+        // Human-readable method names
+        const METHOD_LABELS = {
+            'stream': 'Direct',
+            'stream_with_tools': 'Tool Select',
+            'continue_after_tool_call': 'Tool Synthesis',
+            'generate': 'Direct',
+            'chat': 'Direct (API)',
+        };
+
+        // Clean input method display
+        function formatInput(raw) {
+            if (!raw) return '--';
+            if (raw === 'web:desktop' || raw === 'desktop') return 'Desktop';
+            if (raw === 'web:mobile' || raw === 'mobile') return 'Mobile';
+            if (raw === 'voice') return 'Voice';
+            if (raw === 'web') return 'Web';
+            return raw;
+        }
+
         for (const row of rows) {
             const tr = document.createElement('tr');
             const tokens = row.prompt_tokens || row.completion_tokens
@@ -348,18 +367,20 @@
             const providerClass = row.provider === 'claude' ? 'provider-claude'
                 : row.provider === 'qwen' ? 'provider-qwen' : '';
             const errorClass = row.error ? 'has-error' : '';
+            const methodLabel = METHOD_LABELS[row.method] || row.method || '--';
 
             tr.innerHTML = `
                 <td>${formatTimestamp(row.timestamp)}</td>
                 <td class="${providerClass}">${row.provider || '--'}</td>
-                <td>${row.method || '--'}</td>
+                <td>${methodLabel}</td>
                 <td>${row.model ? row.model.substring(0, 20) : '--'}</td>
                 <td>${tokens}</td>
                 <td>${formatMs(row.latency_ms)}</td>
                 <td>${formatMs(row.ttft_ms)}</td>
-                <td>${row.skill || '--'}</td>
-                <td>${row.intent || '--'}</td>
-                <td>${row.input_method || '--'}</td>
+                <td>${row.route_layer || '--'}</td>
+                <td>${row.tools_called || '--'}</td>
+                <td>${row.synthesis_category || '--'}</td>
+                <td>${formatInput(row.input_method)}</td>
                 <td class="${errorClass}">${row.error ? row.error.substring(0, 30) : '--'}</td>
             `;
             interactionsBody.appendChild(tr);
@@ -373,7 +394,7 @@
             const d = await r.json();
 
             populateSelect(filterProvider, d.providers, 'All Providers');
-            populateSelect(filterSkill, d.skills, 'All Skills');
+            populateSelect(filterRoute, d.route_layers || d.skills || [], 'All Routes');
             populateSelect(filterMethod, d.methods, 'All Methods');
             populateSelect(filterInput, d.input_methods, 'All Inputs');
         } catch (e) {
@@ -477,7 +498,7 @@
     });
 
     // Filter changes reset pagination
-    [filterProvider, filterSkill, filterMethod, filterInput].forEach(el => {
+    [filterProvider, filterRoute, filterMethod, filterInput].forEach(el => {
         el.addEventListener('change', () => {
             explorerOffset = 0;
             fetchInteractions();

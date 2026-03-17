@@ -2456,6 +2456,11 @@ class ConversationRouter:
             in_conversation=in_conversation,
         )
         # Augment with tool-calling fields
+        tool_names = [t["function"]["name"] for t in tools]
+        result.match_info = {
+            "layer": "P4-LLM",
+            "skill_name": ", ".join(tool_names),
+        }
         result.use_tools = tools
         result.tool_temperature = 0.0    # Deterministic — sweep showed 0.0 is fastest, same accuracy
         result.tool_presence_penalty = 0.0  # Sweep: pp=1.5 doubled latency with zero accuracy gain

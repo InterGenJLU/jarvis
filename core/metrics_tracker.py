@@ -67,7 +67,10 @@ class MetricsTracker:
                     quality_gate      INTEGER DEFAULT 0,
                     is_fallback       INTEGER DEFAULT 0,
                     error             TEXT,
-                    session_id        TEXT
+                    session_id        TEXT,
+                    route_layer       TEXT,
+                    tools_called      TEXT,
+                    synthesis_category TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_llm_ts ON llm_interactions(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_llm_provider ON llm_interactions(provider);
@@ -75,6 +78,11 @@ class MetricsTracker:
                 CREATE INDEX IF NOT EXISTS idx_llm_method ON llm_interactions(method);
                 CREATE INDEX IF NOT EXISTS idx_llm_session ON llm_interactions(session_id);
             """)
+            # Migrate: add new columns if missing (safe for existing DBs)
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(llm_interactions)").fetchall()}
+            for col in [("route_layer", "TEXT"), ("tools_called", "TEXT"), ("synthesis_category", "TEXT")]:
+                if col[0] not in existing:
+                    conn.execute(f"ALTER TABLE llm_interactions ADD COLUMN {col[0]} {col[1]}")
             conn.commit()
         finally:
             conn.close()
@@ -97,7 +105,8 @@ class MetricsTracker:
                prompt_tokens=None, completion_tokens=None, estimated_tokens=None,
                model=None, latency_ms=None, ttft_ms=None, skill=None,
                intent=None, input_method=None, quality_gate=False,
-               is_fallback=False, error=None, session_id=None):
+               is_fallback=False, error=None, session_id=None,
+               route_layer=None, tools_called=None, synthesis_category=None):
         """Insert a single LLM interaction record."""
         if timestamp is None:
             timestamp = time.time()
@@ -118,6 +127,9 @@ class MetricsTracker:
             "is_fallback": 1 if is_fallback else 0,
             "error": error,
             "session_id": session_id,
+            "route_layer": route_layer,
+            "tools_called": tools_called,
+            "synthesis_category": synthesis_category,
         }
         with self._db_lock:
             conn = sqlite3.connect(str(self.db_path))
@@ -126,11 +138,13 @@ class MetricsTracker:
                     INSERT INTO llm_interactions
                         (timestamp, provider, method, prompt_tokens, completion_tokens,
                          estimated_tokens, model, latency_ms, ttft_ms, skill, intent,
-                         input_method, quality_gate, is_fallback, error, session_id)
+                         input_method, quality_gate, is_fallback, error, session_id,
+                         route_layer, tools_called, synthesis_category)
                     VALUES
                         (:timestamp, :provider, :method, :prompt_tokens, :completion_tokens,
                          :estimated_tokens, :model, :latency_ms, :ttft_ms, :skill, :intent,
-                         :input_method, :quality_gate, :is_fallback, :error, :session_id)
+                         :input_method, :quality_gate, :is_fallback, :error, :session_id,
+                         :route_layer, :tools_called, :synthesis_category)
                 """, row)
                 conn.commit()
             finally:
@@ -302,7 +316,7 @@ class MetricsTracker:
     # ------------------------------------------------------------------
 
     def get_skill_breakdown(self, hours=24) -> list:
-        """Interactions grouped by skill."""
+        """Interactions grouped by skill (legacy)."""
         cutoff = time.time() - (hours * 3600)
         conn = self._get_conn()
         try:
@@ -316,6 +330,27 @@ class MetricsTracker:
                 FROM llm_interactions
                 WHERE timestamp >= ?
                 GROUP BY skill
+                ORDER BY interactions DESC
+            """, (cutoff,)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_route_breakdown(self, hours=24) -> list:
+        """Interactions grouped by route layer."""
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            rows = conn.execute("""
+                SELECT
+                    COALESCE(route_layer, 'Unknown') as route_layer,
+                    COUNT(*) as interactions,
+                    SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)
+                        + COALESCE(estimated_tokens, 0)) as total_tokens,
+                    AVG(latency_ms) as avg_latency
+                FROM llm_interactions
+                WHERE timestamp >= ?
+                GROUP BY route_layer
                 ORDER BY interactions DESC
             """, (cutoff,)).fetchall()
             return [dict(r) for r in rows]
@@ -343,6 +378,9 @@ class MetricsTracker:
         if filters.get("skill"):
             clauses.append("skill = ?")
             params.append(filters["skill"])
+        if filters.get("route_layer"):
+            clauses.append("route_layer = ?")
+            params.append(filters["route_layer"])
         if filters.get("method"):
             clauses.append("method = ?")
             params.append(filters["method"])
@@ -405,11 +443,15 @@ class MetricsTracker:
             input_methods = [r[0] for r in conn.execute(
                 "SELECT DISTINCT input_method FROM llm_interactions WHERE input_method IS NOT NULL ORDER BY input_method"
             ).fetchall()]
+            route_layers = [r[0] for r in conn.execute(
+                "SELECT DISTINCT route_layer FROM llm_interactions WHERE route_layer IS NOT NULL ORDER BY route_layer"
+            ).fetchall()]
             return {
                 "providers": providers,
                 "skills": skills,
                 "methods": methods,
                 "input_methods": input_methods,
+                "route_layers": route_layers,
             }
         finally:
             conn.close()

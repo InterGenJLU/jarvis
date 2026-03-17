@@ -1364,6 +1364,10 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
     if metrics and used_llm:
         try:
             info = llm.last_call_info or {}
+            _route_layer = match_info.get('layer') if match_info else None
+            _tools_available = match_info.get('skill_name') if match_info else None
+            _tools_used = ', '.join(conv_state.last_tools_called) if conv_state and conv_state.last_tools_called else None
+            _synth_cat = getattr(result, 'synthesis_category', None)
             metrics.record(
                 provider=info.get('provider', 'unknown'),
                 method=info.get('method', 'unknown'),
@@ -1373,12 +1377,15 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 model=info.get('model'),
                 latency_ms=info.get('latency_ms'),
                 ttft_ms=info.get('ttft_ms'),
-                skill=match_info.get('skill_name') if match_info else None,
+                skill=_tools_available,
                 intent=match_info.get('handler') if match_info else None,
-                input_method=f'web:{_client_type}' if _client_type else 'web',
+                input_method=_client_type or 'web',
                 quality_gate=info.get('quality_gate', False),
                 is_fallback=info.get('is_fallback', False),
                 error=info.get('error'),
+                route_layer=_route_layer,
+                tools_called=_tools_used,
+                synthesis_category=_synth_cat,
             )
         except Exception as e:
             logger.error("Metrics recording failed: %s", e)
@@ -3270,6 +3277,21 @@ async def metrics_skills_handler(request):
     return web.json_response(data)
 
 
+async def metrics_routes_handler(request):
+    """GET /api/metrics/routes?hours=24 — Route layer breakdown."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    hours = int(request.query.get('hours', 24))
+    data = await asyncio.to_thread(metrics.get_route_breakdown, hours)
+    return web.json_response(data)
+
+
 async def metrics_interactions_handler(request):
     """GET /api/metrics/interactions?offset=0&limit=50&provider=&skill= — Paginated raw data."""
     components = request.app.get('components')
@@ -4088,6 +4110,7 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/metrics/summary', metrics_summary_handler)
     app.router.add_get('/api/metrics/timeseries', metrics_timeseries_handler)
     app.router.add_get('/api/metrics/skills', metrics_skills_handler)
+    app.router.add_get('/api/metrics/routes', metrics_routes_handler)
     app.router.add_get('/api/metrics/interactions', metrics_interactions_handler)
     app.router.add_get('/api/metrics/filters', metrics_filters_handler)
     app.router.add_get('/api/metrics/export', metrics_export_handler)

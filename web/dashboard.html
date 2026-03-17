@@ -75,7 +75,7 @@
             <canvas id="chart-providers"></canvas>
         </div>
         <div class="chart-box">
-            <h3>Top Skills</h3>
+            <h3>Route Breakdown</h3>
             <canvas id="chart-skills"></canvas>
         </div>
     </section>
@@ -86,7 +86,7 @@
             <h3>Data Explorer</h3>
             <div class="explorer-controls">
                 <select id="filter-provider"><option value="">All Providers</option></select>
-                <select id="filter-skill"><option value="">All Skills</option></select>
+                <select id="filter-route"><option value="">All Routes</option></select>
                 <select id="filter-method"><option value="">All Methods</option></select>
                 <select id="filter-input"><option value="">All Inputs</option></select>
                 <label class="checkbox-label">
@@ -109,8 +109,9 @@
                         <th data-col="tokens">Tokens</th>
                         <th data-col="latency_ms">Latency</th>
                         <th data-col="ttft_ms">TTFT</th>
-                        <th data-col="skill">Skill</th>
-                        <th data-col="intent">Intent</th>
+                        <th data-col="route_layer">Route</th>
+                        <th data-col="tools_called">Tools Used</th>
+                        <th data-col="synthesis_category">Category</th>
                         <th data-col="input_method">Input</th>
                         <th data-col="error">Error</th>
                     </tr>
