@@ -86,18 +86,12 @@ def handler(args: dict) -> str:
     if not combined:
         return "No memories found matching that query."
 
+    # Return facts as stored — the LLM naturally handles pronouns in synthesis.
+    # Facts are third-person sentences: "the user loves the band Tool"
     lines = []
     for f in combined:
-        # Convert to natural second-person phrasing; fall back to raw content
-        # with the user's name stripped to avoid "the user prefers X" leaking
-        phrase = _memory_manager._fact_to_phrase(f)
-        if not phrase:
-            phrase = f.get("content", "")
-            # Strip subject name prefix to avoid "the user owns X" in output
-            subject = f.get("subject", "")
-            if subject:
-                phrase = phrase.replace(subject, "").strip(" ,.")
+        content = f.get("content", "")
         confidence = f.get("confidence", 0)
-        lines.append(f"{phrase} (confidence: {confidence:.0%})")
+        lines.append(f"{content} (confidence: {confidence:.0%})")
 
     return "\n".join(lines)

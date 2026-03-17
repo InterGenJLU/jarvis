@@ -686,8 +686,8 @@ class MemoryManager:
 
         count = len(matching_facts)
         h = get_honorific()
-        # Use natural phrasing with proper perspective
-        phrases = [f"\"{self._fact_to_phrase(f) or f['content']}\"" for f in matching_facts]
+        # Show facts in second person ("You love X") since we're talking to the owner
+        phrases = [f"\"{self._fact_to_phrase(f, for_user_id=user_id)}\"" for f in matching_facts]
         if count == 1:
             return (
                 f"I found one stored fact about that: {phrases[0]}. "
@@ -751,10 +751,10 @@ class MemoryManager:
         else:
             quantity = "quite a lot"
 
-        # Pick up to 3 representative examples, phrased naturally
+        # Pick up to 3 representative examples, phrased in second person
         examples = []
         for f in facts[:3]:
-            phrase = self._fact_to_phrase(f)
+            phrase = self._fact_to_phrase(f, for_user_id=user_id)
             if phrase:
                 examples.append(phrase)
 
@@ -797,113 +797,113 @@ class MemoryManager:
             return phrase
 
     @staticmethod
-    def _user_to_you(text: str) -> str:
-        """Replace 'User' (and possessive 'User's') with 'you'/'your'."""
-        text = re.sub(r"\bUser's\b", "your", text)
-        text = re.sub(r"\bUser\b", "you", text)
+    def _name_to_you(text: str, name: str) -> str:
+        """Replace a person's name with 'you'/'your' and fix verb conjugation.
+
+        Used when telling someone about their own facts:
+        "the user loves the band Tool" → "You love the band Tool"
+        """
+        # Possessive first: "the user's" → "Your"
+        text = re.sub(rf"\b{re.escape(name)}'s\b", "Your", text, count=1, flags=re.I)
+        # Name → "You"
+        text = re.sub(rf"\b{re.escape(name)}\b", "You", text, count=1, flags=re.I)
+        # Fix verb conjugation after "You": "You loves" → "You love"
+        for third, second in [('loves', 'love'), ('owns', 'own'), ('has', 'have'),
+                              ('is', 'are'), ('drives', 'drive'), ('likes', 'like'),
+                              ('favors', 'favor'), ('prefers', 'prefer'),
+                              ('uses', 'use'), ('works', 'work'), ('plays', 'play'),
+                              ('lives', 'live'), ('maintains', 'maintain'),
+                              ('manages', 'manage'), ('attends', 'attend'),
+                              ('communicates', 'communicate'), ('takes', 'take')]:
+            text = re.sub(rf'\bYou {third}\b', f'You {second}', text, flags=re.I)
+        # Lowercase "You" when not at start of string
+        if not text.startswith("You"):
+            text = text.replace("You ", "you ", 1)
         return text
 
     @staticmethod
-    def _fix_verb_conjugation(text: str) -> str:
-        """Fix third-person verbs after 'User' → 'you' substitution."""
-        for third, second in [('owns', 'own'), ('has', 'have'), ('is', 'are'),
-                              ('drives', 'drive'), ('likes', 'like'),
-                              ('favors', 'favor'), ('prefers', 'prefer'),
-                              ('uses', 'use'), ('works', 'work'),
-                              ('plays', 'play'), ('lives', 'live'),
-                              ('maintains', 'maintain'), ('manages', 'manage'),
-                              ('attends', 'attend'), ('communicates', 'communicate'),
-                              ('takes', 'take'), ('suffers', 'suffer')]:
-            text = re.sub(rf'\byou {third}\b', f'you {second}', text, flags=re.I)
+    def _first_to_third_person(text: str, name: str) -> str:
+        """Convert first-person statement to third-person with name.
+
+        "I love the band Tool" → "the user loves the band Tool"
+        "I'm allergic to shellfish" → "the user is allergic to shellfish"
+        "I live in Alabama" → "the user lives in Alabama"
+        """
+        # Handle contractions first
+        text = re.sub(r"^I'm\b", f"{name} is", text, flags=re.I)
+        text = re.sub(r"^I've\b", f"{name} has", text, flags=re.I)
+        text = re.sub(r"^I don't\b", f"{name} does not", text, flags=re.I)
+        text = re.sub(r"^I can't\b", f"{name} cannot", text, flags=re.I)
+        # Simple "I verb" → "Name verbs"
+        # Handle adverbs before the verb: "I usually order" → skip "usually", conjugate "order"
+        _ADVERBS = {'usually', 'typically', 'normally', 'always', 'often', 'sometimes',
+                     'never', 'rarely', 'really', 'also', 'still', 'just'}
+        m = re.match(r"^I\s+(\w+)\s+(\w+)(.*)", text, re.I)
+        if m and m.group(1).lower() in _ADVERBS:
+            adverb = m.group(1)
+            verb = m.group(2)
+            rest = m.group(3)
+            # Conjugate the actual verb, keep adverb as-is
+            if verb in ('have',):
+                verb_3p = 'has'
+            elif verb.endswith(('sh', 'ch', 'x', 'ss', 'o')):
+                verb_3p = verb + 'es'
+            elif verb.endswith('y') and verb[-2] not in 'aeiou':
+                verb_3p = verb[:-1] + 'ies'
+            else:
+                verb_3p = verb + 's'
+            return f"{name} {adverb} {verb_3p}{rest}"
+
+        m = re.match(r"^I\s+(\w+)(.*)", text, re.I)
+        if m:
+            verb = m.group(1)
+            rest = m.group(2)
+            # Conjugate: add 's' or 'es' for third person
+            if verb.endswith(('sh', 'ch', 'x', 'ss', 'o')):
+                verb_3p = verb + 'es'
+            elif verb.endswith('y') and verb[-2] not in 'aeiou':
+                verb_3p = verb[:-1] + 'ies'
+            elif verb in ('have',):
+                verb_3p = 'has'
+            elif verb in ('am',):
+                verb_3p = 'is'
+            else:
+                verb_3p = verb + 's'
+            text = f"{name} {verb_3p}{rest}"
+        # Fix possessives: "my" → "their" (since it's third-person now)
+        # Actually keep "his"/"her" — but we don't know gender reliably,
+        # so just leave as complete sentence without possessive conversion
         return text
 
-    def _fact_to_phrase(self, fact: dict) -> Optional[str]:
-        """Convert a stored fact into a natural spoken phrase."""
-        category = fact.get("category", "general")
+
+    def _fact_to_phrase(self, fact: dict, for_user_id: str = None) -> str:
+        """Convert a stored fact to natural phrasing for the listener.
+
+        Facts are stored as complete third-person sentences:
+          "the user loves the band Tool"
+
+        If for_user_id matches the fact's owner, substitute "You":
+          "You love the band Tool"
+
+        Otherwise return the fact as-is (for cross-user recall):
+          "the user loves the band Tool"
+        """
         content = fact.get("content", "")
-        subject = fact.get("subject", "")
-
         if not content:
-            return None
+            return ""
 
-        # Normalize: replace the user's actual name (and possessive) with "User"
-        # so all downstream category handlers only need one pattern to match.
-        uid = fact.get("user_id", "")
-        if uid:
-            content = re.sub(rf"\b{re.escape(uid)}'s\b", "User's", content, count=1, flags=re.I)
-            content = re.sub(rf"\b{re.escape(uid)}\b", "User", content, count=1, flags=re.I)
+        fact_owner = fact.get("user_id", "")
+        display_name = self._get_display_name(fact_owner) if fact_owner else ""
 
-        # Two-part facts (from "my X is Y" patterns) have "subject: value" format
-        if ": " in content:
-            parts = content.split(": ", 1)
-            key, value = parts[0].strip(), parts[1].strip()
-            if category == "preference":
-                return f"your favorite {key} is {value}"
-            elif category == "relationship":
-                return f"your {key}'s name is {value}"
-            return f"your {key} is {value}"
+        # Enrich birthday facts with computed age
+        content = self._enrich_birthday(content)
 
-        # Single-value facts
-        if category == "location":
-            subject = fact.get("subject", "")
-            if "address" in subject:
-                # Strip "my address is" prefix — _fact_to_phrase adds its own
-                clean = content
-                for prefix in ("my address is ", "their address is "):
-                    if clean.lower().startswith(prefix):
-                        clean = clean[len(prefix):]
-                        break
-                return f"your address is {clean}"
-            elif "state" in subject or "country" in subject:
-                return f"you live in {content}"
-            elif "workspace" in subject or "current_setting" in subject or "desk" in subject:
-                return None  # Suppress transient per_turn observations
-            # Fallback: detect full sentences (subject+verb) to avoid
-            # garbled "you live in User owns a Jeep Wrangler"
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
-                return self._fix_verb_conjugation(self._user_to_you(content))
-            return f"you live in {content}"  # fallback
-        elif category == "preference":
-            # Detect full sentences to avoid "you prefer User owns a black chair"
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
-                return self._fix_verb_conjugation(self._user_to_you(content))
-            # Convert first-person content: "I love X" → "you love X"
-            if re.match(r"^I\b", content):
-                phrase = re.sub(r"^I\b", "you", content)
-                phrase = re.sub(r"\bmy\b", "your", phrase, flags=re.I)
-                return phrase
-            return f"you prefer {content}"
-        elif category == "work":
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
-                return self._fix_verb_conjugation(self._user_to_you(content))
-            return f"you work in {content}"
-        elif category == "habit":
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?)\b', content, re.I):
-                return self._fix_verb_conjugation(self._user_to_you(content))
-            return f"you {content}"
-        elif category == "health":
-            if re.search(r'\b(?:owns?|has|is|drives?|uses?|works?|lives?|plays?|likes?|favou?rs?|maintains?|manages?|attends?|communicates?|takes?|suffers?)\b', content, re.I):
-                return self._fix_verb_conjugation(self._user_to_you(content))
-            return f"you're {content}"
-        elif category == "general":
-            # "Remember that..." facts — content is already a full phrase
-            # Convert first-person/third-person to second-person for natural delivery
-            phrase = content
-            phrase = self._user_to_you(phrase)
-            phrase = self._fix_verb_conjugation(phrase)
-            phrase = re.sub(r"\bmy\b", "your", phrase, flags=re.IGNORECASE)
-            phrase = re.sub(r"\bI am\b", "you are", phrase, flags=re.IGNORECASE)
-            phrase = re.sub(r"\bI'm\b", "you're", phrase, flags=re.IGNORECASE)
-            phrase = re.sub(r"\bI\b", "you", phrase)  # case-sensitive: only uppercase I
-            if phrase[0].isupper() and phrase != content:
-                phrase = phrase[0].lower() + phrase[1:]
-            elif phrase[0].isupper():
-                phrase = phrase[0].lower() + phrase[1:]
-            # Compute age for birthday facts so the LLM doesn't have to do date math
-            phrase = self._enrich_birthday(phrase)
-            return phrase
-        # Fallback for unhandled categories — still apply User→you conversion
-        return self._fix_verb_conjugation(self._user_to_you(content))
+        # If speaking to the person this fact is about, convert to second person
+        if for_user_id and for_user_id == fact_owner and display_name:
+            return self._name_to_you(content, display_name)
+
+        # Speaking to someone else (or no target) — return as stored
+        return content
 
     def list_facts_by_category(self, user_id: str, category: str = None) -> str:
         """Detailed listing for voice or console delivery."""
@@ -960,20 +960,26 @@ class MemoryManager:
         for pattern, category in self.EXPLICIT_PATTERNS:
             match = pattern.search(content)
             if match:
-                # Build the fact content from matched groups
+                # Build the fact content as a complete third-person sentence:
+                # "{Name} {verb} {object}" — e.g., "the user loves the band Tool"
                 groups = match.groups()
+                display_name = self._get_display_name(user_id)
+
                 if len(groups) == 2:
-                    # Two-group patterns (e.g. "my X is Y", "my X's name is Y")
-                    fact_content = f"{groups[0]}: {groups[1]}"
-                    subject = groups[0].strip().lower()
+                    # Two-group patterns (e.g. "my favorite X is Y", "my X's name is Y")
+                    key, value = groups[0].strip(), groups[1].strip()
+                    subject = key.lower()
+                    if category == "relationship":
+                        fact_content = f"{display_name}'s {key}'s name is {value}"
+                    else:
+                        fact_content = f"{display_name}'s favorite {key} is {value}"
                 elif len(groups) == 1:
                     fact_content = groups[0].strip()
-                    # Extract a short subject (first 2-3 meaningful words)
                     subject = self._extract_subject(fact_content)
                 else:
                     continue
 
-                # Clean up trailing punctuation from fact content
+                # Clean up trailing punctuation
                 fact_content = fact_content.rstrip(".,!?;:")
 
                 # Quality filter: reject captures that are too short or lack
@@ -982,11 +988,11 @@ class MemoryManager:
                 if len(fact_content) < 10 or len(words) < 3:
                     continue
 
-                # Prefix with speaker's display name so stored facts read as
-                # "the user likes X" instead of raw "likes X"
-                display_name = self._get_display_name(user_id)
+                # Ensure fact starts with speaker's name (complete sentence format)
                 if not fact_content.lower().startswith(display_name.lower()):
-                    fact_content = f"{display_name} {fact_content}"
+                    # Convert first-person to third-person:
+                    # "I love X" → "the user loves X"
+                    fact_content = self._first_to_third_person(fact_content, display_name)
 
                 # Negation windowing: if a negation word appears near a positive
                 # preference verb, reduce confidence (may be contextual negation
@@ -1138,11 +1144,16 @@ class MemoryManager:
                     fact_data = json.loads(line)
                     if "content" not in fact_data:
                         continue
+                    content = fact_data["content"].strip()
+                    # Validation gate: fact must start with the user's name
+                    if not content.lower().startswith(user_name.lower()):
+                        self.logger.warning("Batch extraction rejected (no name prefix): %s", content[:80])
+                        continue
                     fact_id = self.store_fact({
                         "user_id": user_id,
                         "category": fact_data.get("category", "general"),
                         "subject": fact_data.get("subject", "unknown"),
-                        "content": fact_data["content"],
+                        "content": content,
                         "source": "inferred",
                         "confidence": 0.70,
                         "source_messages": json.dumps([m.get("timestamp", 0) for m in recent]),
@@ -1224,6 +1235,7 @@ class MemoryManager:
             )
 
             extracted_count = 0
+            user_name = self._get_display_name(user_id)
             for line in response.strip().split("\n"):
                 line = line.strip()
                 if not line:
@@ -1232,11 +1244,16 @@ class MemoryManager:
                     fact_data = json.loads(line)
                     if "content" not in fact_data:
                         continue
+                    content = fact_data["content"].strip()
+                    # Validation gate: fact must start with the user's name
+                    if not content.lower().startswith(user_name.lower()):
+                        self.logger.warning("Per-turn extraction rejected (no name prefix): %s", content[:80])
+                        continue
                     fact_id = self.store_fact({
                         "user_id": user_id,
                         "category": fact_data.get("category", "general"),
                         "subject": fact_data.get("subject", "unknown"),
-                        "content": fact_data["content"],
+                        "content": content,
                         "source": "per_turn",
                         "confidence": 0.75,
                     })

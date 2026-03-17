@@ -11,3 +11,59 @@ CUDA/HIP OOM:
 Audio device failures:
 1
 Google Calendar sync errors:
+7
+Database locked:
+10
+SEGVs (core dumps):
+0
+ABRTs:
+0
+Service timeouts (SIGTERM):
+1
+
+=== WEB SERVICE (jarvis-web.service) ===
+
+SIGTERM timeouts:
+70
+Startup crashes:
+4
+process_command crashes:
+5
+exit-code failures:
+4
+
+=== UNIQUE APP-LEVEL ERRORS (voice) ===
+
+core.google_calendar - ERROR - Google Calendar sync failed: EOF occurred in violation of protocol (_ssl.c:2406)
+core.google_calendar - ERROR - Google Calendar sync failed: _ssl.c:983: The handshake operation timed out
+core.google_calendar - ERROR - Google Calendar sync failed: The read operation timed out
+core.news_manager - ERROR - News poll error: database is locked
+core.reminder_manager - ERROR - Reminder poll error: database is locked
+core.stt - ERROR - Transcription failed: CUDA failed with error out of memory
+core.stt - ERROR - Transcription failed: parallel_for failed: hipErrorOutOfMemory: out of memory
+core.tts - ERROR - Failed to open audio device after retries
+core.tts - ERROR - TTS error: Command '['/home/user/.local/bin/piper', '-m', '/mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx', '-c', '/mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx.json', '--length-scale', '1.12', '--noise-scale', '0.55', '--noise-w-scale', '0.68', '--sentence-silence', '0.2', '--output-raw']' timed out after 5 seconds
+core.weather_poller - ERROR - Failed to fetch forecast: HTTPSConnectionPool(host='api.open-meteo.com', port=443): Read timed out. (read timeout=10)
+core.weather_poller - ERROR - Failed to fetch forecast: type NoneType doesn't define __round__ method
+core.weather_poller - ERROR - NWS alert fetch failed for home: HTTPSConnectionPool(host='api.weather.gov', port=443): Read timed out. (read timeout=15)
+core.weather_poller - ERROR - NWS point alert fetch failed for home: HTTPSConnectionPool(host='api.weather.gov', port=443): Read timed out. (read timeout=15)
+core.weather_poller - ERROR - NWS zone alert fetch failed for home: HTTPSConnectionPool(host='api.weather.gov', port=443): Read timed out. (read timeout=15)
+
+=== UNIQUE APP-LEVEL ERRORS (web) ===
+
+
+=== UNIQUE TRACEBACKS (web, last line of each) ===
+
+Mar 10 21:40:49 ubuntu2404 python3[16577]:   File "/home/user/jarvis/jarvis_web.py", line 3869, in <module>
+Mar 11 20:48:17 ubuntu2404 python3[203249]:   File "/home/user/jarvis/jarvis_web.py", line 3875, in <module>
+Mar 11 23:10:19 ubuntu2404 python3[351360]:   File "/home/user/jarvis/jarvis_web.py", line 3875, in <module>
+Mar 11 23:33:34 ubuntu2404 python3[386327]:   File "/home/user/jarvis/jarvis_web.py", line 1990, in _handle_chat_message
+Mar 12 02:35:03 ubuntu2404 python3[474254]:   File "/home/user/jarvis/jarvis_web.py", line 3875, in <module>
+Mar 13 09:47:05 ubuntu2404 python3[1307342]:   File "/home/user/jarvis/jarvis_web.py", line 2070, in _handle_chat_message
+Mar 14 14:13:20 ubuntu2404 python3[2096782]:   File "/home/user/jarvis/jarvis_web.py", line 2115, in _handle_chat_message
+Mar 14 21:51:00 ubuntu2404 python3[2293381]:   File "/home/user/jarvis/jarvis_web.py", line 2119, in _handle_chat_message
+Mar 15 21:13:32 ubuntu2404 python3[2907068]:   File "/home/user/jarvis/jarvis_web.py", line 2125, in _handle_chat_message
+
+========================================
+  End of report
+========================================
