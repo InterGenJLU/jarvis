@@ -403,6 +403,20 @@ def main():
         print("V3 always writes results.json + log.jsonl + summary.txt")
         return
 
+    # Auto-increment: if the save path already exists, bump the run number
+    import re as _re
+    _save_path = args.save
+    if os.path.exists(_save_path):
+        _m = _re.search(r'(\d+)$', _save_path)
+        if _m:
+            _base = _save_path[:_m.start()]
+            _num = int(_m.group(1))
+            while os.path.exists(f"{_base}{_num:03d}"):
+                _num += 1
+            _save_path = f"{_base}{_num:03d}"
+            print(f"⚠ {args.save} exists — auto-incremented to {_save_path}")
+            args.save = _save_path
+
     total_turns = sum(len(c.turns) for c in convs)
     print(f"\nJARVIS Test Suite V3")
     print(f"Conversations: {len(convs)} | Turns: {total_turns} | Delay: {args.delay}s")

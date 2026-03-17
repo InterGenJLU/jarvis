@@ -4270,6 +4270,17 @@ async def on_startup(app):
 
 async def on_shutdown(app):
     """Clean shutdown of components."""
+    logger.info("Shutdown initiated — closing WebSocket connections...")
+
+    # Force-close all active WebSocket connections so aiohttp doesn't wait for them
+    ws_conns = app.get('ws_connections', {})
+    for ws in list(ws_conns.keys()):
+        try:
+            await ws.close(code=1001, message=b'Server shutting down')
+        except Exception:
+            pass
+    logger.info("Closed %d WebSocket connection(s)", len(ws_conns))
+
     components = app.get('components', {})
 
     mm = components.get('memory_manager')
@@ -4378,7 +4389,18 @@ def main():
             loop.add_signal_handler(sig, stop.set)
         await stop.wait()
 
-        await runner.cleanup()
+        logger.info("SIGTERM received — shutting down...")
+        # Run our on_shutdown hooks directly (component cleanup, WS close)
+        # then exit without waiting for aiohttp's full graceful shutdown
+        # which hangs indefinitely on open HTTP keep-alive connections.
+        try:
+            await on_shutdown(app)
+        except Exception as e:
+            logger.error("Shutdown hook error: %s", e)
+        logger.info("Shutdown complete — exiting")
+        # Force exit — runner.cleanup() hangs on keep-alive connections
+        import sys
+        sys.exit(0)
 
     asyncio.run(run_server())
 
