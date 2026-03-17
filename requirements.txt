@@ -25,7 +25,8 @@ torchaudio>=2.0.0
 
 # Vision (Phase 4)
 opencv-python>=4.8.0
-face-recognition>=1.3.0
+insightface>=0.7.3
+onnxruntime>=1.16.0
 pytesseract>=0.3.10
 
 # Display Control

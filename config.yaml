@@ -354,7 +354,7 @@ vision:
     enabled: false                    # Off until faces enrolled
     detection_interval: 10            # Seconds between checks
     greeting_cooldown: 7200           # 2 hours between greetings to same person
-    face_confidence_threshold: 0.6    # face_recognition distance threshold
+    face_confidence_threshold: 0.6    # InsightFace cosine similarity threshold
     min_face_size: 80                 # Minimum face pixel size to detect
     greet_unknown: false              # Don't greet unknown faces
     absence_threshold: 30             # Seconds absent before return greeting triggers

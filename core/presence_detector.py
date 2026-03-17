@@ -1,9 +1,8 @@
 """
 Presence Detector — continuous face detection and identification.
 
-Two-tier detection:
-  Tier 1 — OpenCV Haar cascade (~30ms): "Is anyone there?"
-  Tier 2 — face_recognition library (~1s): "Who is it?"
+Uses InsightFace (RetinaFace detection + ArcFace 512-dim recognition) for
+both detection and identification in a single pass. 99.83% LFW accuracy.
 
 Fires proactive greetings when known people appear, following the
 reminder_manager background thread + EventTTSProxy pattern.
@@ -80,7 +79,7 @@ class PresenceDetector:
         self._greet_unknown = presence_cfg.get("greet_unknown", False)
         self._absence_threshold = presence_cfg.get("absence_threshold", 30)
 
-        # Face embeddings directory (alongside speaker ID embeddings)
+        # Face embeddings directory
         self._embeddings_dir = Path(
             config.get("system.storage_path", "/mnt/storage/jarvis")
         ) / "data" / "face_embeddings"
@@ -88,10 +87,10 @@ class PresenceDetector:
 
         # State tracking
         self._person_states: dict[str, PersonPresence] = {}
-        self._face_cache: dict[str, np.ndarray] = {}  # person_id -> 128-dim encoding
+        self._face_cache: dict[str, np.ndarray] = {}  # person_id -> 512-dim encoding
 
-        # Haar cascade (lazy-loaded)
-        self._cascade: Optional[cv2.CascadeClassifier] = None
+        # InsightFace app (lazy-loaded)
+        self._face_app = None
 
         # Callbacks (set by jarvis_continuous.py)
         self._pause_listener_callback: Optional[Callable] = None
@@ -110,6 +109,23 @@ class PresenceDetector:
             f"({len(self._face_cache)} enrolled faces, "
             f"interval={self._interval}s, cooldown={self._cooldown}s)"
         )
+
+    # ------------------------------------------------------------------
+    # Lazy loading
+    # ------------------------------------------------------------------
+
+    def _get_face_app(self):
+        """Lazy-load the InsightFace application (RetinaFace + ArcFace)."""
+        if self._face_app is None:
+            self.logger.info("Loading InsightFace buffalo_l...")
+            from insightface.app import FaceAnalysis
+            self._face_app = FaceAnalysis(
+                name="buffalo_l",
+                providers=["CPUExecutionProvider"],
+            )
+            self._face_app.prepare(ctx_id=-1, det_size=(640, 640))
+            self.logger.info("InsightFace loaded")
+        return self._face_app
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -215,115 +231,78 @@ class PresenceDetector:
             return None
 
     # ------------------------------------------------------------------
-    # Tier 1: Fast face detection (Haar cascade)
+    # Face detection + identification (single-pass with InsightFace)
     # ------------------------------------------------------------------
 
-    def _ensure_cascade(self):
-        """Lazy-load the Haar cascade classifier."""
-        if self._cascade is None:
-            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            self._cascade = cv2.CascadeClassifier(cascade_path)
-            self.logger.debug(f"Loaded Haar cascade: {cascade_path}")
+    def _detect_and_identify(self, frame: np.ndarray) -> list[tuple[Optional[str], float]]:
+        """Detect all faces and identify them in a single pass.
 
-    def _detect_faces(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
-        """Detect face rectangles using Haar cascade.
-
-        Returns list of (x, y, w, h) tuples.
+        Returns list of (person_id, confidence) tuples.
+        person_id is None for unknown faces.
         """
-        self._ensure_cascade()
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self._cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(self._min_face_size, self._min_face_size),
-        )
-        if isinstance(faces, np.ndarray):
-            return [tuple(f) for f in faces]
-        return []
+        app = self._get_face_app()
+        faces = app.get(frame)
 
-    # ------------------------------------------------------------------
-    # Tier 2: Face identification (face_recognition)
-    # ------------------------------------------------------------------
+        if not faces:
+            return []
 
-    def _identify_face(self, frame: np.ndarray,
-                       rect: tuple[int, int, int, int]) -> tuple[Optional[str], float]:
-        """Identify a detected face against enrolled embeddings.
+        results = []
+        for face in faces:
+            # Filter by face size
+            bbox = face.bbox.astype(int)
+            w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
+            if w < self._min_face_size or h < self._min_face_size:
+                continue
 
-        Args:
-            frame: BGR numpy array
-            rect: (x, y, w, h) from Haar detection
+            # If no enrolled faces, report as unknown
+            if not self._face_cache:
+                results.append((None, 0.0))
+                continue
 
-        Returns:
-            (person_id, confidence) or (None, 0.0)
-        """
-        if not self._face_cache:
-            return None, 0.0
+            # Get 512-dim ArcFace embedding
+            embedding = face.normed_embedding  # Already L2-normalized
 
-        import face_recognition
+            # Compare against enrolled faces via cosine similarity
+            best_match: Optional[str] = None
+            best_score = -1.0
 
-        # Convert BGR to RGB for face_recognition
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            for person_id, enrolled_emb in self._face_cache.items():
+                score = float(np.dot(embedding, enrolled_emb))
+                if score > best_score:
+                    best_score = score
+                    best_match = person_id
 
-        # Convert Haar rect (x,y,w,h) to face_recognition format (top,right,bottom,left)
-        x, y, w, h = rect
-        face_location = (y, x + w, y + h, x)
+            if best_score >= self._confidence_threshold:
+                results.append((best_match, best_score))
+            else:
+                results.append((None, best_score))
 
-        # Get face encoding
-        encodings = face_recognition.face_encodings(rgb, [face_location])
-        if not encodings:
-            return None, 0.0
-
-        encoding = encodings[0]
-
-        # Compare against all enrolled faces
-        best_match: Optional[str] = None
-        best_distance = float('inf')
-
-        for person_id, enrolled_encoding in self._face_cache.items():
-            distance = face_recognition.face_distance([enrolled_encoding], encoding)[0]
-            if distance < best_distance:
-                best_distance = distance
-                best_match = person_id
-
-        # face_recognition distance: lower = better match
-        # Convert to confidence: 1.0 - distance
-        confidence = 1.0 - best_distance
-
-        if best_distance <= self._confidence_threshold:
-            return best_match, confidence
-
-        return None, confidence
+        return results
 
     # ------------------------------------------------------------------
     # Presence checking + state machine
     # ------------------------------------------------------------------
 
     def _check_presence(self):
-        """Main detection cycle: grab frame → detect → identify → greet."""
+        """Main detection cycle: grab frame → detect+identify → greet."""
         frame = self._grab_frame()
         if frame is None:
             return
 
-        # Tier 1: fast face detection
-        faces = self._detect_faces(frame)
+        # Single-pass detection + identification
+        face_results = self._detect_and_identify(frame)
 
-        if not faces:
+        if not face_results:
             self._update_all_absent()
             return
 
-        self.logger.debug(f"Detected {len(faces)} face(s)")
+        self.logger.debug(f"Detected {len(face_results)} face(s)")
 
         now = time.time()
         seen_ids = set()
 
-        for rect in faces:
-            # Tier 2: identify (only if we have enrolled faces)
-            if self._face_cache:
-                person_id, confidence = self._identify_face(frame, rect)
-            else:
-                person_id, confidence = None, 0.0
-
+        for person_id, confidence in face_results:
             if person_id:
                 seen_ids.add(person_id)
                 self._handle_detection(person_id, confidence, now)
@@ -462,8 +441,6 @@ class PresenceDetector:
         Returns:
             (success, message)
         """
-        import face_recognition
-
         encoding = self._extract_encoding(frame_bytes)
         if isinstance(encoding, str):
             return False, encoding  # Error message
@@ -500,8 +477,9 @@ class PresenceDetector:
         if not encodings:
             return False, "No faces could be extracted from any frame. Please try again."
 
-        # Average all successful encodings for a robust representation
+        # Average all successful encodings and re-normalize
         avg_encoding = np.mean(encodings, axis=0)
+        avg_encoding = avg_encoding / np.linalg.norm(avg_encoding)
 
         self._save_encoding(person_id, avg_encoding, person_name)
         name_label = person_name or person_id
@@ -515,30 +493,25 @@ class PresenceDetector:
         )
 
     def _extract_encoding(self, frame_bytes: bytes):
-        """Extract a single 128-dim face encoding from JPEG bytes.
+        """Extract a single 512-dim face encoding from JPEG bytes.
 
         Returns numpy array on success, or error string on failure.
         """
-        import face_recognition
+        app = self._get_face_app()
 
         arr = np.frombuffer(frame_bytes, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
             return "Could not decode the camera frame."
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        locations = face_recognition.face_locations(rgb)
-        if not locations:
+        faces = app.get(frame)
+        if not faces:
             return "No face detected in the frame."
 
-        if len(locations) > 1:
-            return f"Multiple faces detected ({len(locations)}). Please ensure only one person is in frame."
+        if len(faces) > 1:
+            return f"Multiple faces detected ({len(faces)}). Please ensure only one person is in frame."
 
-        encodings = face_recognition.face_encodings(rgb, locations)
-        if not encodings:
-            return "Could not extract face features."
-
-        return encodings[0]
+        return faces[0].normed_embedding
 
     def _save_encoding(self, person_id: str, encoding, person_name: str = ""):
         """Save encoding to disk and update caches."""

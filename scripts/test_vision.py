@@ -1123,7 +1123,7 @@ def test_part6():
     # --- Test 6.12: Face enrollment ---
     log("\n── 6.12: Face enrollment ──")
     # Create a real face-like image for enrollment
-    # (face_recognition needs a real face, so we test the error path)
+    # (InsightFace needs a real face, so we test the error path)
     img = Image.new("RGB", (640, 480), color=(180, 140, 100))
     buf = io.BytesIO()
     img.save(buf, format="JPEG")
