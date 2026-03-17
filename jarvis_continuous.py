@@ -327,6 +327,7 @@ class JarvisContinuous:
             # Wire for enroll_face tool
             from core.tool_executor import set_presence_detector
             set_presence_detector(self.presence_detector)
+            self.logger.info("Presence detector wired to enroll_face tool")
 
             # Only start active monitoring when enabled
             if config.get("vision.presence.enabled", False):

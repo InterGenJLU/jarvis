@@ -519,9 +519,15 @@ class MemoryManager:
         r"^(?:remember|don't forget|keep in mind)\s+i\s+",
     ]
 
+    # Phrases that look like "remember X" but aren't fact storage requests
+    _FACT_REQUEST_EXCLUSIONS = re.compile(
+        r"^(?:remember|don't forget|keep in mind)\s+my\s+face\b", re.I)
+
     def is_fact_request(self, text: str) -> bool:
         """Detect if user is telling JARVIS to remember a fact."""
         text_lower = text.lower().strip()
+        if self._FACT_REQUEST_EXCLUSIONS.search(text_lower):
+            return False
         return any(re.search(p, text_lower) for p in self.FACT_REQUEST_PATTERNS)
 
     def is_recall_query(self, text: str) -> bool:
