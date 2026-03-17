@@ -828,7 +828,11 @@ class MemoryManager:
         "I love the band Tool" → "the user loves the band Tool"
         "I'm allergic to shellfish" → "the user is allergic to shellfish"
         "I live in Alabama" → "the user lives in Alabama"
+        "my favorite restaurant is Dreamland BBQ" → "the user's favorite restaurant is Dreamland BBQ"
         """
+        # Possessive: "my X is Y" → "Name's X is Y"
+        if re.match(r"^my\b", text, re.I):
+            return f"{name}'s {text[3:]}"
         # Handle contractions first
         text = re.sub(r"^I'm\b", f"{name} is", text, flags=re.I)
         text = re.sub(r"^I've\b", f"{name} has", text, flags=re.I)
