@@ -182,7 +182,7 @@ ConversationRouter ─── 18-layer priority chain
 | `developer_tools` | Git, codebase search, shell, system admin (13 actions, 3-tier safety) | |
 | `manage_reminders` | Add, list, cancel, ack, snooze + Google Calendar sync | |
 | `get_news` | 16 RSS feeds, urgency classification, semantic dedup | |
-| `web_search` | DuckDuckGo + trafilatura multi-source synthesis | Yes |
+| `web_search` | Serper primary + DDG fallback, trafilatura multi-source synthesis | Yes |
 | `recall_memory` | SQLite text + FAISS semantic search across stored facts | Yes |
 | `take_screenshot` | gnome-screenshot + window crop → LLM vision | Yes |
 | `capture_webcam` | Desktop webcam or mobile camera relay → LLM vision | Yes |

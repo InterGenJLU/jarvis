@@ -238,7 +238,7 @@ When the LLM calls a tool and gets results back, a 17-domain regex classifier ca
 | **TTS Normalizer** | 22-pass text normalization: markdown, heteronyms, IPs, ports, CPU/GPU names, model nomenclature, quant strings, years, file sizes, timestamps, currencies, fractions, measurements, temperatures, URLs, paths, and more |
 | **Structured Readback** | LLM-parsed section navigation with voice control (next/previous/section N) + delivery modes (read/display/print/browse) |
 | **People Manager** | SQLite contacts database with relationship tracking, TTS pronunciation overrides, LLM context injection for known people |
-| **Web Research** | DuckDuckGo + trafilatura, 5min TTL cache, parallel page fetching, multi-source synthesis |
+| **Web Research** | Serper (primary) + DuckDuckGo (fallback) + trafilatura, 5min TTL cache, parallel page fetching, multi-source synthesis |
 | **Google Calendar** | Two-way sync with dedicated JARVIS calendar, OAuth, incremental sync, background polling, multi-notification composite keys |
 | **Health Check** | 5-layer system diagnostic (bare metal, services, internals, data stores, self-assessment) with ANSI terminal report + voice summary |
 | **GNOME Desktop Bridge** | Custom GNOME Shell extension providing Wayland-native window management via D-Bus, with wmctrl fallback for XWayland |
@@ -260,7 +260,7 @@ Stateless query->response functions. The LLM receives the user's query, selects 
 | **developer_tools** | "Git status" / "Search codebase for TODO" | 13 actions: codebase search, git multi-repo, system admin, general shell, visual output, 3-tier safety |
 | **manage_reminders** | "Remind me at 3pm" / "What's on my schedule?" | 5 actions: add, list, cancel, acknowledge, snooze. Priority tones, nag behavior |
 | **get_news** | "Read me the headlines" / "Cybersecurity news?" | 16 RSS feeds, urgency classification, semantic dedup, category/priority filtering |
-| **web_search** | "Who won the Super Bowl?" | DuckDuckGo + trafilatura multi-source synthesis (always available) |
+| **web_search** | "Who won the Super Bowl?" | Serper primary + DDG fallback, trafilatura multi-source synthesis (always available) |
 | **recall_memory** | "What's my favorite color?" | SQLite text + FAISS semantic search across stored facts (always available) |
 | **take_screenshot** | "What's on my screen?" | gnome-screenshot + optional window crop, LANCZOS downscale, base64 to LLM vision |
 | **capture_webcam** | "What do you see?" / "What am I holding?" | Desktop webcam or mobile camera relay, PIL downscale, base64 to Qwen3.5 mmproj |
