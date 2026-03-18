@@ -290,6 +290,9 @@ def init_components(config, tts_proxy):
         components['weather_db'] = wdb
         wp = get_weather_poller(config)
         wp.set_tts_callback(tts_proxy.speak)
+        wp.set_chat_message_callback(
+            lambda text: conversation.add_message("assistant", text)
+        )
         wp.start()
         components['weather_poller'] = wp
 
@@ -4235,6 +4238,8 @@ async def on_startup(app):
                 'headline': alert_data.get('headline', ''),
                 'location_key': location_key,
                 'is_immediate': alert_data.get('is_immediate', False),
+                'onset': alert_data.get('onset', ''),
+                'notified_at': datetime.now().strftime('%I:%M %p on %B %d').lstrip('0'),
             })
 
             for ws_conn, conn_ctx in list(ws_conns.items()):

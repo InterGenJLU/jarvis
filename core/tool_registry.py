@@ -315,7 +315,7 @@ def inject_dependencies(deps: dict):
                 setattr(mod, var_name, deps[dep_name])
                 logger.debug(f"Injected {dep_name} into {mod.TOOL_NAME}")
             elif dep_name not in deps:
-                logger.warning(
+                logger.debug(
                     f"Tool {mod.TOOL_NAME} declares dependency '{dep_name}' "
                     f"but it was not provided — tool may fail at runtime"
                 )

@@ -1020,26 +1020,31 @@ class WeatherSkill(BaseSkill):
     # ------------------------------------------------------------------
 
     def get_sunrise(self) -> str:
-        """Get today's sunrise time."""
+        """Get sunrise time (today or tomorrow based on user text)."""
         return self._get_sun_time("sunrise")
 
     def get_sunset(self) -> str:
-        """Get today's sunset time."""
+        """Get sunset time (today or tomorrow based on user text)."""
         return self._get_sun_time("sunset")
 
     def _get_sun_time(self, which: str) -> str:
         """Get sunrise or sunset time from DB."""
-        today_str = date.today().isoformat()
+        user_text = getattr(self, "_last_user_text", "").lower()
+        is_tomorrow = "tomorrow" in user_text
+
+        from datetime import timedelta
+        target_date = date.today() + timedelta(days=1) if is_tomorrow else date.today()
+        target_str = target_date.isoformat()
+        day_label = "tomorrow" if is_tomorrow else "today"
 
         if self.db:
-            sun = self.db.get_sun_times(today_str)
+            sun = self.db.get_sun_times(target_str)
             if sun:
                 time_val = sun.get(which, "")
                 if time_val:
-                    if which == "sunrise":
-                        return self.respond(f"Sunrise today is at {time_val}, {self.honorific}.")
-                    else:
-                        return self.respond(f"Sunset today is at {time_val}, {self.honorific}.")
+                    return self.respond(
+                        f"{which.capitalize()} {day_label} is at {time_val}, {self.honorific}."
+                    )
 
         # No DB data available
         return self.respond(

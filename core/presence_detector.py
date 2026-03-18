@@ -118,6 +118,8 @@ class PresenceDetector:
         """Lazy-load the InsightFace application (RetinaFace + ArcFace)."""
         if self._face_app is None:
             self.logger.info("Loading InsightFace buffalo_l...")
+            import warnings
+            warnings.filterwarnings("ignore", message=".*estimate.*is deprecated.*")
             from insightface.app import FaceAnalysis
             self._face_app = FaceAnalysis(
                 name="buffalo_l",
@@ -189,6 +191,7 @@ class PresenceDetector:
 
         # Skip if no webcam available
         if not self._webcam_available():
+            self.logger.info("Presence poll: webcam not available, skipping")
             return True
 
         return False
@@ -288,16 +291,24 @@ class PresenceDetector:
         """Main detection cycle: grab frame → detect+identify → greet."""
         frame = self._grab_frame()
         if frame is None:
+            self.logger.info("Presence poll: no frame (webcam unavailable)")
             return
 
         # Single-pass detection + identification
         face_results = self._detect_and_identify(frame)
 
         if not face_results:
+            if getattr(self, '_last_face_count', 0) > 0:
+                self.logger.info("No faces detected")
+                self._last_face_count = 0
             self._update_all_absent()
             return
 
-        self.logger.debug(f"Detected {len(face_results)} face(s)")
+        # Only log face count on change (avoid flooding every 10s)
+        face_count = len(face_results)
+        if face_count != getattr(self, '_last_face_count', 0):
+            self.logger.info(f"Detected {face_count} face(s)")
+            self._last_face_count = face_count
 
         now = time.time()
         seen_ids = set()
@@ -308,7 +319,7 @@ class PresenceDetector:
                 self._handle_detection(person_id, confidence, now)
             elif not self._greet_unknown:
                 # Unknown face — silent
-                self.logger.debug(f"Unknown face detected (confidence={confidence:.2f})")
+                self.logger.info(f"Unknown face detected (confidence={confidence:.2f})")
 
         # Mark unseen people as absent
         for pid in list(self._person_states.keys()):
@@ -318,7 +329,7 @@ class PresenceDetector:
                     # Check if they've been gone long enough
                     if now - state.last_seen > self._absence_threshold:
                         state.state = PresenceState.ABSENT
-                        self.logger.debug(f"Person {pid} → ABSENT")
+                        self.logger.info(f"Person {pid} → ABSENT")
 
     def _handle_detection(self, person_id: str, confidence: float, now: float):
         """State machine: manage transitions and fire greetings."""
@@ -367,7 +378,7 @@ class PresenceDetector:
             if state.state != PresenceState.ABSENT:
                 if now - state.last_seen > self._absence_threshold:
                     state.state = PresenceState.ABSENT
-                    self.logger.debug(f"Person {pid} → ABSENT (no faces detected)")
+                    self.logger.info(f"Person {pid} → ABSENT (no faces detected)")
 
     def _greeting_allowed(self, person_id: str, now: float) -> bool:
         """Check cooldown: only greet once per cooldown period."""

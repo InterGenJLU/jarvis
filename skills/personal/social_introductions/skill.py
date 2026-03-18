@@ -272,6 +272,19 @@ class SocialIntroductionsSkill(BaseSkill):
     def introduce_person(self, entities: dict = None) -> str:
         """Handle 'meet my niece Arya' commands."""
         text = getattr(self, "_last_user_text", "")
+
+        # Self-identification ("my name is X", "I'm X", "call me X") is NOT
+        # a third-party introduction — store as a user fact instead.
+        m = re.match(
+            r"(?:my name is|i'm|i am|call me|they call me)\s+(\w+)",
+            text.strip(), re.IGNORECASE,
+        )
+        if m:
+            name = m.group(1).capitalize()
+            return self.respond(
+                f"Pleased to meet you, {name}. I'll remember that, {self.honorific}.",
+            )
+
         name, rel = self._extract_name_and_relationship(text)
 
         if not name:

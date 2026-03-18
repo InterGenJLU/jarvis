@@ -107,6 +107,12 @@ class STTWorker(threading.Thread):
         self.speaker_id = speaker_id
         self.logger = get_logger("pipeline.stt", config)
 
+    # Sticky identity: once identified, hold for 60s of silence
+    _cached_speaker_id: str | None = None
+    _cached_speaker_confidence: float = 0.0
+    _last_utterance_time: float = 0.0
+    IDENTITY_TIMEOUT = 60.0  # seconds of silence before re-verifying
+
     def run(self):
         self.logger.info("STT worker started")
         while True:
@@ -116,13 +122,29 @@ class STTWorker(threading.Thread):
                 break
             try:
                 sample_rate = 16000  # audio is always resampled to 16 kHz
+                now = time.time()
 
                 if self.speaker_id is not None:
-                    # Identify speaker first (~5 ms) so we can pick the
-                    # right Whisper model for transcription.
-                    speaker_user_id, speaker_confidence = self.speaker_id.identify(
-                        audio, sample_rate
-                    )
+                    # Sticky identity: reuse cached ID if within timeout
+                    if (self._cached_speaker_id
+                            and self._cached_speaker_id != "__guest__"
+                            and now - self._last_utterance_time < self.IDENTITY_TIMEOUT):
+                        speaker_user_id = self._cached_speaker_id
+                        speaker_confidence = self._cached_speaker_confidence
+                        self.logger.debug(
+                            f"Sticky speaker ID: {speaker_user_id} "
+                            f"(last utterance {now - self._last_utterance_time:.0f}s ago)"
+                        )
+                    else:
+                        # Re-verify: first utterance or >60s silence
+                        speaker_user_id, speaker_confidence = self.speaker_id.identify(
+                            audio, sample_rate
+                        )
+                        if speaker_user_id:
+                            self._cached_speaker_id = speaker_user_id
+                            self._cached_speaker_confidence = speaker_confidence
+
+                    self._last_utterance_time = now
                     text = self.stt.transcribe(
                         audio, sample_rate, speaker_user_id=speaker_user_id
                     )
@@ -1168,6 +1190,7 @@ class Coordinator:
             _MAX_TOOL_CHAIN = 5
             tool_chain_count = 0
             _tool_call_counts = {}  # Per-turn dedup: {tool_name: count}
+            self._last_tools_called = []  # For metrics recording
             # Per-tool dedup limits: web_search gets 5 (multi-source queries
             # like trip cost need gas + tolls + food + hotels + activities),
             # other tools stay at 2.
@@ -1191,6 +1214,7 @@ class Coordinator:
                 self.logger.info(
                     f"🔧 Tool call: {tool_call_request.name}({tool_call_request.arguments})"
                 )
+                self._last_tools_called.append(tool_call_request.name)
 
                 # Execute the tool
                 tool_image_data = None  # Set by multimodal tools (e.g. take_screenshot)
@@ -1440,30 +1464,24 @@ class Coordinator:
                         )
                 final_text = self.llm.strip_filler(self.llm.strip_metric(final_text, command))
                 if final_text.strip():
+                    # Append honorific to last chunk if LLM omitted it
+                    from core.honorific import get_honorific, get_formal_address
+                    h = get_honorific()
+                    formal = get_formal_address()
+                    combined_lower = (full_response + " " + final_text).lower()
+                    honorific_present = (
+                        (h and h.lower() in combined_lower)
+                        or (formal and formal.lower() in combined_lower)
+                    )
+                    if h and not honorific_present:
+                        final_text = final_text.rstrip().rstrip('.!?') + f" {h}."
+                        full_response = full_response.rstrip().rstrip('.!?') + f" {h}."
+
                     if audio_pipeline:
                         audio_pipeline.put(final_text)
                     else:
                         self._speak_and_wait(final_text)
                     chunks_spoken += 1
-
-            # Post-process: if LLM omitted the honorific, append it
-            # as a final spoken fragment and update full_response.
-            if full_response.strip() and chunks_spoken > 0:
-                from core.honorific import get_honorific, get_formal_address
-                h = get_honorific()
-                formal = get_formal_address()
-                resp_lower = full_response.lower()
-                honorific_present = (
-                    (h and h.lower() in resp_lower)
-                    or (formal and formal.lower() in resp_lower)
-                )
-                if h and not honorific_present:
-                    suffix = f", {h}."
-                    full_response = full_response.rstrip().rstrip('.!?') + suffix
-                    if audio_pipeline:
-                        audio_pipeline.put(suffix)
-                    else:
-                        self._speak_and_wait(suffix)
 
             # Wait for all audio to finish playing
             if audio_pipeline:
@@ -1885,8 +1903,6 @@ class Coordinator:
         import re
         if re.match(r'^i (was|analyzed)\s+', text, re.IGNORECASE):
             return re.sub(r'^i (was|analyzed)\s+', 'analyze ', text, flags=re.IGNORECASE)
-        if text.lower().startswith("i'm "):
-            return "analyze " + text[4:]
         return text
 
     # ----- ambient wake word filter -----
@@ -2067,6 +2083,9 @@ class Coordinator:
             return
         try:
             info = self.llm.last_call_info or {}
+            match_info = result.match_info or {}
+            tools = getattr(self, '_last_tools_called', [])
+            tools_str = ", ".join(tools) if tools else None
             self.metrics.record(
                 provider=info.get('provider', 'unknown'),
                 method=info.get('method', 'unknown'),
@@ -2076,12 +2095,15 @@ class Coordinator:
                 model=info.get('model'),
                 latency_ms=info.get('latency_ms'),
                 ttft_ms=info.get('ttft_ms'),
-                skill=result.match_info.get('skill_name') if result.match_info else None,
-                intent=result.match_info.get('handler') if result.match_info else None,
+                skill=match_info.get('skill_name'),
+                intent=match_info.get('handler'),
                 input_method='voice',
                 quality_gate=info.get('quality_gate', False),
                 is_fallback=info.get('is_fallback', False),
                 error=info.get('error'),
+                route_layer=match_info.get('layer'),
+                tools_called=tools_str,
             )
+            self._last_tools_called = []
         except Exception as e:
             self.logger.error(f"Metrics recording failed: {e}")

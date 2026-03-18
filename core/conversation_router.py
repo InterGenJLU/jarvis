@@ -120,6 +120,7 @@ class ConversationRouter:
         "i'm good", "i'm fine", "all good", "all set",
         "nothing", "nothing else", "nothing for now",
         "never mind", "nevermind", "maybe later",
+        "very good", "good", "great",
     })
 
     # Bare acknowledgments — noise during conversation windows unless
@@ -292,6 +293,11 @@ class ConversationRouter:
             if result:
                 return result
 
+            # --- Priority 2.56: Face enrollment start ("remember my face") ---
+            result = self._handle_enrollment_start(command)
+            if result:
+                return result
+
             # --- Priority 2.6: Introduction state machine (multi-turn) ---
             result = self._handle_intro_state(command)
             if result:
@@ -386,7 +392,7 @@ class ConversationRouter:
             if not is_hw_query and not (doc_buffer and doc_buffer.active):
                 # --- Priority 4: Skill routing (skip when doc_buffer active) ---
                 # Non-migrated skills still route through the old matching pipeline.
-                result = self._handle_skill_routing(command)
+                result = self._handle_skill_routing(command, in_conversation)
                 if result:
                     return result
 
@@ -571,6 +577,47 @@ class ConversationRouter:
             )
         return None
 
+    def _handle_enrollment_start(self, command: str) -> RouteResult | None:
+        """P2.56: Detect 'remember my face' and start enrollment via direct handler."""
+        cmd_lower = command.lower().strip()
+        _ENROLLMENT_TRIGGERS = {
+            "remember my face", "enroll my face", "learn my face",
+            "save my face", "register my face",
+        }
+        if not any(trigger in cmd_lower for trigger in _ENROLLMENT_TRIGGERS):
+            return None
+
+        try:
+            from core.tools.enroll_face import _presence_detector as pd, handler as enroll_handler
+        except ImportError:
+            return None
+
+        if pd is None:
+            return RouteResult(
+                text="Face enrollment is not available — presence detection is not initialized.",
+                intent="enrollment_start", source="vision", handled=True,
+            )
+
+        # Use the current speaker's identity instead of LLM guessing
+        user_id = self._user_id or "primary_user"
+        # Resolve display name from people manager
+        display_name = user_id.capitalize()
+        if pd._people_manager:
+            person = pd._people_manager.get_person_by_name(display_name)
+            if not person:
+                person = pd._people_manager.get_person_by_name(user_id)
+
+        # Call existing handler to set up enrollment state
+        result_text = enroll_handler({"person_name": display_name})
+
+        logger.info("Enrollment started for %s via voice handler", display_name)
+        return RouteResult(
+            text=result_text, intent="enrollment_start",
+            source="vision", handled=True,
+            match_info={"layer": "P2.56-enrollment-start", "skill_name": "enroll_face"},
+            open_window=60.0,
+        )
+
     def _handle_enrollment_ready(self, command: str) -> RouteResult | None:
         """P2.55: Face enrollment 'ready' signal during multi-turn enrollment."""
         # Get presence detector from the enroll_face tool's injected dependency
@@ -588,8 +635,20 @@ class ConversationRouter:
             pd._enrollment_state = None
             return None
 
-        # Check for ready signals
         cmd_lower = command.lower().strip()
+
+        # Check for cancellation
+        _CANCEL_SIGNALS = {"cancel", "never mind", "nevermind", "stop", "forget it", "abort"}
+        if any(sig in cmd_lower for sig in _CANCEL_SIGNALS):
+            pd._enrollment_state = None
+            logger.info("Enrollment cancelled by user")
+            return RouteResult(
+                text="Enrollment cancelled.", intent="enrollment_cancel",
+                source="vision", handled=True,
+                match_info={"layer": "P2.55-enrollment", "skill_name": "enroll_face"},
+            )
+
+        # Check for ready signals
         _READY_SIGNALS = {"ready", "i'm ready", "ok ready", "yes ready",
                           "ok i'm ready", "go ahead", "go", "yes"}
         if not any(sig in cmd_lower for sig in _READY_SIGNALS):
@@ -2834,8 +2893,9 @@ class ConversationRouter:
     # Prevents short ambiguous utterances ("delete it", "open it") from
     # triggering low-confidence skill matches (0.52-0.54).
     _SKILL_CONFIDENCE_FLOOR = 0.60
+    _SKILL_CONFIDENCE_FLOOR_CONVERSATION = 0.75  # Higher bar during active conversation
 
-    def _handle_skill_routing(self, command: str) -> RouteResult | None:
+    def _handle_skill_routing(self, command: str, in_conversation: bool = False) -> RouteResult | None:
         """P4: Skill routing (semantic + keyword matching)."""
         # Mobile mode: check match BEFORE executing to prevent side effects
         # (e.g. opening a browser on the server desktop)
@@ -2853,13 +2913,19 @@ class ConversationRouter:
         if match and match_info:
             conf = match_info.get("confidence")
             layer = match_info.get("layer", "")
-            if conf is not None and conf < self._SKILL_CONFIDENCE_FLOOR:
+            # Higher confidence bar during active conversation — follow-ups
+            # with ambiguous words ("open", "close") should go to LLM which
+            # has conversation context for anaphoric resolution.
+            in_conv = in_conversation
+            floor = self._SKILL_CONFIDENCE_FLOOR_CONVERSATION if in_conv else self._SKILL_CONFIDENCE_FLOOR
+            if conf is not None and conf < floor:
                 logger.info(
                     "P4: skill '%s' confidence %.2f < floor %.2f "
-                    "(layer=%s, intent=%s) — falling through to LLM",
+                    "(layer=%s, intent=%s, in_conv=%s) — falling through to LLM",
                     match_info.get("skill_name"), conf,
-                    self._SKILL_CONFIDENCE_FLOOR, layer,
+                    floor, layer,
                     match_info.get("intent_id"),
+                    in_conv,
                 )
                 return None
 

@@ -671,18 +671,20 @@
         var label = isImmediate ? 'SEVERE WEATHER ALERT' : 'Weather Advisory';
 
         // Inline record in chat
+        var timestamp = msg.notified_at ? '<div class="weather-alert-time">Notification issued at: ' + escapeHtml(msg.notified_at) + '</div>' : '';
         var div = document.createElement('div');
         div.className = 'weather-alert-inline weather-alert-' + severity;
         div.innerHTML = '<strong>' + icon + ' ' + label + '</strong><br>' +
-            escapeHtml(msg.headline || msg.event);
+            escapeHtml(msg.headline || msg.event) + timestamp;
         messagesEl.appendChild(div);
         scrollToBottom();
 
         // Floating banner
+        var bannerTime = msg.notified_at ? ' <span class="weather-alert-banner-time">' + escapeHtml(msg.notified_at) + '</span>' : '';
         var banner = document.createElement('div');
         banner.className = 'weather-alert-banner weather-alert-' + severity;
         banner.innerHTML = '<strong>' + icon + ' ' + label + '</strong> &mdash; ' +
-            escapeHtml(msg.headline || msg.event);
+            escapeHtml(msg.headline || msg.event) + bannerTime;
         var closeBtn = document.createElement('button');
         closeBtn.className = 'weather-alert-close';
         closeBtn.innerHTML = '&times;';

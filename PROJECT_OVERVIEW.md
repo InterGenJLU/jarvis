@@ -23,7 +23,7 @@ It started as a wake-word-to-response loop in February 2026. Five weeks and ~66,
 
 Qwen3.5-35B-A3B is a mixture-of-experts model: 35B total parameters, but only ~3B active per token. At Q3_K_M quantization it fits in ~19.5GB VRAM with 32K context. JARVIS gives it 11 tools via OpenAI-compatible function calling through llama.cpp, and across 1,200+ test trials it has never called the wrong tool or hallucinated a tool call.
 
-The key is a **semantic pruning layer** that runs before the LLM sees the tools. A sentence-transformer model (all-MiniLM-L6-v2) scores all 11 tools against the query by embedding similarity and only passes the top 4 to the LLM. This keeps the tool schema small enough that a 3B-active model handles it reliably. The pruner also scores always-included tools (web_search, recall_memory, screenshots, webcam, face enrollment) via `INTENT_EXAMPLES` on each tool module — without this, the pruner would defer them to the skill layer and they'd never reach the LLM.
+The key is a **semantic pruning layer** that runs before the LLM sees the tools. A sentence-transformer model (nomic-embed-text-v1.5, 768-dim on RX 7600 GPU — evolved from all-MiniLM-L6-v2) scores all 11 tools against the query by embedding similarity and only passes the top 4 to the LLM. This keeps the tool schema small enough that a 3B-active model handles it reliably. The pruner also scores always-included tools (web_search, recall_memory, screenshots, webcam, face enrollment) via `INTENT_EXAMPLES` on each tool module — without this, the pruner would defer them to the skill layer and they'd never reach the LLM.
 
 ### 18-Layer Conversation Router, One Router for Three Frontends
 

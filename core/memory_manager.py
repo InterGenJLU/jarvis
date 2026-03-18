@@ -1763,12 +1763,17 @@ class MemoryManager:
             )
 
             scored = []
+            query_dim = len(query_emb)
             for row in rows:
                 row_dict = dict(row)
                 emb_blob = row_dict.get("embedding")
                 if emb_blob:
                     stored_emb = np.frombuffer(emb_blob, dtype=np.float32)
-                    score = float(np.dot(query_emb, stored_emb))
+                    # Skip embeddings from a different model (e.g. old 384-dim MiniLM)
+                    if stored_emb.shape[0] != query_dim:
+                        score = 0.0
+                    else:
+                        score = float(np.dot(query_emb, stored_emb))
                 else:
                     score = 0.0
                 row_dict["score"] = score

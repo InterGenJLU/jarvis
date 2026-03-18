@@ -58,6 +58,9 @@ class ContinuousListener:
         # Audio configuration
         self.sample_rate = config.get("audio.sample_rate", 16000)
         self.device = config.get("audio.mic_device")
+
+        # High-frequency diagnostic logging (config toggle)
+        self._diag_audio = config.get("diagnostics.audio_pipeline", False)
         
         # Device sample rate (will be determined when stream starts)
         self.device_sample_rate = None
@@ -151,6 +154,12 @@ class ContinuousListener:
             self.logger.debug(f"🔇 Noise burst detected ({len(self._vad_timestamps)} VAD triggers in 3s) — skipping")
             return
 
+        # Pause conversation timeout while speech is being collected —
+        # prevents the timer from firing during speaker ID + transcription
+        if self.conversation_window_active:
+            with self._conversation_lock:
+                self._cancel_conversation_timer()
+
         self.logger.debug("🗣️  Speech detected (VAD triggers=%d), starting collection",
                           len(self._vad_timestamps))
         print("🗣️  Speech detected...")
@@ -214,13 +223,47 @@ class ContinuousListener:
             # Pad if too short
             audio_int16 = np.pad(audio_int16, (0, self.frame_size - len(audio_int16)))
         
-        # Process through VAD
-        in_speech, state_changed = self.vad.process_frame(audio_int16)
-        
-        # Skip further processing if we're speaking (don't transcribe our own voice)
+        # Skip ALL processing if we're speaking (don't feed TTS audio to VAD)
         # Use Event for thread-safe check (set = speaking/paused)
-        if self._speaking_event.is_set() or self.speaking:
+        speaking_event_set = self._speaking_event.is_set()
+        speaking_flag = self.speaking
+        if speaking_event_set or speaking_flag:
+            # Diagnostic: log once per second when blocked
+            if self._diag_audio:
+                if not hasattr(self, '_diag_blocked_count'):
+                    self._diag_blocked_count = 0
+                self._diag_blocked_count += 1
+                if self._diag_blocked_count % 31 == 1:  # ~1/sec at 32ms frames
+                    self.logger.info(
+                        f"🔇 DIAG audio blocked: speaking_event={speaking_event_set} "
+                        f"speaking_flag={speaking_flag} "
+                        f"collecting={self.collecting_speech} "
+                        f"conv_window={self.conversation_window_active}"
+                    )
             return
+
+        if hasattr(self, '_diag_blocked_count') and self._diag_blocked_count > 0:
+            if self._diag_audio:
+                self.logger.info(f"🔊 DIAG audio unblocked after {self._diag_blocked_count} blocked frames")
+            self._diag_blocked_count = 0
+
+        # Process through VAD (only when not speaking)
+        in_speech, state_changed = self.vad.process_frame(audio_int16)
+
+        # Diagnostic: log VAD state every ~1 second
+        if self._diag_audio:
+            if not hasattr(self, '_diag_vad_count'):
+                self._diag_vad_count = 0
+            self._diag_vad_count += 1
+            if self._diag_vad_count % 31 == 0:  # ~1/sec at 32ms frames
+                rms = float(np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2)))
+                self.logger.info(
+                    f"🎙️ DIAG VAD: in_speech={in_speech} "
+                    f"speech_frames={self.vad.speech_frames} "
+                    f"silence_frames={self.vad.silence_frames} "
+                    f"rms={rms:.0f} collecting={self.collecting_speech} "
+                    f"conv_window={self.conversation_window_active}"
+                )
         
         # If collecting speech, add raw device-rate audio to buffer.
         # RATE CONTRACT: speech_buffer stores audio at device_sample_rate.
@@ -355,6 +398,8 @@ class ContinuousListener:
                 # Filter out likely noise during conversation window
                 if self._is_conversation_noise(text):
                     self.logger.info(f"🔇 Filtered noise during conversation: '{text}'")
+                    # Restart the conversation timer (was paused when speech started)
+                    self.open_conversation_window(self._default_duration)
                     return
 
                 # Apply corrections for common mishearings
@@ -418,7 +463,7 @@ class ContinuousListener:
         # First, verify the configured mic exists in the system at all
         if self.device:
             hw_found = False
-            max_retries = 6
+            max_retries = 10  # 10 × 3s = 30s — USB mic can take 20-30s to enumerate
             for attempt in range(max_retries):
                 devices = sd.query_devices()
                 for dev in devices:
@@ -428,10 +473,10 @@ class ContinuousListener:
                         break
                 if hw_found:
                     if attempt > 0:
-                        self.logger.info(f"Found mic '{self.device}' on retry {attempt}")
+                        self.logger.info(f"Found mic '{self.device}' on retry {attempt + 1}/{max_retries}")
                     break
                 if attempt < max_retries - 1:
-                    self.logger.debug(f"Mic '{self.device}' not yet available, retrying in 3s ({attempt + 1}/{max_retries - 1})")
+                    self.logger.debug(f"Mic '{self.device}' not yet available, retrying in 3s ({attempt + 1}/{max_retries})")
                     time.sleep(3)
 
             if not hw_found:
@@ -749,12 +794,13 @@ class ContinuousListener:
         self.collecting_speech = False
         self.speech_buffer = []
 
-        # NOTE: We intentionally do NOT call vad.reset() here.
-        # During TTS + settling delay, _speaking_event is set so no frames
-        # reach the VAD — there's no residual TTS energy in the counters.
-        # Resetting would zero speech_frames, requiring ~300ms of fresh
-        # speech before detection, causing missed utterances if the user
-        # speaks immediately after TTS finishes.
+        # Reset Silero VAD's internal hidden state after TTS playback.
+        # Silero is stateful (carries context across chunks) — stale state
+        # from before TTS can suppress speech detection after resuming.
+        # The speech_frames counter also resets, requiring ~300ms of speech
+        # before triggering, but this is acceptable since the user is
+        # waiting for TTS to finish anyway.
+        self.vad.reset()
 
         # Acoustic settling delay — let room echo/reverb dissipate before
         # re-enabling the audio callback.  _speaking_event is still set
@@ -763,7 +809,12 @@ class ContinuousListener:
 
         self.speaking = False
         self._speaking_event.clear()  # Allow audio callback to resume processing
-        self.logger.info("🔊 Listening resumed")
+        self.logger.info(
+            f"🔊 Listening resumed (vad_speech_frames={self.vad.speech_frames}, "
+            f"vad_silence_frames={self.vad.silence_frames}, "
+            f"collecting={self.collecting_speech}, "
+            f"conv_window={self.conversation_window_active})"
+        )
     
     # Post-transcription word corrections for known Whisper mishearings.
     # Applied early (before routing) so all downstream logic sees clean text.
@@ -790,10 +841,6 @@ class ContinuousListener:
         if re.match(r'^i (was|analyzed)\s+', text, re.IGNORECASE):
             corrected = re.sub(r'^i (was|analyzed)\s+', 'analyze ', text, flags=re.IGNORECASE)
             return corrected
-
-        # "i'm" at start -> "analyze"
-        if text.lower().startswith("i'm "):
-            return "analyze " + text[4:]
 
         return text
     
@@ -969,7 +1016,10 @@ class ContinuousListener:
             return
         try:
             import subprocess
-            output_device = self.config.get("audio.output_device", "default")
+            from core.tts import resolve_output_device
+            output_device = resolve_output_device(
+                self.config.get("audio.output_device", "default")
+            )
             subprocess.Popen(
                 ["aplay", "-D", output_device, tone_path],
                 stdout=subprocess.DEVNULL,

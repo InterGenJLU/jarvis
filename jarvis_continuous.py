@@ -293,6 +293,9 @@ class JarvisContinuous:
             # Use bg_tts (event pipeline) or tts directly for announcements
             tts_for_weather = self.bg_tts if self.event_mode else self.tts
             self.weather_poller.set_tts_callback(tts_for_weather.speak)
+            self.weather_poller.set_chat_message_callback(
+                lambda text: self.conversation.add_message("assistant", text)
+            )
             self.weather_poller.start()
             self.logger.info("Weather poller started")
 
@@ -306,6 +309,22 @@ class JarvisContinuous:
             from core.webcam_manager import get_webcam_manager
             from core.people_manager import get_people_manager
             webcam_mgr = get_webcam_manager(config)
+
+            # Start a background asyncio event loop for the webcam manager
+            # (voice service is threaded, but webcam manager is async)
+            import asyncio as _asyncio
+            self._async_loop = _asyncio.new_event_loop()
+            self._async_thread = threading.Thread(
+                target=self._async_loop.run_forever,
+                daemon=True, name="async-loop",
+            )
+            self._async_thread.start()
+            # Initialize webcam on its loop so get_frame() works from any thread
+            _asyncio.run_coroutine_threadsafe(
+                webcam_mgr.start(), self._async_loop
+            ).result(timeout=10)
+            self.logger.info("Async event loop started for webcam manager")
+
             people_mgr = get_people_manager(config)
             tts_proxy = self.bg_tts if self.event_mode else self.tts
             self.presence_detector = get_presence_detector(
@@ -333,6 +352,12 @@ class JarvisContinuous:
             # Wire for enroll_face tool
             from core.tool_executor import set_presence_detector
             set_presence_detector(self.presence_detector)
+            # Stash the real (synchronous) TTS and listener for enrollment.
+            # The presence_detector.tts is an EventTTSProxy (async queue) which
+            # causes state tangles when called from the enrollment handler.
+            # The listener is needed for pause/resume around pose TTS.
+            self.presence_detector._real_tts = self.tts
+            self.presence_detector._listener = self.listener
             self.logger.info("Presence detector wired to enroll_face tool")
 
             # Only start active monitoring when enabled
@@ -968,6 +993,8 @@ class JarvisContinuous:
                 self.tts_queue.put(None)     # TTS worker shutdown sentinel
                 if self.presence_detector:
                     self.presence_detector.stop()
+                if hasattr(self, '_async_loop') and self._async_loop.is_running():
+                    self._async_loop.call_soon_threadsafe(self._async_loop.stop)
                 if self.mcp_bridge:
                     self.mcp_bridge.stop()
                 if self.news_manager:
@@ -996,6 +1023,8 @@ class JarvisContinuous:
             finally:
                 if self.presence_detector:
                     self.presence_detector.stop()
+                if hasattr(self, '_async_loop') and self._async_loop.is_running():
+                    self._async_loop.call_soon_threadsafe(self._async_loop.stop)
                 if self.mcp_bridge:
                     self.mcp_bridge.stop()
                 if self.news_manager:

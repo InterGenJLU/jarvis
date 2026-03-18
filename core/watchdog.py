@@ -133,6 +133,9 @@ class Watchdog(threading.Thread):
         listener = self._listener
         if not (listener.speaking or listener._speaking_event.is_set()):
             return False
+        # LLM streaming in progress? (uses its own aplay, not tracked in TTS procs)
+        if self._coordinator._streaming_active:
+            return False  # legitimately streaming
         # TTS actively playing?
         with self._tts._active_procs_lock:
             tts_active = bool(self._tts._active_procs)

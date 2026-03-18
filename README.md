@@ -98,15 +98,15 @@ A fully local, GPU-accelerated voice assistant with fine-tuned speech recognitio
                         └──────────┬───────────┘
                                    │ verified wake word
                         ┌──────────▼───────────┐
-                        │  WebRTC VAD +        │
+                        │  Silero VAD v6 ONNX  │
                         │  Continuous Listener  │
-                        │  (speech detection)  │
+                        │  (neural speech det) │
                         └──────────┬───────────┘
                                    │ audio frames
                         ┌──────────▼───────────┐
                         │  Speaker ID          │
-                        │  (resemblyzer        │
-                        │  d-vectors)          │
+                        │  (SpeechBrain        │
+                        │  ECAPA-TDNN)         │
                         └──────────┬───────────┘
                                    │ user identity
                         ┌──────────▼───────────┐
@@ -230,7 +230,8 @@ When the LLM calls a tool and gets results back, a 17-domain regex classifier ca
 | **Tool Registry** | Auto-discovers `core/tools/*.py`, builds schemas, injects dependencies — adding a tool = one file |
 | **MCP Bridge** | Bidirectional MCP: outbound server exposes JARVIS tools to external clients (Claude Code); inbound client consumes external MCP servers as native tools |
 | **Self-Awareness** | Capability manifest + system state injected into LLM context — JARVIS knows what it can do, its current error rates, VRAM usage, and uptime |
-| **Speaker ID** | Resemblyzer d-vector enrollment — identifies who's speaking and adjusts honorifics, tool access, and memory scope dynamically |
+| **Speaker ID** | SpeechBrain ECAPA-TDNN (192-dim, 0.80% EER) — identifies who's speaking and adjusts honorifics, tool access, and memory scope dynamically. Evolved from Resemblyzer d-vectors (256-dim, 5-8% EER) |
+| **Face Recognition** | InsightFace ArcFace (512-dim, 99.83% LFW) — presence detection with proactive greetings, voice-driven face enrollment with pose instructions. Evolved from dlib/Haar cascade (128-dim, 97% LFW) |
 | **Multi-Speaker Tracking** | Per-speaker history labels, rapid-switch detection (3 switches in 60s triggers a retort), participant-aware LLM context |
 | **Context Window** | Topic-segmented working memory with relevance-scored assembly, 24K token budget, cross-session persistence |
 | **Streaming TTS** | `StreamingAudioPipeline` — single persistent aplay process, background Kokoro generation, gapless playback |
@@ -342,7 +343,9 @@ pip install --break-system-packages -r requirements.txt
 pip install --break-system-packages \
     faster-whisper \
     sentence-transformers \
-    resemblyzer \
+    speechbrain \
+    insightface \
+    silero-vad \
     kokoro \
     soundfile \
     trafilatura \
@@ -489,9 +492,9 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_
 
 | Model | Source | Purpose |
 |-------|--------|---------|
-| **all-MiniLM-L6-v2** | [sentence-transformers](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | Intent matching, memory search, tool pruning |
+| **nomic-embed-text-v1.5** | [nomic-ai](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | Intent matching, memory search, tool pruning, news dedup (768-dim, GPU) |
 
-Auto-downloads on first use. Set `cache_dir` in config.yaml to control where it's stored.
+Runs on RX 7600 GPU (~9ms/query). Evolved from all-MiniLM-L6-v2 (384-dim, CPU, ~1ms but lower quality). +6 MTEB points, 8192 token context (vs 256).
 
 ### Porcupine (Wake Word)
 
@@ -501,13 +504,29 @@ Auto-downloads on first use. Set `cache_dir` in config.yaml to control where it'
 
 Get a free access key from Picovoice and add it to your `.env` file.
 
-### Resemblyzer (Speaker ID)
+### SpeechBrain (Speaker ID)
 
 | Model | Source | Purpose |
 |-------|--------|---------|
-| **VoiceEncoder** | [resemblyzer](https://github.com/resemble-ai/Resemblyzer) | Speaker identification via d-vectors |
+| **ECAPA-TDNN** | [speechbrain/spkrec-ecapa-voxceleb](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) | Speaker identification (192-dim, 0.80% EER) |
 
-Auto-downloads on first use (~5MB model). Used for identifying who's speaking and adjusting behavior per user.
+Runs on RX 7600 GPU. Evolved from Resemblyzer VoiceEncoder (256-dim, 5-8% EER) — 10x accuracy improvement. RMS-normalized pipeline with scipy bandlimited resampling for consistent scores across volume levels. Sticky identity cached for 60s to avoid re-verification during conversation.
+
+### InsightFace (Face Recognition)
+
+| Model | Source | Purpose |
+|-------|--------|---------|
+| **buffalo_l (RetinaFace + ArcFace)** | [insightface](https://github.com/deepinsight/insightface) | Face detection + 512-dim recognition (99.83% LFW) |
+
+Single-pass detection and identification, replacing the previous two-tier Haar cascade + dlib system (128-dim, 97% LFW). Powers presence detection (proactive greetings) and voice-driven face enrollment with guided pose instructions.
+
+### Silero VAD (Voice Activity Detection)
+
+| Model | Source | Purpose |
+|-------|--------|---------|
+| **Silero VAD v6.2.1** | [silero-vad](https://github.com/snakers4/silero-vad) | Neural speech/noise discrimination (ONNX, stateful) |
+
+Replaced WebRTC VAD. Neural network with cross-chunk context for better barge-in detection, speech/noise distinction, and music rejection. 16% fewer errors on noisy data. 0.14ms/chunk on CPU.
 
 ---
 
@@ -653,7 +672,8 @@ jarvis/                              # ~66,000 lines of Python
 │   ├── desktop_manager.py           # GNOME D-Bus + wmctrl + volume
 │   ├── people_manager.py            # People DB, TTS pronunciation
 │   ├── webcam_manager.py            # ffmpeg MJPEG + mobile camera relay
-│   ├── speaker_id.py                # Resemblyzer d-vector enrollment
+│   ├── speaker_id.py                # SpeechBrain ECAPA-TDNN speaker ID
+│   ├── presence_detector.py         # InsightFace face detection + greetings
 │   ├── stt.py                       # faster-whisper CTranslate2/GPU
 │   ├── tool_registry.py             # Auto-discovery, schema assembly
 │   ├── awareness.py                 # Unified context assembly
@@ -759,7 +779,7 @@ tts:
 ```yaml
 semantic_matching:
   enabled: true
-  model: all-MiniLM-L6-v2
+  model: nomic-ai/nomic-embed-text-v1.5
   cache_dir: /path/to/models/sentence-transformers
   default_threshold: 0.85    # Minimum confidence for intent match
   fallback_to_llm: true      # Send unmatched queries to LLM

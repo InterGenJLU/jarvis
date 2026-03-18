@@ -2,8 +2,8 @@
 
 Voice-triggered: "remember my face", "learn my face", "this is what I look like"
 Multi-turn guided enrollment: captures with glasses on, then glasses off,
-user-paced via "ready" signals. Produces averaged 128-dim encoding for
-robust recognition across angles and conditions.
+user-paced via "ready" signals. Produces averaged 512-dim ArcFace encoding
+for robust recognition across angles and conditions.
 """
 
 import asyncio
@@ -13,7 +13,7 @@ import time
 logger = logging.getLogger("jarvis.tools.enroll_face")
 
 TOOL_NAME = "enroll_face"
-ALWAYS_INCLUDED = True
+ALWAYS_INCLUDED = False  # Voice path uses direct P2.56 handler; tool stays for web UI
 
 DEPENDENCIES = {"presence_detector": "_presence_detector"}
 _presence_detector = None  # Set at runtime via inject_dependencies
@@ -97,13 +97,33 @@ def handler(args: dict) -> str:
         "phase": "glasses_on",  # glasses_on → glasses_off → complete
         "frames": [],
         "expires": time.time() + 300,  # 5 minute total timeout
+        "_listener": getattr(_presence_detector, '_listener', None),
     }
 
+    from core.honorific import get_honorific
+    h = get_honorific()
     return (
-        f"Let's enroll you in the vision recognition system, {person_name}. "
+        f"Let's enroll you in the vision recognition system {h}. "
         "We'll start with glasses on first, so go ahead and put them on. "
-        "Say 'ready' when you're set."
+        "Say 'I'm ready' when you're set."
     )
+
+
+def _play_sound(path: str):
+    """Play a WAV file on the resolved output device (non-blocking)."""
+    try:
+        import subprocess
+        from core.tts import resolve_output_device
+        from core.config import Config
+        config = Config()
+        device = resolve_output_device(config.get("audio.output_device", "default"))
+        subprocess.run(
+            ["aplay", "-D", device, path],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+    except Exception as e:
+        logger.debug(f"Failed to play sound {path}: {e}")
 
 
 def handle_enrollment_ready(presence_detector) -> tuple[str, bool]:
@@ -112,18 +132,34 @@ def handle_enrollment_ready(presence_detector) -> tuple[str, bool]:
     Captures 3 frames for the current phase, then either advances to
     next phase or completes enrollment.
 
+    Pose instructions are spoken via direct TTS + aplay (not through the
+    pipeline's speaking flag system) so the listener state isn't tangled.
+    A shutter sound plays after each successful capture.
+
     Returns:
         (response_text, is_complete)
     """
+    from pathlib import Path
+
     state = presence_detector._enrollment_state
     if not state or time.time() > state["expires"]:
         presence_detector._enrollment_state = None
         return "Enrollment timed out. Please start again with 'remember my face'.", True
 
-    tts = getattr(presence_detector, '_tts', None)
     phase = state["phase"]
+    shutter_path = str(Path(__file__).parent.parent.parent / "assets" / "camera_shutter.wav")
 
-    # Capture 3 poses for this phase
+    # Use the REAL TTS engine (not the EventTTSProxy, which queues async).
+    # The proxy's speak() is non-blocking and would queue all 3 pose
+    # instructions at once, playing them AFTER the handler returns.
+    real_tts = getattr(presence_detector, '_real_tts', None)
+
+    # Get listener reference for pause/resume around TTS
+    # (prevents mic from picking up JARVIS's own pose instructions)
+    listener = state.get("_listener")
+
+    # Capture 3 poses for this phase.
+    # Speak each instruction synchronously, wait for pose, capture, play shutter.
     poses = [
         ("Look straight at the camera.", 1.5),
         ("Now turn slightly to your left.", 2.0),
@@ -131,8 +167,12 @@ def handle_enrollment_ready(presence_detector) -> tuple[str, bool]:
     ]
 
     for instruction, wait_time in poses:
-        if tts:
-            tts.speak(instruction)
+        if real_tts:
+            if listener:
+                listener.pause_listening()
+            real_tts.speak(instruction)
+            if listener:
+                listener.resume_listening()
         time.sleep(wait_time)
 
         frame_bytes = _capture_frame()
@@ -140,15 +180,22 @@ def handle_enrollment_ready(presence_detector) -> tuple[str, bool]:
             logger.warning("Enrollment frame failed (%s): %s", phase, frame_bytes)
         else:
             state["frames"].append(frame_bytes)
+            _play_sound(shutter_path)
+
+    # Clear _spoke flag so the pipeline speaks the return text
+    # (pose instructions set it via real_tts.speak(), but the return
+    # text "Great shots..." still needs to be spoken by the pipeline)
+    if real_tts:
+        real_tts._spoke = False
 
     if phase == "glasses_on":
         # Advance to glasses-off phase
         state["phase"] = "glasses_off"
         captured = len(state["frames"])
         return (
-            f"Great shots, those will work well. "
+            f"Great shots. Those will work well. "
             f"Now I'll need you to take your glasses off for the last few captures. "
-            f"Please do so, and say 'ready' when you're set."
+            f"Please do so, and say 'I'm ready' when you're set."
         ), False
 
     elif phase == "glasses_off":
@@ -179,7 +226,7 @@ def handle_enrollment_ready(presence_detector) -> tuple[str, bool]:
 
 
 def _capture_frame() -> bytes | str:
-    """Capture a frame from the desktop webcam. Returns bytes or error string."""
+    """Capture a frame from the desktop webcam. Returns JPEG bytes or error string."""
     try:
         from core.webcam_manager import get_webcam_manager
         wm = get_webcam_manager()

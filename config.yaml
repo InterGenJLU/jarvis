@@ -18,7 +18,7 @@ audio:
   startup_retry_count: 5             # Max mic retries at boot
   startup_retry_base_delay: 2.0      # Initial retry delay (doubles each attempt)
 vad:
-  aggressiveness: 3
+  aggressiveness: 2
   speech_frames_threshold: 15
   silence_frames_threshold: 30
   buffer_duration: 3.0
@@ -81,7 +81,7 @@ conversation:
 user_profiles:
   enabled: true
   voice_recognition: true
-  similarity_threshold: 0.65
+  similarity_threshold: 0.30
   auto_enroll: true
   greet_by_name: true
 skills:
@@ -114,8 +114,13 @@ logging:
     # conversation: DEBUG      # Conversation history, people, profiles
     # web: DEBUG               # Web frontend, WebSocket handling
     # news: DEBUG              # News feed monitoring
-    vision: DEBUG              # Webcam manager, mobile camera relay, frame capture
+    # vision: DEBUG              # Webcam manager, mobile camera relay, frame capture
     # presence: DEBUG          # Presence detection, face recognition, greetings
+# Diagnostics — high-frequency logging for debugging specific subsystems.
+# These generate HEAVY log output. Enable only during active diagnosis.
+diagnostics:
+  audio_pipeline: false            # Per-second: VAD prob, RMS, speaking flags, speech state
+
 # LLM metrics tracking (dashboard + analytics)
 metrics:
   db_path: /mnt/storage/jarvis/data/metrics.db
@@ -351,7 +356,7 @@ vision:
   webcam_device: /dev/video0
   webcam_fps: 15
   presence:
-    enabled: false                    # Off until faces enrolled
+    enabled: true                     # Face enrolled (session 309)
     detection_interval: 10            # Seconds between checks
     greeting_cooldown: 7200           # 2 hours between greetings to same person
     face_confidence_threshold: 0.6    # InsightFace cosine similarity threshold

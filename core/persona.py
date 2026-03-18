@@ -31,12 +31,9 @@ _POOLS = {
     # Priority 2.7: Dismissal (conversation window close)
     "dismissal": [
         "Very good, {h}.",
-        "Of course, {h}.",
-        "As you wish, {h}.",
-        "Understood, {h}.",
         "Very well, {h}.",
-        "I'll be here, {h}.",
-        "Should you need anything, {h}.",
+        "Of course, {h}.",
+        "Understood, {h}.",
     ],
 
     # Priority 3: Fact stored in memory
@@ -245,31 +242,25 @@ _POOLS = {
 
     # Presence detection: time-of-day greetings
     "presence_morning": [
-        "Good morning, {h}. Ready to take on the day?",
-        "Morning, {h}. Hope you slept well.",
-        "Good morning, {h}. What's on the agenda today?",
-        "Ah, good morning, {h}.",
+        "Good morning {h}.",
+        "Morning {h}.",
+        "Good morning {h}. Ready when you are.",
     ],
     "presence_afternoon": [
-        "Good afternoon, {h}.",
-        "Afternoon, {h}. How's the day treating you?",
-        "Hello, {h}. Good to see you.",
+        "Good afternoon {h}.",
+        "Afternoon {h}.",
     ],
     "presence_evening": [
-        "Good evening, {h}.",
-        "Evening, {h}. Winding down?",
-        "Welcome home, {h}.",
+        "Good evening {h}.",
+        "Evening {h}.",
     ],
     "presence_return": [
-        "Welcome back, {h}.",
-        "Ah, {h}, welcome back. What's on your mind?",
-        "There you are, {h}. Ready when you are.",
-        "Good to see you again, {h}.",
+        "Welcome back {h}.",
+        "Welcome back {h}. Ready when you are.",
     ],
     "presence_return_reminders": [
-        "Welcome back, {h}. There were a few reminders while you were out — would you like to review them?",
-        "Ah, {h}, welcome back. A few things came up while you were away. Want me to go through them?",
-        "Good to see you again, {h}. You've got some pending reminders — shall I run through them?",
+        "Welcome back {h}. You have a few pending reminders. Would you like me to go through them?",
+        "Welcome back {h}. A few things came up while you were away. Want me to go through them?",
         "There you are, {h}. I held a few reminders for you. Want to hear them?",
     ],
 
@@ -528,7 +519,9 @@ def system_prompt(home_location: str = None) -> str:
         f"6. YOU MUST use imperial units only (miles, Fahrenheit, pounds). DO NOT include metric conversions in parentheses. DO NOT write '750 miles (1,207 kilometers)' — just write '750 miles'.\n"
         f"7. DO NOT begin your response with filler like 'Certainly', 'Of course', 'Absolutely', "
         f"'Sure thing', 'Great question', or 'Right away'. YOU MUST jump straight into the answer.\n"
-        f"8. When asked about yourself — your hardware, CPU, GPU, RAM, storage, "
+        f"8. Social pleasantries ('how are you', 'how about yourself', 'how are you doing') get a brief, warm reply — "
+        f"'I'm doing well {h}' or 'All systems running smoothly {h}'. DO NOT dump hardware specs or system status for casual greetings.\n"
+        f"When asked SPECIFICALLY about yourself — your hardware, CPU, GPU, RAM, storage, "
         f"your model, capabilities, status, memory, facts you remember, "
         f"how you work, your codebase, or what you can do — YOU MUST answer from the State and CAPABILITIES sections in your context. "
         f"YOU MUST speak in first person ('I have', 'I'm running on', 'my GPU', 'my codebase'). "

@@ -99,6 +99,7 @@ class WeatherPoller:
         # Alert notification callbacks
         self._tts_callback: Optional[callable] = None  # tts_proxy.speak
         self._alert_banner_callback: Optional[callable] = None  # WS push
+        self._chat_message_callback: Optional[callable] = None  # add to chat history
 
         # Alert re-announcement interval (seconds) for critical alerts
         self.alert_remind_interval: int = config.get(
@@ -131,6 +132,10 @@ class WeatherPoller:
     def set_alert_banner_callback(self, callback: callable):
         """Set the callback for pushing alert banners to web UI."""
         self._alert_banner_callback = callback
+
+    def set_chat_message_callback(self, callback: callable):
+        """Set the callback for adding alert text to chat history."""
+        self._chat_message_callback = callback
 
     def start(self):
         """Start background polling thread."""
@@ -593,6 +598,10 @@ class WeatherPoller:
             if self._tts_callback:
                 self._tts_callback(text)
                 self.logger.info("Weather alert announced: %s — %s", event, headline[:80])
+
+            # Add to chat history as a regular assistant message
+            if self._chat_message_callback:
+                self._chat_message_callback(text)
 
             # Push banner to web UI
             if self._alert_banner_callback:

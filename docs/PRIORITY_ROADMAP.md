@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 12, 2026 (session 256 — validated 20 completed items against codebase, moved #53/#54/#25 to Completed)
+**Updated:** March 18, 2026 (session 309 — Component Upgrade Wave + Face Enrollment Voice Flow complete, presence detection live, CAL + latency optimization plans drafted)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -57,8 +57,8 @@
 | 23 | **Backup automation skill** — voice-triggered, SHA256 checksums, manifest, rotation | 6-8 hours | "Jarvis, backup the system." Automated 2 AM daily | MASTER_DESIGN.md |
 | 24 | **Voice authentication for sensitive ops** — re-verify voice before threat hunting, system changes | 4-6 hours | Security layer. Speaker ID Phase 3+ | MASTER_DESIGN.md |
 | ~~25~~ | ~~**Web dashboard**~~ | — | — | **DONE** — `web/dashboard.html`, `dashboard.js`, `dashboard.css` with metrics/charts. Moved to Completed Items |
-| 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption | See `memory/plan_erica_voice_windows_port.md` |
-| 48 | **Windows native port** — full JARVIS on Windows, abstraction layers | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_erica_voice_windows_port.md` |
+| 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption | See `memory/plan_voice_windows_port.md` |
+| 48 | **Windows native port** — full JARVIS on Windows, abstraction layers | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_voice_windows_port.md` |
 | 62 | **Usage data pipeline + CI/CD** — nightly metric extraction → analysis → regression testing | 1-2 days | Automated quality tracking at scale | Metrics tracker records to SQLite, no extraction/reporting. Depends on #60 + #61 |
 
 ---
@@ -96,9 +96,12 @@
 
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
-| B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
+| B2-new | **Memory recall 768/384 dimension mismatch** | **HIGH** | context_window interaction recall hits stale 384-dim FAISS data with 768-dim nomic queries. Every LLM-routed command logs `shapes (768,) and (384,) not aligned`. Breaks conversation history, "what were we talking about", context-aware responses. |
+| B3-new | **"my name is X" → SocialIntroductions loop** | **HIGH** | Semantic matcher routes self-identification to third-party intro skill. 3x loop: "Who would you like me to meet?" Need to distinguish self-intro from third-party intro. |
+| B4-new | **TTS honorific split** | Medium | Post-processing honorific injector appends ", sir" as separate LLM chunk → separate TTS call with awkward pause. "Tokyo" [pause] ", sir." |
 | B8 | EventTTSProxy `speak()` returns None | Medium | `done.wait()` return not captured. Causes reminder retry false positives. Nag cap mitigates. Zero tests |
-| B9 | Speaker ID no accuracy benchmarks | Low | Threshold 0.75, re-enrolled with better clips. `test_speaker_id.py` now exists (5-part suite) but no live accuracy benchmarks yet |
+| B8-new | **FAISS index empty after upgrade** | Low | Expected: 384→768 dim upgrade cleared index. Run `HIP_VISIBLE_DEVICES=0 python3 scripts/backfill_memory.py` to rebuild from chat history. |
+| B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
 
 ---
 
@@ -131,7 +134,8 @@
 - 20P6: Vision Phase 6 — image thumbnails in web chat with lightbox + session persistence (Mar 5)
 - 20P7a: Vision Phase 7a — desktop webcam capture, WebcamManager ffmpeg MJPEG, web endpoints (Mar 6)
 - 20P7b: Vision Phase 7b — mobile camera capture, MobileCameraRelay WS protocol, auto-routing (Mar 6)
-- 20P7c: Vision Phase 7c — presence detection + face recognition greetings, PresenceDetector, enroll_face tool, 180 tests (Mar 6). NOT YET LIVE — needs face enrollment
+- 20P7c: Vision Phase 7c — presence detection + face recognition greetings, PresenceDetector, enroll_face tool, 180 tests (Mar 6). **LIVE** — face enrolled, presence detection active (Mar 18)
+- Face Enrollment Voice Flow — P2.56 direct handler, multi-turn with pose instructions + shutter sound, "I'm ready" prompt (Mar 18)
 
 ### Tier 0 (Quick Wins)
 - Rotate OpenWeather API key (Feb 19)
@@ -181,6 +185,14 @@
 - Context window Phase 4 — SQLite persistence (`context_window.py:385-549`) (verified Mar 4)
 - Memory _pending_forget Phase 6 — full confirm/cancel at P2.5 (verified Mar 4)
 - Mobile routing fixes A-D — web_navigation semantic tightening, web_search guardrails, mobile skill/tool filtering, always-on tool fallback, pre-exec skill blocking (Mar 5)
+
+### Component Upgrade Wave (session 309, Mar 17)
+- Speaker ID: Resemblyzer → SpeechBrain ECAPA-TDNN (192-dim, 0.80% EER, 10x accuracy)
+- Face Recognition: dlib/Haar → InsightFace ArcFace (512-dim, 99.83% LFW, single-pass)
+- Embeddings: all-MiniLM-L6-v2 → nomic-embed-text-v1.5 (768-dim, RX 7600 GPU, +6 MTEB)
+- VAD: WebRTC → Silero v6.2.1 ONNX (neural, stateful, 16% fewer errors)
+- GPU routing: HIP_VISIBLE_DEVICES=0 (Whisper+Nomic on RX 7600, LLM isolated on 7900 XT)
+- Speaker ID threshold: 0.30 (SpeechBrain default is 0.25; clean speech scores 0.6-0.7)
 
 ### Other Completed (non-roadmap enhancements)
 - Time injection into LLM system prompts — all 5 prompt injection points, correct time-of-day greetings (Feb 27)

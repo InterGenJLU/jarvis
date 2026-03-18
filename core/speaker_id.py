@@ -131,15 +131,19 @@ class SpeakerIdentifier:
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
 
-        # Resample to 16kHz if needed
+        # Bandlimited resampling to 16kHz (anti-aliasing filter prevents
+        # spectral artifacts that cause inconsistent embeddings)
         if sample_rate != 16000:
-            duration = len(audio) / sample_rate
-            target_len = int(duration * 16000)
-            audio = np.interp(
-                np.linspace(0, len(audio) - 1, target_len),
-                np.arange(len(audio)),
-                audio,
-            ).astype(np.float32)
+            from scipy.signal import resample_poly
+            from math import gcd
+            g = gcd(sample_rate, 16000)
+            audio = resample_poly(audio, 16000 // g, sample_rate // g).astype(np.float32)
+
+        # RMS normalization — consistent volume regardless of mic gain/distance.
+        # Both enrollment and live audio hit the model at the same level.
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        if rms > 1e-5:
+            audio = (audio / rms * 0.1).astype(np.float32)
 
         # Minimum audio length: 100ms = 1600 samples at 16kHz
         if len(audio) < 1600:
