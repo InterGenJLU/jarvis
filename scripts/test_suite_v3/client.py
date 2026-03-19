@@ -45,6 +45,11 @@ class TurnLog:
     synthesis_category: str = ""
     synthesis_temperature: float = 0.0
     total_ms: int = 0
+    llm_calls: int = 0              # Number of LLM calls in pipeline
+    llm_provider: str = ""          # "qwen-small" or "qwen" (synthesis model)
+    llm_routing_model: str = ""     # Model used for tool routing (if different)
+    routing_ttft_ms: float = 0      # TTFT for routing/tool-selection call
+    synthesis_ttft_ms: float = 0    # TTFT for synthesis call
     raw_stats: dict = field(default_factory=dict)
 
     # Tool calls (from info messages)
@@ -77,6 +82,11 @@ class TurnLog:
             "synthesis_category": self.synthesis_category,
             "synthesis_temperature": self.synthesis_temperature,
             "total_ms": self.total_ms,
+            "llm_calls": self.llm_calls,
+            "llm_provider": self.llm_provider,
+            "llm_routing_model": self.llm_routing_model,
+            "routing_ttft_ms": self.routing_ttft_ms,
+            "synthesis_ttft_ms": self.synthesis_ttft_ms,
             "raw_stats": self.raw_stats,
             "tools_called": self.tools_called,
             "tool_outputs": self.tool_outputs,
@@ -243,6 +253,11 @@ class JarvisClient:
             synthesis_category=stats_data.get('synthesis_category', ''),
             synthesis_temperature=stats_data.get('synthesis_temperature', 0.0),
             total_ms=stats_data.get('total_ms', 0),
+            llm_calls=stats_data.get('llm_calls', 0),
+            llm_provider=stats_data.get('llm_provider', ''),
+            llm_routing_model=stats_data.get('llm_routing_model', ''),
+            routing_ttft_ms=stats_data.get('routing_ttft_ms', 0),
+            synthesis_ttft_ms=stats_data.get('synthesis_ttft_ms', 0),
             raw_stats=stats_data,
             tools_called=tools_called,
             tool_outputs=tool_outputs,

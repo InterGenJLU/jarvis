@@ -52,8 +52,14 @@ def _print_turn(turn_num: int, user_input: str, turn_log: TurnLog,
     layer = turn_log.routing_layer or "?"
     skill = turn_log.skill_name or turn_log.llm_model or ""
     ms = turn_log.total_ms
+    # Show synthesis model if dual-model dispatch was used
+    model_tag = ""
+    if turn_log.llm_provider == "qwen-small":
+        model_tag = " [4B synth]"
+    elif turn_log.llm_provider == "qwen" and turn_log.llm_calls > 0:
+        model_tag = " [35B]"
 
-    print(f"  T{turn_num}: [{layer}] {skill} ({ms}ms) {_color(grade)}")
+    print(f"  T{turn_num}: [{layer}] {skill} ({ms}ms){model_tag} {_color(grade)}")
     print(f"      User: {user_input}")
 
     if verbose:
@@ -75,6 +81,7 @@ async def run_conversation(client: JarvisClient, conv: Conversation,
                            logger: V3Logger | None = None) -> dict:
     """Run a single conversation and return graded results."""
     turn_grades = []
+    turn_details = []
     total_assertions = 0
     total_passed = 0
     total_failed = 0
@@ -116,6 +123,19 @@ async def run_conversation(client: JarvisClient, conv: Conversation,
         total_assertions += len(assertion_results)
         total_passed += passed
         total_failed += failed
+
+        # Capture per-turn model dispatch data
+        turn_details.append({
+            "turn_num": turn_num,
+            "llm_model": turn_log.llm_model,
+            "llm_provider": turn_log.llm_provider,
+            "llm_routing_model": turn_log.llm_routing_model,
+            "llm_calls": turn_log.llm_calls,
+            "routing_ttft_ms": turn_log.routing_ttft_ms,
+            "synthesis_ttft_ms": turn_log.synthesis_ttft_ms,
+            "total_ms": turn_log.total_ms,
+            "tools_called": turn_log.tools_called,
+        })
 
         # Log
         if logger:
@@ -160,6 +180,7 @@ async def run_conversation(client: JarvisClient, conv: Conversation,
         "assertions_passed": total_passed,
         "assertions_failed": total_failed,
         "duration_ms": duration_ms,
+        "turn_details": turn_details,
     }
 
 

@@ -35,6 +35,11 @@ llm:
     tool_calling: true
     llama_cli: ~/llama.cpp/build/bin/llama-cli
     llama_completion: ~/llama.cpp/build/bin/llama-cli
+  small:
+    endpoint: "http://127.0.0.1:8081/v1/chat/completions"
+    enabled: true
+    temperature: 0.4
+    max_tokens: 400
   api:
     provider: anthropic
     model: claude-sonnet-4-20250514
@@ -105,7 +110,7 @@ logging:
   modules:
     # stt: DEBUG               # Speech-to-text, transcription
     # tts: DEBUG               # Text-to-speech, synthesis, playback, device resolution
-    # llm: DEBUG               # LLM routing, quality gating, streaming, tool call synthesis
+    llm: DEBUG               # LLM routing, quality gating, streaming, tool call synthesis
     # tools: DEBUG             # Tool registry, pruning, execution, result parsing
     router: DEBUG            # Conversation router priority chain, readback, task planner
     # skills: DEBUG            # Skill loading, intent matching, semantic matching

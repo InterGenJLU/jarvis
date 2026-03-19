@@ -3221,7 +3221,7 @@ class ConversationRouter:
         )
         try:
             topic = self.llm.generate(
-                prompt, max_tokens=30, temperature=0.0
+                prompt, max_tokens=30, temperature=0.0, use_small=True
             ).strip().strip('"').strip()
             if topic:
                 self.conv_state.conversation_topic = topic
@@ -3242,7 +3242,7 @@ class ConversationRouter:
         )
         try:
             summary = self.llm.generate(
-                prompt, max_tokens=60, temperature=0.0
+                prompt, max_tokens=60, temperature=0.0, use_small=True
             ).strip()
             return summary or f"{question[:100]} → {answer[:100]}"
         except Exception as e:

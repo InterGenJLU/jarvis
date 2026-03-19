@@ -76,6 +76,38 @@ def generate_summary(run_data: dict) -> str:
                          f"{c['fail']:>3} {c['total']:>5}")
         lines.append("")
 
+    # Model Dispatch summary
+    all_turns = []
+    for conv in run_data.get('conversations', []):
+        all_turns.extend(conv.get('turn_details', []))
+
+    if all_turns:
+        small_turns = [t for t in all_turns if t.get('llm_provider') == 'qwen-small']
+        big_turns = [t for t in all_turns if t.get('llm_provider') == 'qwen']
+        no_llm_turns = [t for t in all_turns if not t.get('llm_provider')]
+
+        lines.append("Model Dispatch:")
+        lines.append(f"  4B synthesis (qwen-small): {len(small_turns)} turns")
+        if small_turns:
+            ttfts = [t['synthesis_ttft_ms'] for t in small_turns if t.get('synthesis_ttft_ms')]
+            if ttfts:
+                lines.append(f"    Avg synthesis TTFT: {sum(ttfts)/len(ttfts):.0f}ms")
+        lines.append(f"  35B direct (qwen):        {len(big_turns)} turns")
+        if big_turns:
+            ttfts = [t['synthesis_ttft_ms'] for t in big_turns if t.get('synthesis_ttft_ms')]
+            if ttfts:
+                lines.append(f"    Avg synthesis TTFT: {sum(ttfts)/len(ttfts):.0f}ms")
+        lines.append(f"  No LLM (skill/CAL-L0):    {len(no_llm_turns)} turns")
+
+        # Dual-model turns (routing on 35B, synthesis on 4B)
+        dual = [t for t in all_turns if t.get('llm_routing_model') and t.get('llm_provider') == 'qwen-small']
+        if dual:
+            lines.append(f"  Dual-model (35B route → 4B synth): {len(dual)} turns")
+            routing_ttfts = [t['routing_ttft_ms'] for t in dual if t.get('routing_ttft_ms')]
+            if routing_ttfts:
+                lines.append(f"    Avg routing TTFT:   {sum(routing_ttfts)/len(routing_ttfts):.0f}ms")
+        lines.append("")
+
     # Failed / Mixed conversations detail
     non_pass = [c for c in run_data.get('conversations', []) if c.get('grade') != 'PASS']
     if non_pass:

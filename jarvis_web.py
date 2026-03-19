@@ -2155,6 +2155,19 @@ def _build_stats(match_info, llm, used_llm, t_start, t_match, t_end,
         if input_toks:
             stats['input_tokens'] = input_toks
 
+        # Dual-model call chain — captures routing + synthesis model info
+        chain = getattr(llm, 'last_call_chain', [])
+        if chain:
+            stats['llm_calls'] = len(chain)
+            stats['llm_provider'] = info.get('provider', '')
+            # First call = routing/tool selection, last call = synthesis
+            if len(chain) > 1:
+                stats['llm_routing_model'] = chain[0].get('model', '')
+                stats['routing_ttft_ms'] = round(chain[0].get('ttft_ms') or 0, 1)
+            ttft = info.get('ttft_ms')
+            if ttft:
+                stats['synthesis_ttft_ms'] = round(ttft, 1)
+
     if synthesis_category:
         stats['synthesis_category'] = synthesis_category
         stats['synthesis_temperature'] = synthesis_temperature

@@ -432,7 +432,7 @@ class NewsManager:
                 f"Summary: {summary[:200]}\n\n"
                 "Respond with ONLY the number (1, 2, 3, or 4):"
             )
-            result = self.llm.generate(prompt, max_tokens=5)
+            result = self.llm.generate(prompt, max_tokens=5, use_small=True)
             for ch in result.strip():
                 if ch in "1234":
                     return int(ch)

@@ -86,6 +86,9 @@ class LLMRouter:
         # API configuration (Claude)
         # Call metadata for console stats panel
         self.last_call_info = None
+        # Accumulated call chain — tracks ALL LLM calls within a pipeline run.
+        # Reset at the start of stream_with_tools(), appended by each method.
+        self.last_call_chain: list[dict] = []
 
         self.api_provider = config.get("llm.api.provider", "anthropic")
         self.api_model = config.get("llm.api.model", "claude-sonnet-4-20250514")
@@ -98,13 +101,30 @@ class LLMRouter:
         # Local LLM endpoint (consolidate — was hardcoded in 6 places)
         self.local_endpoint = "http://127.0.0.1:8080/v1/chat/completions"
 
+        # Small model endpoint (4B infrastructure model for synthesis/summarization)
+        self.small_endpoint = config.get("llm.small.endpoint")
+        self.small_model_enabled = config.get("llm.small.enabled", False)
+        self.small_temperature = config.get("llm.small.temperature", 0.4)
+        self.small_max_tokens = config.get("llm.small.max_tokens", 400)
+        if self.small_model_enabled and self.small_endpoint:
+            self.logger.info(f"Small model enabled: {self.small_endpoint}")
+
         # GPU swap manager (optional — for image gen VRAM sharing)
         self._gpu_swap = None
 
         self.logger.info(f"LLM Router initialized (fallback={'enabled' if self.fallback_enabled else 'disabled'})")
         if self.local_model_path:
             self.logger.info(f"Local model: {Path(self.local_model_path).name}")
-    
+
+    def _record_call(self, info: dict):
+        """Record an LLM call to both last_call_info and the call chain."""
+        self.last_call_info = info
+        self.last_call_chain.append(info)
+
+    def reset_call_chain(self):
+        """Reset the call chain — call at the start of a new pipeline run."""
+        self.last_call_chain = []
+
     @staticmethod
     def strip_filler(text: str) -> str:
         """Strip trailing 'feel free to ask' filler from LLM responses."""
@@ -213,7 +233,8 @@ class LLMRouter:
         return {"role": "user", "content": text}
 
     def generate(self, prompt: str, use_api: bool = False, max_tokens: int = 512,
-                 temperature: float | None = None, timeout: int = 30) -> str:
+                 temperature: float | None = None, timeout: int = 30,
+                 use_small: bool = False) -> str:
         """
         Generate response from LLM.
 
@@ -225,12 +246,21 @@ class LLMRouter:
             use_api: Whether to force API (Claude) instead of local
             max_tokens: Maximum tokens to generate
             timeout: HTTP request timeout in seconds (local only)
+            use_small: Route to 4B infrastructure model (synthesis/summarization)
 
         Returns:
             Generated text response
         """
         if use_api:
             return self._generate_api(prompt, max_tokens)
+        elif use_small and self.small_model_enabled and self.small_endpoint:
+            result = self._generate_small(prompt, max_tokens, temperature=temperature,
+                                          timeout=timeout)
+            if result:
+                return result
+            self.logger.warning("Small model failed, falling back to 35B")
+            return self._generate_local(prompt, max_tokens, temperature=temperature,
+                                        timeout=timeout)
         else:
             return self._generate_local(prompt, max_tokens, temperature=temperature,
                                         timeout=timeout)
@@ -274,19 +304,19 @@ class LLMRouter:
                     )
                 else:
                     self.logger.error(f"LLM server rejected request: {err}")
-                self.last_call_info = {
+                self._record_call({
                     "provider": "qwen", "method": "generate",
                     "input_tokens": None, "output_tokens": None,
                     "estimated_tokens": None, "model": model_name,
                     "latency_ms": (time.time() - start) * 1000,
                     "ttft_ms": None, "quality_gate": False,
                     "is_fallback": False, "error": error_msg,
-                }
+                })
                 return ""
             response.raise_for_status()
             data = response.json()
             usage = data.get("usage", {})
-            self.last_call_info = {
+            self._record_call({
                 "provider": "qwen", "method": "generate",
                 "input_tokens": usage.get("prompt_tokens"),
                 "output_tokens": usage.get("completion_tokens"),
@@ -294,20 +324,74 @@ class LLMRouter:
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": False, "error": None,
-            }
+            })
             return self.strip_filler(data["choices"][0]["message"]["content"].strip())
         except Exception as e:
             self.logger.error(f"LLM server error: {e}")
-            self.last_call_info = {
+            self._record_call({
                 "provider": "qwen", "method": "generate",
                 "input_tokens": None, "output_tokens": None,
                 "estimated_tokens": None, "model": model_name,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": False, "error": str(e),
-            }
+            })
             return ""
-    
+
+    def _generate_small(self, user_message: str, max_tokens: int = 512,
+                        temperature: float | None = None,
+                        timeout: int = 15) -> str:
+        """Generate using the 4B infrastructure model (synthesis/summarization).
+
+        Returns empty string on failure — caller should fall back to 35B.
+        """
+        from core import persona
+        system_prompt = persona.system_prompt_brief()
+
+        temp = temperature if temperature is not None else self.small_temperature
+        start = time.time()
+        try:
+            response = requests.post(
+                self.small_endpoint,
+                json={
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    "temperature": temp,
+                    "top_p": self.top_p,
+                    "top_k": self.top_k,
+                    "max_tokens": max_tokens
+                },
+                timeout=timeout
+            )
+            if response.status_code != 200:
+                self.logger.warning("Small model HTTP %d", response.status_code)
+                return ""
+            data = response.json()
+            usage = data.get("usage", {})
+            self._record_call({
+                "provider": "qwen-small", "method": "generate",
+                "input_tokens": usage.get("prompt_tokens"),
+                "output_tokens": usage.get("completion_tokens"),
+                "estimated_tokens": None, "model": "Qwen3.5-4B",
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": False, "error": None,
+            })
+            return self.strip_filler(data["choices"][0]["message"]["content"].strip())
+        except Exception as e:
+            self.logger.warning(f"Small model error: {e}")
+            self._record_call({
+                "provider": "qwen-small", "method": "generate",
+                "input_tokens": None, "output_tokens": None,
+                "estimated_tokens": None, "model": "Qwen3.5-4B",
+                "latency_ms": (time.time() - start) * 1000,
+                "ttft_ms": None, "quality_gate": False,
+                "is_fallback": False, "error": str(e),
+            })
+            return ""
+
     def _generate_api(self, prompt: str, max_tokens: int = 512) -> str:
         """
         Generate response using Claude API
@@ -328,14 +412,14 @@ class LLMRouter:
             api_key = self.config.get_env(self.api_key_env)
             if not api_key or api_key == "your_key_here":
                 self.logger.error("Claude API key not configured")
-                self.last_call_info = {
+                self._record_call({
                     "provider": "claude", "method": "generate",
                     "input_tokens": None, "output_tokens": None,
                     "estimated_tokens": None, "model": self.api_model,
                     "latency_ms": (time.time() - start) * 1000,
                     "ttft_ms": None, "quality_gate": False,
                     "is_fallback": True, "error": "api_key_not_configured",
-                }
+                })
                 return "I'm sorry, I don't have access to the Claude API at the moment."
 
             # Create client
@@ -353,7 +437,7 @@ class LLMRouter:
             )
 
             response = message.content[0].text
-            self.last_call_info = {
+            self._record_call({
                 "provider": "claude", "method": "generate",
                 "input_tokens": message.usage.input_tokens,
                 "output_tokens": message.usage.output_tokens,
@@ -361,31 +445,31 @@ class LLMRouter:
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": True, "error": None,
-            }
+            })
 
             return response
 
         except ImportError:
             self.logger.error("anthropic package not installed")
-            self.last_call_info = {
+            self._record_call({
                 "provider": "claude", "method": "generate",
                 "input_tokens": None, "output_tokens": None,
                 "estimated_tokens": None, "model": self.api_model,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": True, "error": "anthropic_not_installed",
-            }
+            })
             return "I'm sorry, the Claude API is not available."
         except Exception as e:
             self.logger.error(f"Claude API call failed: {e}")
-            self.last_call_info = {
+            self._record_call({
                 "provider": "claude", "method": "generate",
                 "input_tokens": None, "output_tokens": None,
                 "estimated_tokens": None, "model": self.api_model,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": True, "error": str(e),
-            }
+            })
             return ""
     
     def _clean_llm_output(self, output: str) -> str:
@@ -619,14 +703,14 @@ class LLMRouter:
             api_key = self.config.get_env(self.api_key_env)
             if not api_key or api_key == "your_key_here":
                 self.logger.error("Claude API key not configured")
-                self.last_call_info = {
+                self._record_call({
                     "provider": "claude", "method": "chat",
                     "input_tokens": None, "output_tokens": None,
                     "estimated_tokens": None, "model": self.api_model,
                     "latency_ms": (time.time() - start) * 1000,
                     "ttft_ms": None, "quality_gate": False,
                     "is_fallback": True, "error": "api_key_not_configured",
-                }
+                })
                 return ""
 
             client = anthropic.Anthropic(api_key=api_key)
@@ -654,7 +738,7 @@ class LLMRouter:
             response = message.content[0].text
             elapsed_ms = (time.time() - start) * 1000
             self.api_call_count += 1
-            self.last_call_info = {
+            self._record_call({
                 "provider": "claude", "method": "chat",
                 "input_tokens": message.usage.input_tokens,
                 "output_tokens": message.usage.output_tokens,
@@ -662,7 +746,7 @@ class LLMRouter:
                 "latency_ms": elapsed_ms,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": True, "error": None,
-            }
+            })
             self.logger.info(f"✅ Claude API responded in {elapsed_ms / 1000:.1f}s "
                            f"(tokens: {message.usage.input_tokens}+{message.usage.output_tokens}, "
                            f"total API calls this session: {self.api_call_count})")
@@ -670,25 +754,25 @@ class LLMRouter:
 
         except ImportError:
             self.logger.error("anthropic package not installed")
-            self.last_call_info = {
+            self._record_call({
                 "provider": "claude", "method": "chat",
                 "input_tokens": None, "output_tokens": None,
                 "estimated_tokens": None, "model": self.api_model,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": True, "error": "anthropic_not_installed",
-            }
+            })
             return ""
         except Exception as e:
             self.logger.error(f"Claude API call failed: {e}")
-            self.last_call_info = {
+            self._record_call({
                 "provider": "claude", "method": "chat",
                 "input_tokens": None, "output_tokens": None,
                 "estimated_tokens": None, "model": self.api_model,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": None, "quality_gate": False,
                 "is_fallback": True, "error": str(e),
-            }
+            })
             return ""
 
     def chat(self, user_message: str, conversation_history: str = "",
@@ -819,6 +903,10 @@ class LLMRouter:
         Yields:
             Individual tokens as strings
         """
+        # Reset call chain if this is a direct stream() call (not via stream_with_tools)
+        if not self.last_call_chain:
+            self.reset_call_chain()
+
         if max_tokens is None:
             max_tokens = self._estimate_max_tokens(user_message)
         system_prompt = self._build_system_prompt()
@@ -924,7 +1012,7 @@ class LLMRouter:
             stream_error = str(e)
             self.logger.error(f"LLM streaming error: {e}")
         finally:
-            self.last_call_info = {
+            self._record_call({
                 "provider": "qwen", "method": "stream",
                 "input_tokens": _stream_input_tokens,
                 "output_tokens": _stream_output_tokens,
@@ -934,7 +1022,7 @@ class LLMRouter:
                 "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
                 "quality_gate": False, "is_fallback": False,
                 "error": stream_error,
-            }
+            })
 
     def stream_with_tools(self, user_message: str, conversation_history: str = "",
                           max_tokens: int = None, memory_context: str = None,
@@ -965,6 +1053,9 @@ class LLMRouter:
         Yields:
             str tokens for regular text, or a single ToolCallRequest.
         """
+        # Reset call chain at the start of each pipeline run
+        self.reset_call_chain()
+
         if not self.tool_calling:
             yield from self.stream(user_message, conversation_history,
                                    max_tokens, memory_context, conversation_messages)
@@ -1255,7 +1346,7 @@ class LLMRouter:
             stream_error = str(e)
             self.logger.error(f"LLM streaming (tool) error: {e}")
         finally:
-            self.last_call_info = {
+            self._record_call({
                 "provider": "qwen", "method": "stream_with_tools",
                 "input_tokens": _stream_input_tokens,
                 "output_tokens": _stream_output_tokens,
@@ -1265,7 +1356,7 @@ class LLMRouter:
                 "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
                 "quality_gate": False, "is_fallback": False,
                 "error": stream_error,
-            }
+            })
 
     # ── Domain-specific synthesis rules ──────────────────────────
     # Each block returns the RULES section for a domain.  Common header
@@ -1732,7 +1823,14 @@ class LLMRouter:
         total_chars = 0
         stream_error = None
 
-        _synth_temp = synthesis_temperature if synthesis_temperature is not None else self.temperature
+        # Dual-model dispatch: try 4B for synthesis, fall back to 35B
+        _use_small = self.small_model_enabled and self.small_endpoint
+        _endpoint = self.small_endpoint if _use_small else self.local_endpoint
+        _model_label = "Qwen3.5-4B" if _use_small else model_name
+
+        _synth_temp = synthesis_temperature if synthesis_temperature is not None else (
+            self.small_temperature if _use_small else self.temperature
+        )
         payload = {
             "messages": messages,
             "temperature": _synth_temp,
@@ -1747,8 +1845,8 @@ class LLMRouter:
 
         import json as _json
         _payload_size = len(_json.dumps(payload, default=str))
-        self.logger.debug("continue_after_tool_call: payload %d bytes, synth_temp=%.1f",
-                          _payload_size, _synth_temp)
+        self.logger.debug("continue_after_tool_call: payload %d bytes, synth_temp=%.1f, model=%s",
+                          _payload_size, _synth_temp, _model_label)
 
         # Track tool call fragments (same logic as stream_with_tools)
         is_tool_call = False
@@ -1768,16 +1866,38 @@ class LLMRouter:
         # mmproj processes the image on CPU before generating tokens.
         if image_data:
             _timeout = max(_timeout, 90)
+        # 4B is faster — shorter timeout, but not too aggressive
+        if _use_small:
+            _timeout = min(_timeout, 30)
 
         try:
             response = requests.post(
-                self.local_endpoint,
+                _endpoint,
                 json=payload,
                 timeout=_timeout,
                 stream=True,
             )
+            # 4B fallback: if small model fails, retry on 35B transparently
+            if _use_small and response.status_code != 200:
+                self.logger.warning(
+                    "Small model HTTP %d for synthesis — falling back to 35B",
+                    response.status_code)
+                _endpoint = self.local_endpoint
+                _model_label = model_name
+                _use_small = False
+                _synth_temp = synthesis_temperature if synthesis_temperature is not None else self.temperature
+                payload["temperature"] = _synth_temp
+                _timeout = min(120, 30 + (_est_tokens // 1000))
+                if image_data:
+                    _timeout = max(_timeout, 90)
+                response = requests.post(
+                    _endpoint,
+                    json=payload,
+                    timeout=_timeout,
+                    stream=True,
+                )
             response.raise_for_status()
-            self.logger.debug("continue_after_tool_call: HTTP %d", response.status_code)
+            self.logger.debug("continue_after_tool_call: HTTP %d (%s)", response.status_code, _model_label)
 
             for line in response.iter_lines():
                 if not line:
@@ -1844,6 +1964,48 @@ class LLMRouter:
                 yield ToolCallRequest(
                     name=tc_name, arguments=args, call_id=tc_id)
 
+        except (requests.ConnectionError, requests.Timeout) as e:
+            if _use_small:
+                # 4B unreachable — fall back to 35B for this synthesis
+                self.logger.warning("Small model connection failed (%s) — falling back to 35B", e)
+                _endpoint = self.local_endpoint
+                _model_label = model_name
+                _use_small = False
+                _synth_temp = synthesis_temperature if synthesis_temperature is not None else self.temperature
+                payload["temperature"] = _synth_temp
+                _timeout = min(120, 30 + (_est_tokens // 1000))
+                if image_data:
+                    _timeout = max(_timeout, 90)
+                try:
+                    response = requests.post(
+                        _endpoint, json=payload, timeout=_timeout, stream=True,
+                    )
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        line = line.decode("utf-8")
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            token = chunk["choices"][0].get("delta", {}).get("content", "")
+                            if token:
+                                if first_token_time is None:
+                                    first_token_time = time.time()
+                                total_chars += len(token)
+                                yield token
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
+                except Exception as e2:
+                    stream_error = str(e2)
+                    self.logger.error(f"35B fallback also failed: {e2}")
+            else:
+                stream_error = str(e)
+                self.logger.error(f"LLM continue_after_tool_call error: {e}")
         except Exception as e:
             stream_error = str(e)
             self.logger.error(f"LLM continue_after_tool_call error: {e}")
@@ -1854,17 +2016,18 @@ class LLMRouter:
                 "continue_after_tool_call: done — %d chars, %.0fms%s",
                 total_chars, elapsed,
                 f", TTFT={ttft:.0f}ms" if ttft else ", TTFT=none (zero tokens)")
-            self.last_call_info = {
-                "provider": "qwen", "method": "continue_after_tool_call",
+            self._record_call({
+                "provider": "qwen-small" if _use_small else "qwen",
+                "method": "continue_after_tool_call",
                 "input_tokens": _stream_input_tokens,
                 "output_tokens": _stream_output_tokens,
                 "estimated_tokens": total_chars // 4 if total_chars and not _stream_output_tokens else None,
-                "model": model_name,
+                "model": _model_label,
                 "latency_ms": (time.time() - start) * 1000,
                 "ttft_ms": ((first_token_time - start) * 1000) if first_token_time else None,
                 "quality_gate": False, "is_fallback": False,
                 "error": stream_error,
-            }
+            })
 
 
 # Convenience function
