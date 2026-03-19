@@ -14,7 +14,7 @@
 
 | # | Item | Effort | Status | Notes |
 |---|------|--------|--------|-------|
-| 20P7c | **Vision 7c live test** — enroll faces, enable presence detection + greetings | 1-2 hours | **NEXT** | Code complete + 180 tests. Enable `vision.presence.enabled: true` |
+| 20P7c | **Vision 7c live test** — enroll faces, enable presence detection + greetings | 1-2 hours | **DONE** | Live since session 309. the user enrolled (speaker + face). Guest mode working. |
 | — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | NOT STARTED | Config stub + MCP bridge ready. the user=Gmail, secondary=AOL |
 | 60 | **Mobile app** — web UI phase 1 done. Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** | Plan: `memory/plan_mobile_ios_app.md` |
 | — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | Full `caldav_calendar.py` exists, DB column exists, config present but `enabled: false` |
@@ -157,6 +157,16 @@
 - **Logging infrastructure fix** — 18 files migrated to get_logger(), _ensure_handlers() added to Logger class
 - **VRAM audit** — RX 7600 baselined (4,198 MB used, 3,832 MB free at peak). Kokoro GPU benchmarked and ruled out (CPU 4.7x faster)
 - **Routing test harness** — `tests/routing/test_routing.py` (87 tests, CAL-L0 + tool gate + latency)
+
+### ROCm Stack Rebuild + 4B Model (Session 310, Mar 19) — COMPLETE
+- **PyTorch from source** — v2.10.0 built against ROCm 7.2.0, `PYTORCH_ROCM_ARCH="gfx1100;gfx1102"`, installed to venv
+- **llama.cpp rebuilt** — `-DGGML_HIP_ROCWMMA_FATTN=ON` for RDNA3 flash attention, dual GPU targets
+- **Qwen3.5-4B deployed** — infrastructure model on RX 7600 (port 8081). For synthesis/summarization, not tool routing.
+- **TTSCache** — persistent disk cache (281 phrases, 39MB). Startup load: 11ms (was 170s CPU spike)
+- **Web embeddings → CPU** — config-driven `embeddings.voice_device`/`web_device`. Freed ~1GB VRAM on RX 7600
+- **GFX targets corrected** — RX 7600 services use `11.0.2` (native gfx1102), RX 7900 XT stays `11.0.0`
+- **Venv created** — `/home/user/jarvis/.venv`, all services use venv Python
+- **Audio diagnostics** — callback heartbeat, stream health check, cache generation throttle
 
 ### Tier 0 (Quick Wins)
 - Rotate OpenWeather API key (Feb 19)
