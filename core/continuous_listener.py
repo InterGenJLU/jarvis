@@ -61,6 +61,12 @@ class ContinuousListener:
 
         # High-frequency diagnostic logging (config toggle)
         self._diag_audio = config.get("diagnostics.audio_pipeline", False)
+
+        # Audio callback heartbeat — always on (not gated by _diag_audio).
+        # Tracks whether the sounddevice callback thread is alive.
+        self._callback_count = 0
+        self._callback_last_log = 0  # monotonic timestamp
+        self._callback_heartbeat_interval = 60  # seconds between heartbeat logs
         
         # Device sample rate (will be determined when stream starts)
         self.device_sample_rate = None
@@ -174,6 +180,21 @@ class ContinuousListener:
     
     def _audio_callback(self, indata, frames, time_info, status):
         """Audio stream callback"""
+        # Heartbeat: always-on proof-of-life for the callback thread.
+        # Logs every 60s regardless of _diag_audio setting.
+        self._callback_count += 1
+        now = time.monotonic()
+        if now - self._callback_last_log >= self._callback_heartbeat_interval:
+            self._callback_last_log = now
+            speaking_event = self._speaking_event.is_set()
+            self.logger.info(
+                "🫀 Audio callback heartbeat: %d calls, speaking_event=%s, "
+                "speaking_flag=%s, collecting=%s, conv_window=%s, paused=%s",
+                self._callback_count, speaking_event, self.speaking,
+                self.collecting_speech, self.conversation_window_active,
+                getattr(self, '_paused', False),
+            )
+
         if status:
             self.logger.warning(f"Audio callback status: {status}")
         
@@ -563,7 +584,13 @@ class ContinuousListener:
 
             self.stream.start()
             self.running = True
-            self.logger.info("🎤 Continuous listening active...")
+            self._callback_count = 0
+            self._callback_last_log = time.monotonic()
+            self.logger.info(
+                "🎤 Continuous listening active... "
+                "(stream.active=%s, device=%s, sr=%d, blocksize=%d)",
+                self.stream.active, device_info['name'], device_sr, device_blocksize,
+            )
             return True
 
         except Exception as e:
@@ -816,6 +843,18 @@ class ContinuousListener:
             f"conv_window={self.conversation_window_active})"
         )
     
+    def get_stream_health(self) -> dict:
+        """Return stream health info for diagnostics/watchdog."""
+        return {
+            "stream_active": self.stream.active if self.stream else False,
+            "callback_count": self._callback_count,
+            "speaking": self.speaking,
+            "speaking_event": self._speaking_event.is_set(),
+            "collecting": self.collecting_speech,
+            "conv_window": self.conversation_window_active,
+            "running": self.running,
+        }
+
     # Post-transcription word corrections for known Whisper mishearings.
     # Applied early (before routing) so all downstream logic sees clean text.
     # Keyed by lowercased phrase → replacement.

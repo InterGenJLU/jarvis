@@ -227,8 +227,10 @@ def init_components(config, tts_proxy):
     components['conversation'] = conversation
     components['responses'] = get_response_library()
     components['llm'] = LLMRouter(config)
+    web_embedding_device = config.get("embeddings.web_device", "cpu")
     components['skill_manager'] = SkillManager(
-        config, conversation, tts_proxy, components['responses'], components['llm']
+        config, conversation, tts_proxy, components['responses'], components['llm'],
+        embedding_device=web_embedding_device,
     )
     components['skill_manager'].load_all_skills()
 

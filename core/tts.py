@@ -518,24 +518,42 @@ class TextToSpeech:
         Runs in a background thread after startup. Generates all response
         templates × primary honorifics. Other honorifics/names are
         lazy-cached on first use via cache_cal_l0_phrase().
+
+        Includes throttle (sleep between phrases) to avoid starving the
+        audio callback thread and other real-time components.
         """
         self._cal_l0_generating = True
         t0 = time.time()
         count = 0
+        total_phrases = len(self._CAL_L0_TEMPLATES) * len(self._CAL_L0_PRIMARY_HONORIFICS)
+
+        self.logger.info(
+            "CAL-L0 cache generation starting: %d templates × %d honorifics = %d phrases",
+            len(self._CAL_L0_TEMPLATES), len(self._CAL_L0_PRIMARY_HONORIFICS), total_phrases,
+        )
 
         for honorific in self._CAL_L0_PRIMARY_HONORIFICS:
             for template in self._CAL_L0_TEMPLATES:
                 phrase = template.replace("{honorific}", honorific)
-                # Also generate the capitalized-honorific variant
-                # (e.g., "Sir. Always a pleasure." from f"{self.honorific.capitalize()}...")
                 pcm = self._synthesize_to_pcm(phrase)
                 if pcm:
                     self._cal_l0_cache[phrase] = pcm
                     count += 1
 
+                # Timeline log every 25 phrases
+                if count % 25 == 0:
+                    elapsed = time.time() - t0
+                    self.logger.info(
+                        "CAL-L0 cache progress: %d/%d phrases (%.1fs elapsed, honorific='%s')",
+                        count, total_phrases, elapsed, honorific,
+                    )
+
+                # Throttle: yield CPU to audio callback and other threads
+                time.sleep(0.05)
+
             self.logger.info(
-                f"CAL-L0 cache: '{honorific}' done ({count} phrases, "
-                f"{time.time() - t0:.1f}s elapsed)"
+                "CAL-L0 cache: '%s' done (%d phrases, %.1fs elapsed)",
+                honorific, count, time.time() - t0,
             )
 
         # Also cache phrases without honorific (no placeholder in template)
@@ -545,11 +563,12 @@ class TextToSpeech:
                 if pcm:
                     self._cal_l0_cache[template] = pcm
                     count += 1
+                time.sleep(0.05)
 
         elapsed = time.time() - t0
         self._cal_l0_generating = False
         self.logger.info(
-            f"CAL-L0 cache complete: {count} phrases in {elapsed:.1f}s"
+            "CAL-L0 cache complete: %d phrases in %.1fs", count, elapsed,
         )
 
     def _synthesize_to_pcm(self, text: str) -> bytes | None:

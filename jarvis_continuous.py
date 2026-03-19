@@ -100,7 +100,11 @@ class JarvisContinuous:
             self.logger.info("Desktop manager initialized")
 
         # Initialize skill system
-        self.skill_manager = SkillManager(config, self.conversation, self.tts, self.responses, self.llm)
+        voice_embedding_device = config.get("embeddings.voice_device", "cuda:0")
+        self.skill_manager = SkillManager(
+            config, self.conversation, self.tts, self.responses, self.llm,
+            embedding_device=voice_embedding_device,
+        )
         self.logger.info("Loading skills...")
         skills_loaded = self.skill_manager.load_all_skills()
         self.logger.info(f"Loaded {skills_loaded} skills")

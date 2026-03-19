@@ -87,16 +87,18 @@ _keyword_negative_contexts = {
 class SkillManager:
     """Manages skill discovery, loading, and execution"""
     
-    def __init__(self, config, conversation, tts, responses, llm):
+    def __init__(self, config, conversation, tts, responses, llm, embedding_device=None):
         """
         Initialize skill manager
-        
+
         Args:
             config: Configuration object
             conversation: Conversation manager
             tts: Text-to-speech engine
             responses: Response library
             llm: LLM router
+            embedding_device: Device for embedding model ('cuda:0', 'cpu', etc.)
+                              If None, reads from config embeddings.voice_device
         """
         self.config = config
         self.conversation = conversation
@@ -117,12 +119,13 @@ class SkillManager:
         
         # Pre-load the sentence-transformer model so first command isn't slow
         # (avoids audio input overflow from blocking during lazy load)
+        _emb_device = embedding_device or config.get("embeddings.voice_device", "cuda:0")
         try:
             from sentence_transformers import SentenceTransformer
             self._embedding_model = SentenceTransformer(
-                'nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True, device='cuda:0'
+                'nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True, device=_emb_device
             )
-            self.logger.info("Semantic embedding model pre-loaded (nomic-embed-text-v1.5, RX 7600)")
+            self.logger.info("Semantic embedding model pre-loaded (nomic-embed-text-v1.5, %s)", _emb_device)
         except Exception as e:
             self.logger.warning(f"Failed to pre-load embedding model: {e}")
 

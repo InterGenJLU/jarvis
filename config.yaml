@@ -84,6 +84,11 @@ user_profiles:
   similarity_threshold: 0.30
   auto_enroll: true
   greet_by_name: true
+# Per-frontend embedding device (saves GPU VRAM when web service doesn't need GPU speed)
+embeddings:
+  voice_device: cuda:0          # Voice service (latency-sensitive, ~13ms)
+  web_device: cpu                # Web service (typed queries, ~28ms, saves ~1GB VRAM)
+
 skills:
   auto_discover: true
   safe_mode: false
