@@ -320,6 +320,15 @@ class ConversationRouter:
             if result:
                 return result
 
+        # --- Priority 2.9: CAL-L0 reflexive fast-path ---
+        # Intercepts pure conversational utterances (thanks, farewells,
+        # pleasantries, compliments, small talk, meta-questions) and
+        # returns instant canned responses without LLM inference.
+        if not guest:
+            result = self._handle_cal_l0(command)
+            if result:
+                return result
+
         if not guest:
             # --- Priority 3.1: Active readback session ---
             if in_conversation and self.conv_state.readback_session:
@@ -731,6 +740,156 @@ class ConversationRouter:
             f"(jarvis_asked_question={self.conv_state.jarvis_asked_question})"
         )
         return RouteResult(skip=True)
+
+    # ------------------------------------------------------------------
+    # P2.9 — CAL-L0: Reflexive conversational fast-path
+    # ------------------------------------------------------------------
+
+    # Minimum fraction of query tokens the matched pattern must cover.
+    # Prevents fast-pathing compound utterances like "good morning, what's the weather?"
+    _CAL_L0_COMPOUND_RATIO = 0.70
+
+    def _handle_cal_l0(self, command: str) -> RouteResult | None:
+        """P2.9: CAL-L0 reflexive conversational fast-path.
+
+        Matches the command against the conversation skill's semantic intents.
+        Only intercepts pure social utterances — compound queries (greeting +
+        task) fall through to the LLM via the compound guard.
+
+        Defers greeting handling to CAL-L3 when a presence-triggered
+        conversation window is active (window_source == 'presence_greeting').
+        """
+        sm = self.skill_manager
+        conv_skill = sm.skills.get("conversation")
+        if not conv_skill or not hasattr(conv_skill, 'semantic_intents'):
+            return None
+
+        if not hasattr(sm, '_embedding_model') or not sm._embedding_model:
+            return None
+
+        # Encode query
+        try:
+            from sentence_transformers import util as st_util
+            user_emb = sm._embedding_model.encode(
+                command, convert_to_tensor=True, show_progress_bar=False,
+            )
+        except Exception:
+            return None
+
+        # Score against all conversation skill intents
+        best_score = 0.0
+        best_intent_id = None
+        best_handler = None
+
+        for intent_id, data in conv_skill.semantic_intents.items():
+            cache_key = ("conversation", intent_id)
+            example_embs = sm._semantic_embedding_cache.get(cache_key)
+            if example_embs is None:
+                continue
+            sims = st_util.cos_sim(user_emb, example_embs)
+            score = float(sims.max())
+            if score > best_score:
+                best_score = score
+                best_intent_id = intent_id
+                best_handler = data['handler']
+
+        if best_score < 0.78:
+            logger.debug(
+                "CAL-L0: best=%.2f (%s) < 0.78 — pass for: %.60s",
+                best_score, best_intent_id or "none", command,
+            )
+            return None
+
+        # Compound utterance guard: detect when a social phrase is combined
+        # with a task request.  Three checks:
+        #   1. Clause boundary: comma/semicolon followed by more content.
+        #   2. Conjunction split: "but"/"and" + substantive content.
+        #   3. Action word after social prefix: action verbs appearing
+        #      AFTER the first 2 words suggest a second intent appended
+        #      to a greeting (e.g., "good morning, remind me to...").
+        #      Action words AT the start are the primary intent, not compound.
+        #   4. Word count: anything over 6 words likely has extra content.
+        import re as _re
+        cmd_stripped = command.strip()
+        cmd_words = len(cmd_stripped.split())
+
+        # Check 1: Punctuation clause boundary (comma/semicolon + new content)
+        if _re.search(r'[,;]\s+\w', cmd_stripped) and cmd_words > 3:
+            logger.info(
+                "CAL-L0: compound guard (punctuation) — %.60s", command,
+            )
+            return None
+
+        # Check 2: Conjunction + substantive content
+        if _re.search(r'\b(but|and also)\b.+\w{3,}', cmd_stripped) and cmd_words > 4:
+            logger.info(
+                "CAL-L0: compound guard (conjunction) — %.60s", command,
+            )
+            return None
+
+        # Check 3: Action words appearing AFTER the first 2 words
+        # (indicates a task appended to a social phrase)
+        words = cmd_stripped.lower().split()
+        if len(words) > 3:
+            tail = " ".join(words[2:])  # everything after the first 2 words
+            if _re.search(
+                r'\b(can you|could you|what\'?s|how\'?s|where\'?s|when\'?s'
+                r'|tell me|remind me|search|find|open|check|look up)\b',
+                tail,
+            ):
+                logger.info(
+                    "CAL-L0: compound guard (action after social) — %.60s",
+                    command,
+                )
+                return None
+
+        # Check 4: Length guard
+        if cmd_words > 6:
+            logger.info(
+                "CAL-L0: compound guard (length) — %d words: %.60s",
+                cmd_words, command,
+            )
+            return None
+
+        # CAL-L3 deference: if a presence greeting window is active,
+        # skip greeting handlers — L3 (Composer) will handle them.
+        handler_name = best_handler.__name__ if best_handler else ""
+        if handler_name == "greeting":
+            window_source = getattr(self.conv_state, 'window_source', None)
+            if window_source == "presence_greeting":
+                logger.info(
+                    "CAL-L0: deferring greeting to CAL-L3 (presence window active)"
+                )
+                return None
+
+        # Fire the handler
+        try:
+            response = best_handler()
+        except Exception as e:
+            logger.error("CAL-L0: handler '%s' failed: %s", handler_name, e)
+            return None
+
+        if not response:
+            return None
+
+        logger.info(
+            "CAL-L0: %s (%.2f) → '%.60s' for: %.60s",
+            best_intent_id, best_score, response, command,
+        )
+
+        return RouteResult(
+            text=response,
+            source="cal_l0",
+            intent=f"cal_l0:{best_intent_id}",
+            handled=True,
+            match_info={
+                "layer": "CAL-L0",
+                "skill_name": "conversation",
+                "intent_id": best_intent_id,
+                "confidence": best_score,
+                "handler_name": handler_name,
+            },
+        )
 
     # ------------------------------------------------------------------
     # P3.1 — Active readback session
