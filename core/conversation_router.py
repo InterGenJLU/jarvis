@@ -26,7 +26,8 @@ from core import persona
 from core.conversation_state import ConversationState
 from core.honorific import set_honorific
 
-logger = logging.getLogger("jarvis.router")
+from core.logger import Logger as _Logger
+logger = _Logger.get_logger("jarvis.router")
 
 # Thread-local storage for per-request RouteContext.
 # Set at the start of route(), cleared in finally.
@@ -416,45 +417,61 @@ class ConversationRouter:
             doc_buffer=doc_buffer,
         )
         if not result.use_tools and not result.handled:
-            always_on = list(ALWAYS_INCLUDED_TOOLS.values())
-            # Re-include domain tools stashed by the non-migrated guard
+            # Check if tool injection should be skipped entirely.
+            # If no tool/skill scored above _TOOL_SKIP_THRESHOLD and there
+            # are no deferred domain tools, this is a non-tool query —
+            # skip tool schemas to save ~1,500 tokens (~1s TTFT).
             deferred = getattr(self, '_deferred_domain_tools', None)
-            if deferred:
-                logger.info(
-                    "P4 failed — restoring %d deferred domain tools: %s",
-                    len(deferred),
-                    [t["function"]["name"] for t in deferred],
-                )
-                always_on = always_on + deferred
+            best_score = getattr(self, '_last_tool_best_score', 1.0)
+            # If the tool gate explicitly said "no tools" (score=0.0),
+            # respect that decision — don't let stale deferred tools override it.
+            if best_score == 0.0:
                 self._deferred_domain_tools = None
-            if self._is_guest:
-                always_on = [t for t in always_on
-                             if t["function"]["name"] in self._GUEST_ALLOWED_TOOLS]
-            if self._is_mobile:
-                always_on = [t for t in always_on
-                             if t["function"]["name"] not in self._MOBILE_EXCLUDED_TOOLS]
-            always_on = self._apply_anaphoric_carryover(always_on)
-            if always_on:
-                result.use_tools = always_on
-                result.tool_temperature = 0.0
-                result.tool_presence_penalty = 0.0
-                category = self._classify_query_domain(command)
-                result.synthesis_category = category
-                result.synthesis_temperature = self._DOMAIN_TEMPERATURES.get(category) if category else None
-                if category:
-                    logger.debug("Fallback: domain=%s synth_temp=%s",
-                                 category, result.synthesis_temperature)
-                # Emit domain classification debug event
-                from core.debug_logger import get_debug_logger as _get_dbg
-                _get_dbg()._write("domain_classification", {
-                    "command": command[:200],
-                    "category": category,
-                    "temperature": result.synthesis_temperature,
-                })
-                if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
-                    result.force_web_search = True
-                    logger.debug("Fallback: force_web_search=True (entertainment listing)")
-                result.intent = "tool_calling"
+                deferred = None
+            if not deferred and best_score < self._TOOL_SKIP_THRESHOLD:
+                logger.info(
+                    "Tool skip: best_score=%.2f < %.2f — no tools for: %.80s",
+                    best_score, self._TOOL_SKIP_THRESHOLD, command,
+                )
+            else:
+                always_on = list(ALWAYS_INCLUDED_TOOLS.values())
+                # Re-include domain tools stashed by the non-migrated guard
+                if deferred:
+                    logger.info(
+                        "P4 failed — restoring %d deferred domain tools: %s",
+                        len(deferred),
+                        [t["function"]["name"] for t in deferred],
+                    )
+                    always_on = always_on + deferred
+                    self._deferred_domain_tools = None
+                if self._is_guest:
+                    always_on = [t for t in always_on
+                                 if t["function"]["name"] in self._GUEST_ALLOWED_TOOLS]
+                if self._is_mobile:
+                    always_on = [t for t in always_on
+                                 if t["function"]["name"] not in self._MOBILE_EXCLUDED_TOOLS]
+                always_on = self._apply_anaphoric_carryover(always_on)
+                if always_on:
+                    result.use_tools = always_on
+                    result.tool_temperature = 0.0
+                    result.tool_presence_penalty = 0.0
+                    category = self._classify_query_domain(command)
+                    result.synthesis_category = category
+                    result.synthesis_temperature = self._DOMAIN_TEMPERATURES.get(category) if category else None
+                    if category:
+                        logger.debug("Fallback: domain=%s synth_temp=%s",
+                                     category, result.synthesis_temperature)
+                    # Emit domain classification debug event
+                    from core.debug_logger import get_debug_logger as _get_dbg
+                    _get_dbg()._write("domain_classification", {
+                        "command": command[:200],
+                        "category": category,
+                        "temperature": result.synthesis_temperature,
+                    })
+                    if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
+                        result.force_web_search = True
+                        logger.debug("Fallback: force_web_search=True (entertainment listing)")
+                    result.intent = "tool_calling"
         result.image_data = image_data
         return result
 
@@ -2119,6 +2136,13 @@ class ConversationRouter:
     # only value with zero cliff-risk AND zero false negatives.
     _TOOL_PRUNE_THRESHOLD = 0.40
 
+    # Below this score, the LLM fallback path skips tool injection entirely.
+    # Saves ~1,500 prompt tokens (~1s TTFT) on clearly non-tool queries like
+    # "tell me about black holes" or "what do you think of this movie."
+    # Conservative: well below _TOOL_PRUNE_THRESHOLD (0.40) to avoid
+    # stripping tools from borderline queries.  Tune with real usage data.
+    _TOOL_SKIP_THRESHOLD = 0.25
+
     # Hard cap on domain tools per request (web_search is added on top).
     # Prevents exceeding the 5-6 tool cliff even if threshold is too loose.
     _MAX_DOMAIN_TOOLS = 4
@@ -2641,6 +2665,13 @@ class ConversationRouter:
                 return None
             raise
 
+        # Tool gate: keyword + classifier check.  If the query clearly
+        # doesn't need tools, skip all scoring and return None.
+        from core.tool_gate import should_include_tools
+        if not should_include_tools(command, embedding=user_embedding):
+            self._last_tool_best_score = 0.0
+            return None
+
         # Score always-included tools that declare INTENT_EXAMPLES.
         # These tools have no corresponding skill, so the skill loop below
         # can't see them.  Treating a high-scoring always-included tool as
@@ -2735,6 +2766,14 @@ class ConversationRouter:
             best_non_migrated_name or "none", web_nav_score, len(matched_tools),
         )
 
+        # Stash best score across ALL tools/skills for the fallback path
+        # in route().  If nothing scores above _TOOL_SKIP_THRESHOLD, the
+        # fallback path skips tool injection entirely — saving ~1,500
+        # prompt tokens and ~1s of TTFT on non-tool queries.
+        self._last_tool_best_score = max(
+            effective_migrated, best_non_migrated_score, web_nav_score
+        )
+
         if not matched_tools:
             # If an always-included tool scored well, route through tool
             # calling with always-on tools — don't defer to P4.
@@ -2789,7 +2828,17 @@ class ConversationRouter:
                 self._deferred_domain_tools = domain_tools if domain_tools else None
                 return None
             # No domain tools AND no non-migrated skill matched.
-            # Still give the LLM always-on tools (web_search, recall_memory)
+            # If the best score across all tools/skills is below the skip
+            # threshold, this is a clearly non-tool query — return None to
+            # let the LLM run without tool schemas (~1,500 fewer tokens).
+            if self._last_tool_best_score < self._TOOL_SKIP_THRESHOLD:
+                logger.info(
+                    "Tool skip: best_score=%.2f < %.2f — no tools for: %.80s",
+                    self._last_tool_best_score, self._TOOL_SKIP_THRESHOLD,
+                    command,
+                )
+                return None
+            # Otherwise, include always-on tools (web_search, recall_memory)
             # so queries like "Alabama football score" can trigger web_search.
             logger.debug("P4-LLM: no domain tools, falling through with always-on tools")
             return self._apply_anaphoric_carryover(list(ALWAYS_INCLUDED_TOOLS.values()))

@@ -19,7 +19,8 @@ import os
 import time
 from pathlib import Path
 
-logger = logging.getLogger("jarvis.tool_registry")
+from core.logger import get_logger
+logger = get_logger("jarvis.tool_registry")
 
 
 # ---------------------------------------------------------------------------

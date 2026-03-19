@@ -7,7 +7,8 @@ import re
 import subprocess
 import time
 
-logger = logging.getLogger("jarvis.tools.take_screenshot")
+from core.logger import get_logger
+logger = get_logger("jarvis.tools.take_screenshot")
 
 TOOL_NAME = "take_screenshot"
 ALWAYS_INCLUDED = True

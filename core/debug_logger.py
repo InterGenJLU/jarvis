@@ -12,7 +12,8 @@ import os
 import time
 import logging
 
-logger = logging.getLogger("jarvis.debug_logger")
+from core.logger import get_logger
+logger = get_logger("jarvis.debug_logger")
 
 _SENTINEL_PATH = "/tmp/.jarvis_debug_active"
 

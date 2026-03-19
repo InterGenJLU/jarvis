@@ -61,7 +61,7 @@ from core.self_awareness import SelfAwareness
 from core.task_planner import TaskPlanner
 from core.interaction_cache import get_interaction_cache, Artifact
 from core.readback_session import ReadbackSession
-from core.webcam_manager import get_webcam_manager, WebcamManager, get_mobile_relay
+from core.webcam_manager import get_mobile_relay
 import hmac
 import aiohttp as _aiohttp_lib  # for outbound HTTP (Nominatim reverse geocoding)
 
@@ -3945,73 +3945,80 @@ async def index_handler(request):
 # Webcam streaming endpoints
 # ---------------------------------------------------------------------------
 
+_WEBCAM_SERVER = "http://127.0.0.1:8089"
+
+
 async def webcam_stream_handler(request):
-    """MJPEG multipart stream from live webcam feed."""
-    wm: WebcamManager | None = request.app.get('webcam_manager')
-    if not wm:
-        return web.Response(status=503, text="Webcam not available")
-
-    if not wm.device_available:
-        return web.Response(status=503, text="Webcam device not connected")
-
-    response = web.StreamResponse(
-        status=200,
-        headers={
-            'Content-Type': 'multipart/x-mixed-replace; boundary=jarvisframe',
-            'Cache-Control': 'no-cache, no-store',
-            'Connection': 'close',
-        },
-    )
-    await response.prepare(request)
-
-    await wm.register_client()
+    """MJPEG multipart stream — proxied from voice service frame server."""
     try:
-        async for frame in wm.stream_frames():
-            try:
-                header = (
-                    b"--jarvisframe\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
-                    b"\r\n"
-                )
-                await response.write(header + frame + b"\r\n")
-            except (ConnectionResetError, ConnectionAbortedError):
-                break
-    finally:
-        await wm.unregister_client()
+        session: _aiohttp_lib.ClientSession = request.app['http_session']
+        async with session.get(f"{_WEBCAM_SERVER}/stream", timeout=None) as upstream:
+            if upstream.status != 200:
+                body = await upstream.text()
+                return web.Response(status=upstream.status, text=body)
 
-    return response
+            response = web.StreamResponse(
+                status=200,
+                headers={
+                    'Content-Type': upstream.headers.get(
+                        'Content-Type',
+                        'multipart/x-mixed-replace; boundary=jarvisframe',
+                    ),
+                    'Cache-Control': 'no-cache, no-store',
+                    'Connection': 'close',
+                },
+            )
+            await response.prepare(request)
+
+            async for chunk in upstream.content.iter_any():
+                try:
+                    await response.write(chunk)
+                except (ConnectionResetError, ConnectionAbortedError):
+                    break
+
+            return response
+    except (_aiohttp_lib.ClientError, asyncio.TimeoutError) as exc:
+        return web.Response(status=503, text=f"Webcam not available: {exc}")
 
 
 async def webcam_snapshot_handler(request):
-    """Single JPEG frame from the webcam."""
-    wm: WebcamManager | None = request.app.get('webcam_manager')
-    if not wm:
-        return web.Response(status=503, text="Webcam not available")
-
-    if not wm.device_available:
-        return web.Response(status=503, text="Webcam device not connected")
-
+    """Single JPEG frame — proxied from voice service frame server."""
     try:
-        frame = await wm.get_frame(timeout=10)
-        return web.Response(
-            body=frame,
-            content_type='image/jpeg',
-            headers={'Cache-Control': 'no-cache'},
-        )
-    except (TimeoutError, RuntimeError) as e:
-        return web.Response(status=503, text=str(e))
+        session: _aiohttp_lib.ClientSession = request.app['http_session']
+        async with session.get(
+            f"{_WEBCAM_SERVER}/frame",
+            timeout=_aiohttp_lib.ClientTimeout(total=15),
+        ) as upstream:
+            if upstream.status != 200:
+                body = await upstream.text()
+                return web.Response(status=upstream.status, text=body)
+            frame = await upstream.read()
+            return web.Response(
+                body=frame,
+                content_type='image/jpeg',
+                headers={'Cache-Control': 'no-cache'},
+            )
+    except (_aiohttp_lib.ClientError, asyncio.TimeoutError) as exc:
+        return web.Response(status=503, text=f"Webcam not available: {exc}")
 
 
 async def webcam_status_handler(request):
-    """Webcam feed status (JSON)."""
-    wm: WebcamManager | None = request.app.get('webcam_manager')
-    desktop_available = wm is not None and wm.device_available
-    return web.json_response({
-        'available': desktop_available,
-        'running': wm.is_running if wm else False,
-        'mobile_supported': True,  # Mobile clients can always use getUserMedia
-    })
+    """Webcam feed status (JSON) — proxied from voice service frame server."""
+    try:
+        session: _aiohttp_lib.ClientSession = request.app['http_session']
+        async with session.get(
+            f"{_WEBCAM_SERVER}/status",
+            timeout=_aiohttp_lib.ClientTimeout(total=5),
+        ) as upstream:
+            data = await upstream.json()
+            data['mobile_supported'] = True
+            return web.json_response(data)
+    except (_aiohttp_lib.ClientError, asyncio.TimeoutError):
+        return web.json_response({
+            'available': False,
+            'running': False,
+            'mobile_supported': True,
+        })
 
 
 async def generate_image_handler(request):
@@ -4182,14 +4189,9 @@ async def on_startup(app):
     app['dashboard_clients'] = set()
     app['ws_connections'] = {}  # ws → conn_ctx, for targeted alert routing
 
-    # Initialize webcam manager (lazy — feed starts on first client)
-    try:
-        wm = get_webcam_manager(config)
-        app['webcam_manager'] = wm
-        logger.info("Webcam manager initialized (device=%s)", wm._device)
-    except Exception as e:
-        logger.warning("Webcam manager not available: %s", e)
-        app['webcam_manager'] = None
+    # HTTP session for proxying webcam requests to voice service frame server
+    app['http_session'] = _aiohttp_lib.ClientSession()
+    logger.info("Webcam proxy configured (voice service frame server at %s)", _WEBCAM_SERVER)
 
     # Initialize mobile camera relay (WebSocket frame relay for getUserMedia)
     from core.tool_executor import set_mobile_camera_relay
@@ -4311,9 +4313,9 @@ async def on_shutdown(app):
     if rm:
         rm.stop()
 
-    wm = app.get('webcam_manager')
-    if wm:
-        await wm.stop()
+    session = app.get('http_session')
+    if session:
+        await session.close()
 
     logger.info("JARVIS Web UI shut down")
 

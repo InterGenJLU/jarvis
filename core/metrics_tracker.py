@@ -16,7 +16,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from core.logger import get_logger
+logger = get_logger(__name__)
 
 _instance: Optional["MetricsTracker"] = None
 

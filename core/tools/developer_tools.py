@@ -119,7 +119,8 @@ SYSTEM_PROMPT_RULE = (
     "NOT for: general programming questions, code explanations, learning git."
 )
 
-logger = logging.getLogger("jarvis.tools.developer_tools")
+from core.logger import get_logger
+logger = get_logger("jarvis.tools.developer_tools")
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,8 @@ import base64
 import io
 import logging
 
-logger = logging.getLogger("jarvis.tools.capture_webcam")
+from core.logger import get_logger
+logger = get_logger("jarvis.tools.capture_webcam")
 
 TOOL_NAME = "capture_webcam"
 ALWAYS_INCLUDED = True
@@ -113,6 +114,10 @@ def _process_frame(frame_bytes: bytes) -> dict | str:
 def _capture_desktop() -> bytes | str | None:
     """Capture a frame from the desktop webcam (V4L2/ffmpeg).
 
+    When running in the voice service, uses WebcamManager directly.
+    When running in the web service (no local WebcamManager), proxies
+    via the voice service's internal frame server on localhost:8089.
+
     Returns:
         bytes: raw JPEG frame
         str: error message (terminal — don't try mobile)
@@ -122,29 +127,51 @@ def _capture_desktop() -> bytes | str | None:
         from core.webcam_manager import get_webcam_manager
         wm = get_webcam_manager()
     except RuntimeError:
-        return None  # Not initialized — try mobile fallback
+        wm = None  # Not initialized in this process — try HTTP proxy
 
-    if not wm.device_available:
-        return None  # No device — try mobile fallback
+    if wm is not None:
+        # Direct path (voice service) — WebcamManager is local
+        if not wm.device_available:
+            return None  # No device — try mobile fallback
+        try:
+            loop = wm._loop
+            if loop and loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(wm.get_frame(), loop)
+                return future.result(timeout=10)
+            else:
+                _loop = asyncio.new_event_loop()
+                try:
+                    return _loop.run_until_complete(wm.get_frame())
+                finally:
+                    _loop.close()
+        except TimeoutError:
+            return "Error: Webcam frame timeout — camera may not be responding."
+        except FileNotFoundError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            logger.error("Desktop webcam capture failed: %s", e)
+            return f"Error: Webcam capture failed — {e}"
 
+    # Proxy path (web service) — fetch from voice service frame server
+    return _capture_desktop_proxy()
+
+
+def _capture_desktop_proxy() -> bytes | str | None:
+    """Fetch a frame from the voice service's internal frame server."""
+    import urllib.request
+    import urllib.error
     try:
-        loop = wm._loop
-        if loop and loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(wm.get_frame(), loop)
-            return future.result(timeout=10)
-        else:
-            _loop = asyncio.new_event_loop()
-            try:
-                return _loop.run_until_complete(wm.get_frame())
-            finally:
-                _loop.close()
-    except TimeoutError:
-        return "Error: Webcam frame timeout — camera may not be responding."
-    except FileNotFoundError as e:
-        return f"Error: {e}"
+        req = urllib.request.Request("http://127.0.0.1:8089/frame")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status == 200:
+                return resp.read()
+            else:
+                return None  # Voice service says unavailable — try mobile
+    except urllib.error.URLError:
+        return None  # Voice service not reachable — try mobile fallback
     except Exception as e:
-        logger.error("Desktop webcam capture failed: %s", e)
-        return f"Error: Webcam capture failed — {e}"
+        logger.error("Desktop webcam proxy failed: %s", e)
+        return None
 
 
 def _capture_mobile() -> bytes | str:

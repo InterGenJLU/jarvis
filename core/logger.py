@@ -174,7 +174,10 @@ class Logger:
         Read per-subsystem log level overrides from config and apply them.
 
         Call once at startup AFTER all modules have been imported so that
-        existing loggers are retroactively updated.
+        existing loggers are retroactively updated.  Also ensures every
+        tracked logger has the correct handlers (file + console) — loggers
+        created at import time before config was available only got a
+        console handler.
 
         Config structure:
             logging:
@@ -184,8 +187,6 @@ class Logger:
                 stt: WARNING
         """
         modules = config.get("logging.modules", {}) or {}
-        if not modules:
-            return
 
         for subsystem, level_str in modules.items():
             if not level_str:
@@ -195,8 +196,9 @@ class Logger:
                 continue
             _module_levels[subsystem] = level
 
-        # Retroactively apply to already-created loggers
+        # Retroactively apply levels AND ensure handlers for all tracked loggers
         for name, logger in cls._loggers.items():
+            cls._ensure_handlers(logger, config)
             subsystem = _resolve_subsystem(name)
             if subsystem and subsystem in _module_levels:
                 new_level = _module_levels[subsystem]
@@ -205,16 +207,69 @@ class Logger:
                     handler.setLevel(new_level)
 
         # Also apply to loggers created via logging.getLogger() directly
-        # (tool_registry, conversation_router, etc.)
+        # that aren't tracked in cls._loggers (defensive catch-all)
         for name, logger in logging.Logger.manager.loggerDict.items():
             if not isinstance(logger, logging.Logger):
                 continue
+            cls._ensure_handlers(logger, config)
             subsystem = _resolve_subsystem(name)
             if subsystem and subsystem in _module_levels:
                 new_level = _module_levels[subsystem]
                 logger.setLevel(new_level)
                 for handler in logger.handlers:
                     handler.setLevel(new_level)
+
+    @classmethod
+    def _ensure_handlers(cls, logger: logging.Logger, config) -> None:
+        """Ensure a logger has the correct file handler attached.
+
+        Loggers created at import time (before config is available) only
+        get a console handler.  This method retroactively adds the file
+        handler so all loggers write to the same log file.
+        """
+        if not config:
+            return
+
+        log_file = config.get("logging.file")
+        if not log_file:
+            return
+
+        # Override for non-voice frontends (web, console)
+        if os.environ.get('JARVIS_LOG_FILE_ONLY'):
+            target = os.environ.get('JARVIS_LOG_TARGET', 'console')
+            log_file = str(Path(__file__).parent.parent / "logs" / f"{target}.log")
+
+        # Check if this logger already has a file handler for this path
+        for handler in logger.handlers:
+            if isinstance(handler, (logging.FileHandler, RotatingFileHandler)):
+                if hasattr(handler, 'baseFilename'):
+                    existing = os.path.abspath(handler.baseFilename)
+                    target_path = os.path.abspath(log_file)
+                    if existing == target_path:
+                        return  # Already has the correct file handler
+
+        # Add the file handler
+        max_size_mb = config.get("logging.max_size_mb", 0)
+        backup_count = config.get("logging.backup_count", 3)
+        log_path = Path(log_file)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+
+        if max_size_mb > 0:
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=int(max_size_mb * 1024 * 1024),
+                backupCount=backup_count,
+            )
+        else:
+            file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logger.level)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
 
 def get_logger(name: str, config=None) -> logging.Logger:

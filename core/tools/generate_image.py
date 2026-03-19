@@ -11,7 +11,8 @@ import requests
 
 from core.gpu_swap import get_gpu_swap_manager
 
-logger = logging.getLogger("jarvis.tools.generate_image")
+from core.logger import get_logger
+logger = get_logger("jarvis.tools.generate_image")
 
 TOOL_NAME = "generate_image"
 ALWAYS_INCLUDED = False

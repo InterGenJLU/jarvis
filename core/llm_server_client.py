@@ -1,14 +1,15 @@
 import requests
 import json
 import logging
+from core.logger import get_logger
 
 class LLMServerClient:
     """Client for llama-server REST API"""
-    
+
     def __init__(self, base_url="http://127.0.0.1:8080"):
         self.base_url = base_url
         self.endpoint = f"{base_url}/v1/chat/completions"
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
     
     def generate(self, user_message: str, system_prompt: str, 
                  temperature: float = 0.3, max_tokens: int = 100) -> str:

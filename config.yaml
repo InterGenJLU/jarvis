@@ -102,7 +102,7 @@ logging:
     # tts: DEBUG               # Text-to-speech, synthesis, playback, device resolution
     # llm: DEBUG               # LLM routing, quality gating, streaming, tool call synthesis
     # tools: DEBUG             # Tool registry, pruning, execution, result parsing
-    # router: DEBUG            # Conversation router priority chain, readback, task planner
+    router: DEBUG            # Conversation router priority chain, readback, task planner
     # skills: DEBUG            # Skill loading, intent matching, semantic matching
     # memory: DEBUG            # Memory manager, interaction cache, proactive surfacing
     # audio: DEBUG             # Continuous listener, VAD, wake word, speaker ID

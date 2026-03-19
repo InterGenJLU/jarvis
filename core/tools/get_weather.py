@@ -64,7 +64,8 @@ SYSTEM_PROMPT_RULE = (
     "NOT for: climate change discussion, historical weather data, weather in fiction."
 )
 
-logger = logging.getLogger("jarvis.tools.get_weather")
+from core.logger import get_logger
+logger = get_logger("jarvis.tools.get_weather")
 
 
 # ---------------------------------------------------------------------------

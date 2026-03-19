@@ -85,13 +85,13 @@ class JarvisContinuous:
         
         # Initialize components
         self.logger.info("Initializing Jarvis components...")
-        
+
         self.tts = TextToSpeech(config)
         self.stt = SpeechToText(config)
         self.conversation = ConversationManager(config)
         self.responses = get_response_library()
         self.llm = LLMRouter(config)
-        
+
         # --- Desktop manager (GNOME integration) ---
         # Must init before skills so AppLauncherSkill can find the singleton
         self.desktop_manager = None
@@ -324,6 +324,13 @@ class JarvisContinuous:
                 webcam_mgr.start(), self._async_loop
             ).result(timeout=10)
             self.logger.info("Async event loop started for webcam manager")
+
+            # Start internal frame server so the web service can proxy frames
+            # instead of opening its own ffmpeg (avoids /dev/video0 contention)
+            from core.webcam_server import start_webcam_server
+            self._webcam_server_runner = _asyncio.run_coroutine_threadsafe(
+                start_webcam_server(webcam_mgr), self._async_loop
+            ).result(timeout=10)
 
             people_mgr = get_people_manager(config)
             tts_proxy = self.bg_tts if self.event_mode else self.tts

@@ -22,7 +22,8 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 
 from core.tool_registry import register_external_tool
 
-logger = logging.getLogger("jarvis.mcp_client")
+from core.logger import get_logger
+logger = get_logger("jarvis.mcp_client")
 
 
 class MCPBridge:

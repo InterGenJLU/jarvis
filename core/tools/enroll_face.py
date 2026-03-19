@@ -10,7 +10,8 @@ import asyncio
 import logging
 import time
 
-logger = logging.getLogger("jarvis.tools.enroll_face")
+from core.logger import get_logger
+logger = get_logger("jarvis.tools.enroll_face")
 
 TOOL_NAME = "enroll_face"
 ALWAYS_INCLUDED = False  # Voice path uses direct P2.56 handler; tool stays for web UI

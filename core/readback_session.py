@@ -14,7 +14,8 @@ import json
 import logging
 import re
 
-logger = logging.getLogger("jarvis.readback")
+from core.logger import get_logger
+logger = get_logger("jarvis.readback")
 
 
 # ---------------------------------------------------------------------------

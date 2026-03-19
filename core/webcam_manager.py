@@ -20,7 +20,8 @@ import os
 import time
 import uuid
 
-logger = logging.getLogger("jarvis.webcam")
+from core.logger import get_logger
+logger = get_logger("jarvis.webcam")
 
 # JPEG markers
 _SOI = b"\xff\xd8"

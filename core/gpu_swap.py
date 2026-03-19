@@ -14,7 +14,8 @@ import time
 
 import requests
 
-logger = logging.getLogger("jarvis.gpu_swap")
+from core.logger import get_logger
+logger = get_logger("jarvis.gpu_swap")
 
 # ---------------------------------------------------------------------------
 # Service definitions
