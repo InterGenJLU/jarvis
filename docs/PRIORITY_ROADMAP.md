@@ -158,6 +158,12 @@
 - **VRAM audit** — RX 7600 baselined (4,198 MB used, 3,832 MB free at peak). Kokoro GPU benchmarked and ruled out (CPU 4.7x faster)
 - **Routing test harness** — `tests/routing/test_routing.py` (87 tests, CAL-L0 + tool gate + latency)
 
+### Latency Optimization Phase 2+3 (Session 311, Mar 19) — COMPLETE
+- **Phase 2: Dual-model dispatch** — tool result synthesis routed to Qwen3.5-4B (port 8081) with transparent fallback to 35B. Internal generate() calls (topic extraction, summarization) also routed to 4B. Call chain accumulator tracks all LLM calls per pipeline run.
+- **Phase 3: Focused synthesis prompt** — 4B synthesis uses persona.system_prompt_brief() instead of full tool-calling system prompt. 56-60% synthesis TTFT reduction (10-11s → 4-5s).
+- **Observability** — V3 test suite captures dual-model data: llm_calls, llm_provider, llm_routing_model, routing_ttft_ms, synthesis_ttft_ms. Report includes Model Dispatch section. Console shows [4B synth] / [35B] tags.
+- **Validated** — run_038 (4/4 PASS, dual-model confirmed), run_039 (3/4 PASS 1 MIXED, 60% TTFT reduction confirmed)
+
 ### ROCm Stack Rebuild + 4B Model (Session 310, Mar 19) — COMPLETE
 - **PyTorch from source** — v2.10.0 built against ROCm 7.2.0, `PYTORCH_ROCM_ARCH="gfx1100;gfx1102"`, installed to venv
 - **llama.cpp rebuilt** — `-DGGML_HIP_ROCWMMA_FATTN=ON` for RDNA3 flash attention, dual GPU targets
