@@ -180,11 +180,14 @@ class TextToSpeech:
         self._ack_played = False
         self._build_ack_cache()
 
-        # CAL-L0 response cache — pre-generated audio for conversational
-        # fast-path responses. Maps resolved phrase text → raw PCM bytes.
-        # Primary honorifics generated at startup in background thread;
-        # other honorifics/names lazy-cached on first use.
-        self._cal_l0_cache: Dict[str, bytes] = {}
+        # CAL-L0 response cache — persistent on-disk cache with SQLite catalog.
+        # Loads from disk (~10ms) on startup. Only generates missing phrases.
+        from core.tts_cache import TTSCache
+        self._tts_cache = TTSCache(config)
+        loaded = self._tts_cache.load_all()
+
+        # Background thread generates any missing phrases (first startup
+        # or new honorific added). Subsequent startups load from disk instantly.
         self._cal_l0_generating = False
         import threading
         t = threading.Thread(
@@ -272,7 +275,7 @@ class TextToSpeech:
 
             # CAL-L0 cache: check for pre-generated audio before synthesizing.
             # Saves ~300ms per cached phrase. Cache key is the exact text.
-            cached_pcm = self._cal_l0_cache.get(text)
+            cached_pcm = self._tts_cache.get(text)
             if cached_pcm is not None:
                 try:
                     aplay = self._open_aplay()
@@ -513,59 +516,21 @@ class TextToSpeech:
     _CAL_L0_PRIMARY_HONORIFICS = ["sir", "ma'am"]
 
     def _build_cal_l0_cache(self):
-        """Pre-generate CAL-L0 response audio for primary honorifics.
+        """Generate any missing CAL-L0 response audio via TTSCache.
 
-        Runs in a background thread after startup. Generates all response
-        templates × primary honorifics. Other honorifics/names are
-        lazy-cached on first use via cache_cal_l0_phrase().
-
-        Includes throttle (sleep between phrases) to avoid starving the
-        audio callback thread and other real-time components.
+        Runs in a background thread after startup. On first ever startup,
+        generates all 308 phrases (~200s throttled). On subsequent startups,
+        load_all() already loaded from disk — this just fills gaps (new
+        honorific, new template). Typically completes in 0s.
         """
         self._cal_l0_generating = True
-        t0 = time.time()
-        count = 0
-        total_phrases = len(self._CAL_L0_TEMPLATES) * len(self._CAL_L0_PRIMARY_HONORIFICS)
-
-        self.logger.info(
-            "CAL-L0 cache generation starting: %d templates × %d honorifics = %d phrases",
-            len(self._CAL_L0_TEMPLATES), len(self._CAL_L0_PRIMARY_HONORIFICS), total_phrases,
+        generated = self._tts_cache.generate_missing(
+            templates=self._CAL_L0_TEMPLATES,
+            honorifics=self._CAL_L0_PRIMARY_HONORIFICS,
+            synthesize_fn=self._synthesize_to_pcm,
+            version="1",
+            throttle_sleep=0.05,
         )
-
-        for honorific in self._CAL_L0_PRIMARY_HONORIFICS:
-            for template in self._CAL_L0_TEMPLATES:
-                phrase = template.replace("{honorific}", honorific)
-                pcm = self._synthesize_to_pcm(phrase)
-                if pcm:
-                    self._cal_l0_cache[phrase] = pcm
-                    count += 1
-
-                # Timeline log every 25 phrases
-                if count % 25 == 0:
-                    elapsed = time.time() - t0
-                    self.logger.info(
-                        "CAL-L0 cache progress: %d/%d phrases (%.1fs elapsed, honorific='%s')",
-                        count, total_phrases, elapsed, honorific,
-                    )
-
-                # Throttle: yield CPU to audio callback and other threads
-                time.sleep(0.05)
-
-            self.logger.info(
-                "CAL-L0 cache: '%s' done (%d phrases, %.1fs elapsed)",
-                honorific, count, time.time() - t0,
-            )
-
-        # Also cache phrases without honorific (no placeholder in template)
-        for template in self._CAL_L0_TEMPLATES:
-            if "{honorific}" not in template and template not in self._cal_l0_cache:
-                pcm = self._synthesize_to_pcm(template)
-                if pcm:
-                    self._cal_l0_cache[template] = pcm
-                    count += 1
-                time.sleep(0.05)
-
-        elapsed = time.time() - t0
         self._cal_l0_generating = False
         self.logger.info(
             "CAL-L0 cache complete: %d phrases in %.1fs", count, elapsed,
@@ -588,14 +553,14 @@ class TextToSpeech:
 
     def cache_cal_l0_phrase(self, text: str, pcm: bytes):
         """Lazy-cache a CAL-L0 phrase after first synthesis (for non-primary honorifics)."""
-        self._cal_l0_cache[text] = pcm
+        self._tts_cache.put(text, pcm, template="", honorific="", mood="neutral")
 
     def speak_cached(self, text: str) -> bool:
         """Play a pre-cached CAL-L0 response. Returns False if not cached.
 
         Caller should fall back to speak() if this returns False.
         """
-        pcm = self._cal_l0_cache.get(text)
+        pcm = self._tts_cache.get(text)
         if pcm is None:
             return False
 
