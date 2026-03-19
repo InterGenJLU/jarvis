@@ -1828,6 +1828,19 @@ class LLMRouter:
         _endpoint = self.small_endpoint if _use_small else self.local_endpoint
         _model_label = "Qwen3.5-4B" if _use_small else model_name
 
+        # Focused prompt for 4B: replace the bloated tool-calling system prompt
+        # with persona brief. The synthesis instructions (domain rules, honorific,
+        # grounding) are already in the final user message — the 4B doesn't need
+        # tool-selection rules, web search guidelines, or tool schemas in the
+        # system prompt. This cuts ~1,000 tokens of prefill.
+        if _use_small and messages and messages[0].get("role") == "system":
+            from core import persona
+            _original_sys_len = len(messages[0].get("content", ""))
+            messages[0] = {"role": "system", "content": persona.system_prompt_brief()}
+            self.logger.debug(
+                "continue_after_tool_call: 4B focused prompt — system %d→%d chars",
+                _original_sys_len, len(messages[0]["content"]))
+
         _synth_temp = synthesis_temperature if synthesis_temperature is not None else (
             self.small_temperature if _use_small else self.temperature
         )
