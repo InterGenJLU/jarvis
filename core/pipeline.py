@@ -919,7 +919,9 @@ class Coordinator:
                 response = self._execute_task_plan()
             elif response and not self.tts._spoke:
                 # Speak response (unless handler already spoke via TTS proxy,
-                # e.g. deliver_rundown or a skill that calls tts.speak directly)
+                # e.g. deliver_rundown or a skill that calls tts.speak directly).
+                # CAL-L0 responses are auto-cached in tts.speak() — no special
+                # handling needed here.
                 self._speak_and_wait(response)
 
             # Conversation window side effects

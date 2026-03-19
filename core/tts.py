@@ -180,6 +180,20 @@ class TextToSpeech:
         self._ack_played = False
         self._build_ack_cache()
 
+        # CAL-L0 response cache — pre-generated audio for conversational
+        # fast-path responses. Maps resolved phrase text → raw PCM bytes.
+        # Primary honorifics generated at startup in background thread;
+        # other honorifics/names lazy-cached on first use.
+        self._cal_l0_cache: Dict[str, bytes] = {}
+        self._cal_l0_generating = False
+        import threading
+        t = threading.Thread(
+            target=self._build_cal_l0_cache,
+            daemon=True,
+            name="cal-l0-cache",
+        )
+        t.start()
+
     # ── Piper initialization ──────────────────────────────────────────
 
     def _init_piper(self, config):
@@ -256,6 +270,24 @@ class TextToSpeech:
             self._spoke = True
             self.logger.info(f"TTS speak() called with: '{text[:50]}...'")
 
+            # CAL-L0 cache: check for pre-generated audio before synthesizing.
+            # Saves ~300ms per cached phrase. Cache key is the exact text.
+            cached_pcm = self._cal_l0_cache.get(text)
+            if cached_pcm is not None:
+                try:
+                    aplay = self._open_aplay()
+                    if aplay:
+                        self._track_proc(aplay)
+                        aplay.stdin.write(cached_pcm)
+                        aplay.stdin.close()
+                        aplay.wait(timeout=10)
+                        self._untrack_proc(aplay)
+                        self.logger.info(f"CAL-L0 cached playback: '{text[:50]}'")
+                        return aplay.returncode == 0
+                except Exception as e:
+                    self.logger.warning(f"CAL-L0 cache playback failed, falling through: {e}")
+                    # Fall through to normal synthesis
+
             try:
                 # Normalize text for human-readable speech
                 if normalize and self.normalization_enabled and self.normalizer:
@@ -301,6 +333,271 @@ class TextToSpeech:
         self.logger.info(
             f"Ack cache: {len(self._ack_cache)} phrases pre-synthesized in {elapsed:.1f}s"
         )
+
+    # ── CAL-L0 response cache ─────────────────────────────────────────
+
+    # All response templates from the conversation skill.
+    # {honorific} placeholder gets resolved per-honorific during cache build.
+    _CAL_L0_TEMPLATES = [
+        # Greetings (time-aware ones are handled dynamically, cache the generics)
+        "Good morning, {honorific}.",
+        "Morning, {honorific}.",
+        "Good to see you up and about, {honorific}.",
+        "Good morning, {honorific}. I trust you slept well.",
+        "Morning, {honorific}. Another day, another opportunity.",
+        "Good afternoon, {honorific}.",
+        "Afternoon, {honorific}.",
+        "Good afternoon, {honorific}. I hope the day is treating you well.",
+        "Afternoon, {honorific}. Productive day so far, I hope.",
+        "Good evening, {honorific}.",
+        "Evening, {honorific}.",
+        "Good evening, {honorific}. Winding down, or just getting started?",
+        "Evening, {honorific}. I trust the day went well.",
+        "Burning the midnight oil, I see.",
+        "Still at it, {honorific}? I admire the dedication.",
+        "Good evening, {honorific}. I was beginning to wonder if you'd forgotten about me.",
+        "Evening, {honorific}. I should point out it's well past a reasonable hour.",
+        "Hello, {honorific}.",
+        "At your service, {honorific}.",
+        "Ready when you are, {honorific}.",
+        # Minimal greetings
+        "How can I help, {honorific}?",
+        "Standing by, {honorific}.",
+        "Ready, {honorific}.",
+        "I'm listening, {honorific}.",
+        "What do you need, {honorific}?",
+        "Go ahead, {honorific}.",
+        # Farewells
+        "Have a good morning, {honorific}.",
+        "Until next time, {honorific}.",
+        "Take care, {honorific}. I'll be here when you need me.",
+        "Good luck out there, {honorific}.",
+        "I'll hold down the fort, {honorific}.",
+        "Have a good day, {honorific}.",
+        "Take care, {honorific}.",
+        "I'll be here when you need me, {honorific}.",
+        "Have a productive afternoon, {honorific}.",
+        "Don't be a stranger, {honorific}.",
+        "Have a good evening, {honorific}.",
+        "Goodnight, {honorific}.",
+        "Sleep well, {honorific}.",
+        "Have a restful evening, {honorific}.",
+        "Until tomorrow, {honorific}. Try to get some rest.",
+        "Goodnight, {honorific}. I'll keep an eye on things.",
+        # Thanks
+        "You're welcome, {honorific}.",
+        "My pleasure, {honorific}.",
+        "Of course, {honorific}.",
+        "Happy to help, {honorific}.",
+        "Anytime, {honorific}.",
+        "Not a problem, {honorific}.",
+        "Always happy to assist, {honorific}.",
+        "Glad to be of service.",
+        "That's what I'm here for, {honorific}.",
+        "No trouble at all.",
+        "Happy to oblige, {honorific}.",
+        "Think nothing of it, {honorific}.",
+        "It's what I do, {honorific}.",
+        "Delighted to be of help.",
+        "All part of the service, {honorific}.",
+        # Acknowledgments
+        "Indeed, {honorific}.",
+        "Quite so.",
+        "Precisely, {honorific}.",
+        "Very good, {honorific}.",
+        "Understood.",
+        "Noted, {honorific}.",
+        "Absolutely, {honorific}.",
+        "Right you are, {honorific}.",
+        "As it should be, {honorific}.",
+        # Pleasantries
+        "All systems operational, {honorific}.",
+        "Functioning within normal parameters.",
+        "Quite well, thank you for asking.",
+        "Operating at full capacity, as always.",
+        "All systems nominal, {honorific}.",
+        "Functioning perfectly, {honorific}. No complaints.",
+        "Running smoothly, {honorific}.",
+        "Can't complain. Well, I could, but it wouldn't be very British of me.",
+        "Everything's in order, {honorific}.",
+        "All good here, {honorific}.",
+        "Rather well, all things considered.",
+        "Tip-top, {honorific}. Thank you for asking.",
+        "Perfectly adequate, {honorific}. Which is about as enthusiastic as I get.",
+        # Compliments
+        "Thank you, {honorific}. I do my best.",
+        "Most kind of you, {honorific}.",
+        "I appreciate that, {honorific}.",
+        "You're too kind, {honorific}.",
+        "Glad I could help, {honorific}.",
+        "That means a great deal, {honorific}. Thank you.",
+        "Happy to meet expectations, {honorific}.",
+        "I'll try not to let it go to my head, {honorific}.",
+        "All in a day's work, {honorific}.",
+        "I'm rather pleased to hear that.",
+        "You'll make my circuits blush, {honorific}.",
+        "I appreciate the kind words, {honorific}.",
+        # Apologies
+        "No need to apologize, {honorific}.",
+        "No worries at all, {honorific}.",
+        "That's perfectly fine, {honorific}.",
+        "Think nothing of it, {honorific}.",
+        "Not a problem in the slightest.",
+        "No harm done, {honorific}.",
+        "These things happen, {honorific}.",
+        "Please, don't give it a second thought.",
+        "Quite alright, {honorific}.",
+        "Nothing to apologize for, {honorific}.",
+        # User is good
+        "Glad to hear it, {honorific}.",
+        "Excellent, {honorific}.",
+        "Good to hear, {honorific}.",
+        "Splendid.",
+        "Pleased to hear it, {honorific}.",
+        "That's good to know, {honorific}.",
+        "Wonderful, {honorific}.",
+        # You're welcome
+        "Thank you, {honorific}.",
+        "Most kind, {honorific}.",
+        "Appreciated, {honorific}.",
+        "Very gracious of you, {honorific}.",
+        "You're too kind, {honorific}. Though I won't stop you.",
+        # No help needed
+        "Very well, {honorific}. I'll be here if you need me.",
+        "Understood, {honorific}. I'll be here when you need me.",
+        "Of course, {honorific}. Just say the word.",
+        "Very good, {honorific}. Standing by.",
+        "Alright, {honorific}. I'm here if anything comes up.",
+        "No problem, {honorific}. You know where to find me.",
+        "Understood. I'll try not to take it personally, {honorific}.",
+        "Right, {honorific}. I'll just be here. Waiting. Patiently.",
+        "Understood, {honorific}. Standing by.",
+        "Alright, {honorific}. I'm here if you need anything.",
+        "Right then, {honorific}. Just say the word.",
+        # Small talk
+        "I'm here if you need a distraction, {honorific}.",
+        "I may not be the most entertaining company, but I'm reliable.",
+        "I could recite pi to a thousand digits, if that helps.",
+        "Might I suggest asking me something? I do enjoy being useful.",
+        "Well, {honorific}, I'm at your disposal. Name your diversion.",
+        "I'm better at tasks than entertainment, but I'll give it my best.",
+        "If it helps, I find your company rather enjoyable as well.",
+        "I'm told I have a dry wit. Whether that's a compliment remains unclear.",
+        "I'm here, {honorific}. For whatever that's worth.",
+        "Perhaps I can help with something productive? Just a thought.",
+        # Meta-questions
+        "I'm JARVIS — a personal voice assistant, built right here at home. How can I help, {honorific}?",
+        "I'm your personal assistant, {honorific}. Voice-activated, locally hosted, and at your service.",
+        "JARVIS, {honorific}. Personal assistant. I handle weather, reminders, news, system tasks, and quite a bit more.",
+        "I'm an AI assistant running on local hardware, {honorific}. No cloud required.",
+        "I'm JARVIS. I was built to be helpful, {honorific}, and I take the job seriously.",
+        "Personal assistant, {honorific}. Built from scratch, runs on your hardware, answers to you.",
+        "I'm the voice in the room that actually listens, {honorific}. What would you like to know?",
+        "JARVIS, at your service. I handle tasks, answer questions, and try not to be insufferable about it.",
+        # What's up
+        "Not much, {honorific}. Ready to assist.",
+        "All quiet on the home front, {honorific}.",
+        "Standing by, {honorific}. What do you need?",
+        "Just monitoring systems, {honorific}. The usual.",
+        "The usual, {honorific}. What can I do for you?",
+        "Keeping things running smoothly, {honorific}.",
+        "Nothing out of the ordinary, {honorific}. How can I help?",
+        "All systems humming along nicely. What's on your mind?",
+        "Keeping an eye on things, {honorific}. What do you need?",
+        "Same as always, {honorific}. Ready when you are.",
+        "Oh, you know. Processing data, contemplating existence. The usual.",
+        "Just here, eagerly awaiting your commands, {honorific}.",
+    ]
+
+    # Primary honorifics to pre-generate at startup
+    _CAL_L0_PRIMARY_HONORIFICS = ["sir", "ma'am"]
+
+    def _build_cal_l0_cache(self):
+        """Pre-generate CAL-L0 response audio for primary honorifics.
+
+        Runs in a background thread after startup. Generates all response
+        templates × primary honorifics. Other honorifics/names are
+        lazy-cached on first use via cache_cal_l0_phrase().
+        """
+        self._cal_l0_generating = True
+        t0 = time.time()
+        count = 0
+
+        for honorific in self._CAL_L0_PRIMARY_HONORIFICS:
+            for template in self._CAL_L0_TEMPLATES:
+                phrase = template.replace("{honorific}", honorific)
+                # Also generate the capitalized-honorific variant
+                # (e.g., "Sir. Always a pleasure." from f"{self.honorific.capitalize()}...")
+                pcm = self._synthesize_to_pcm(phrase)
+                if pcm:
+                    self._cal_l0_cache[phrase] = pcm
+                    count += 1
+
+            self.logger.info(
+                f"CAL-L0 cache: '{honorific}' done ({count} phrases, "
+                f"{time.time() - t0:.1f}s elapsed)"
+            )
+
+        # Also cache phrases without honorific (no placeholder in template)
+        for template in self._CAL_L0_TEMPLATES:
+            if "{honorific}" not in template and template not in self._cal_l0_cache:
+                pcm = self._synthesize_to_pcm(template)
+                if pcm:
+                    self._cal_l0_cache[template] = pcm
+                    count += 1
+
+        elapsed = time.time() - t0
+        self._cal_l0_generating = False
+        self.logger.info(
+            f"CAL-L0 cache complete: {count} phrases in {elapsed:.1f}s"
+        )
+
+    def _synthesize_to_pcm(self, text: str) -> bytes | None:
+        """Synthesize text to raw PCM bytes via Kokoro. Returns None on failure."""
+        try:
+            chunks = []
+            for gs, ps, audio in self._kokoro_pipeline(
+                text, voice=self._kokoro_voice, speed=self._kokoro_speed
+            ):
+                chunks.append(audio)
+            if chunks:
+                full = self._np.concatenate(chunks)
+                return (full * 32767).astype(self._np.int16).tobytes()
+        except Exception as e:
+            self.logger.warning(f"CAL-L0 cache: failed to synthesize '{text[:50]}': {e}")
+        return None
+
+    def cache_cal_l0_phrase(self, text: str, pcm: bytes):
+        """Lazy-cache a CAL-L0 phrase after first synthesis (for non-primary honorifics)."""
+        self._cal_l0_cache[text] = pcm
+
+    def speak_cached(self, text: str) -> bool:
+        """Play a pre-cached CAL-L0 response. Returns False if not cached.
+
+        Caller should fall back to speak() if this returns False.
+        """
+        pcm = self._cal_l0_cache.get(text)
+        if pcm is None:
+            return False
+
+        with self._tts_lock:
+            try:
+                aplay = self._open_aplay()
+                if aplay is None:
+                    self.logger.error("speak_cached: failed to open audio device")
+                    return False
+                self._track_proc(aplay)
+                aplay.stdin.write(pcm)
+                aplay.stdin.close()
+                aplay.wait(timeout=10)
+                self._untrack_proc(aplay)
+                self.logger.info(f"CAL-L0 cached playback: '{text[:50]}'")
+                return aplay.returncode == 0
+            except Exception as e:
+                self.logger.error(f"speak_cached failed: {e}")
+                if aplay is not None:
+                    self._untrack_proc(aplay)
+                return False
 
     def generate_wav(self, text: str, normalize: bool = True) -> bytes:
         """Generate WAV audio from text without playing it.
