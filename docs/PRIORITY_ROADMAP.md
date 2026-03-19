@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 18, 2026 (session 309 — Component Upgrade Wave + Face Enrollment Voice Flow complete, presence detection live, CAL + latency optimization plans drafted)
+**Updated:** March 19, 2026 (session 310 — Latency Phase 1 complete, CAL-L0 live, webcam contention fix, VRAM audit, logging fix)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -92,6 +92,17 @@
 
 ---
 
+## Housekeeping / Tech Debt
+
+| # | Item | Effort | Notes |
+|---|------|--------|-------|
+| H1 | **Test directory consolidation** — migrate 24 `scripts/test_*.py` files into `tests/` subdirectories | 2-3 hours | Owner directive: "tests need to go in tests." New tests already use `tests/routing/`. Migrate incrementally when touching existing scripts. |
+| H2 | **Ack cache rework** — the 9 filler phrases are jarring/disconnected from query context | 3-4 hours | Need context-aware ack selection + programmatic way to audition phrases. Build harness for query→ack→response playback evaluation. |
+| H3 | **Startup greeting timing** — presence detector fires greeting before TTS pipeline worker is ready | 1-2 hours | 21-second delay between trigger and playback. Greeting should wait for pipeline workers to start. |
+| H4 | **Disable router DEBUG logging** — `config.yaml` has `router: DEBUG` enabled for development | 5 min | Comment out when done tuning routing. Currently useful, disable before "production" use. |
+
+---
+
 ## Active Bugs / Loose Ends
 
 | # | Item | Severity | Notes |
@@ -136,6 +147,16 @@
 - 20P7b: Vision Phase 7b — mobile camera capture, MobileCameraRelay WS protocol, auto-routing (Mar 6)
 - 20P7c: Vision Phase 7c — presence detection + face recognition greetings, PresenceDetector, enroll_face tool, 180 tests (Mar 6). **LIVE** — face enrolled, presence detection active (Mar 18)
 - Face Enrollment Voice Flow — P2.56 direct handler, multi-turn with pose instructions + shutter sound, "I'm ready" prompt (Mar 18)
+
+### Latency Optimization Phase 1 (Session 310, Mar 18-19) — COMPLETE
+- **Phase 1a:** Tool gate — binary classifier (324 training queries) + keyword override. Skips ~1,500 tool schema tokens on non-tool queries. 55% TTFT reduction (3,800ms → 1,650ms)
+- **Phase 1b:** CAL-L0 reflexive layer — 13 categories, ~200 patterns from ISO/SWBD/CLINC/Dialogflow/Rasa research. P2.9 routing checkpoint with compound utterance guard. 87/87 tests. ~12ms routing
+- **Phase 1c:** TTS audio cache — 308 pre-generated response phrases (sir + mum variants). Zero TTS latency on cache hit
+- **Phase 1d:** KV cache reuse — `--cache-reuse 256` on llama-server. 40-60% TTFT reduction on follow-up turns
+- **Webcam contention fix** — voice service frame server (localhost:8089), web service proxies instead of opening own ffmpeg
+- **Logging infrastructure fix** — 18 files migrated to get_logger(), _ensure_handlers() added to Logger class
+- **VRAM audit** — RX 7600 baselined (4,198 MB used, 3,832 MB free at peak). Kokoro GPU benchmarked and ruled out (CPU 4.7x faster)
+- **Routing test harness** — `tests/routing/test_routing.py` (87 tests, CAL-L0 + tool gate + latency)
 
 ### Tier 0 (Quick Wins)
 - Rotate OpenWeather API key (Feb 19)
