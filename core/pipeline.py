@@ -557,6 +557,8 @@ class Coordinator:
         self.accumulator = get_awareness_accumulator(
             config=config,
             calendar_manager=calendar_manager,
+            reminder_manager=reminder_manager,
+            news_manager=news_manager,
         )
 
         self.running = True

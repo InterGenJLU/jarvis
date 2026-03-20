@@ -282,6 +282,202 @@ def adapt_weather(weather_db=None, user_id: str = "primary_user") -> list[Awaren
 
 
 # ---------------------------------------------------------------------------
+# Reminder adapter
+# ---------------------------------------------------------------------------
+
+def adapt_reminders(reminder_manager, user_id: str = "primary_user") -> list[AwarenessItem]:
+    """Convert pending/upcoming reminders to AwarenessItems.
+
+    Surfaces two types:
+      - Fired but unacknowledged reminders (needs attention)
+      - Upcoming reminders due within 2 hours
+
+    Args:
+        reminder_manager: ReminderManager instance
+        user_id: Owner scope
+
+    Returns:
+        List of scored AwarenessItems
+    """
+    if not reminder_manager:
+        return []
+
+    items = []
+    now = time.time()
+
+    # Pending acks — fired but not acknowledged
+    try:
+        pending = reminder_manager.get_pending_acks(created_by=user_id)
+    except Exception:
+        pending = []
+
+    for rem in pending:
+        title = rem.get("title", "")
+        if not title:
+            continue
+
+        fired_at = rem.get("last_fired_at", "")
+        summary = f"Reminder: {title} (awaiting acknowledgment)"
+
+        dedupe = f"rem:ack:{rem.get('id', '')}"
+        expires = now + 86400  # 24h — staleness guard handles cancellation
+
+        score = _compute_score(
+            urgency=0.7,
+            time_pressure=0.6,
+            novelty=1.0,
+            user_relevance=1.0,
+        )
+
+        items.append(AwarenessItem(
+            id=f"rem_{rem.get('id', 0)}",
+            source="reminder",
+            priority_score=score,
+            user_scope={user_id},
+            payload=rem,
+            summary=summary,
+            created_at=now,
+            expires_at=expires,
+            dedupe_key=dedupe,
+            tags=["reminder", "pending_ack"],
+        ))
+
+    # Upcoming reminders — due within 2 hours
+    try:
+        upcoming = reminder_manager.list_reminders(status="pending", limit=10,
+                                                    created_by=user_id)
+    except Exception:
+        upcoming = []
+
+    for rem in upcoming:
+        title = rem.get("title", "")
+        reminder_time_str = rem.get("reminder_time", "")
+        if not title or not reminder_time_str:
+            continue
+
+        try:
+            reminder_dt = datetime.strptime(reminder_time_str, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            continue
+
+        minutes_until = max(0, (reminder_dt - datetime.now()).total_seconds() / 60)
+
+        # Only surface reminders within 2h lookahead
+        if minutes_until > 120:
+            continue
+
+        # Build natural time reference
+        if minutes_until <= 5:
+            time_label = "now"
+        elif minutes_until < 60:
+            time_label = f"in {int(minutes_until)} minutes"
+        else:
+            hours = int(minutes_until) // 60
+            mins = int(minutes_until) % 60
+            time_label = f"in {hours}h{mins}m" if mins else f"in {hours} hour{'s' if hours > 1 else ''}"
+
+        summary = f"Reminder: {title} {time_label}"
+        dedupe = f"rem:upcoming:{rem.get('id', '')}"
+        expires = reminder_dt.timestamp()
+
+        urgency = 0.8 if minutes_until <= 30 else 0.5
+        tp = _time_pressure(minutes_until)
+
+        score = _compute_score(
+            urgency=urgency,
+            time_pressure=tp,
+            novelty=1.0,
+            user_relevance=1.0,
+        )
+
+        items.append(AwarenessItem(
+            id=f"rem_{rem.get('id', 0)}",
+            source="reminder",
+            priority_score=score,
+            user_scope={user_id},
+            payload=rem,
+            summary=summary,
+            created_at=now,
+            expires_at=expires,
+            dedupe_key=dedupe,
+            tags=["reminder", "upcoming"],
+        ))
+
+    return items
+
+
+# ---------------------------------------------------------------------------
+# News adapter
+# ---------------------------------------------------------------------------
+
+# News priority → urgency mapping (priority 1=critical, 2=high, 3=medium, 4=low)
+_NEWS_URGENCY = {1: 0.85, 2: 0.5}
+
+
+def adapt_news(news_manager, user_id: str = "primary_user") -> list[AwarenessItem]:
+    """Convert critical/high priority unread news to AwarenessItems.
+
+    Only surfaces priority 1 (critical) and 2 (high) headlines.
+    Lower priority news is not time-sensitive enough for briefings.
+
+    Args:
+        news_manager: NewsManager instance
+        user_id: Owner scope
+
+    Returns:
+        List of scored AwarenessItems
+    """
+    if not news_manager:
+        return []
+
+    try:
+        headlines = news_manager.get_unread_by_category(
+            max_priority=2, limit=5, user_id=user_id,
+        )
+    except Exception:
+        return []
+
+    items = []
+    now = time.time()
+
+    for headline in headlines:
+        title = headline.get("headline", "")
+        priority = headline.get("priority", 4)
+        category = headline.get("category", "")
+        source = headline.get("source", "")
+
+        if not title:
+            continue
+
+        summary = title
+        dedupe = f"news:{headline.get('id', '')}:{title[:50]}"
+        expires = now + 86400  # 24h — news is ephemeral
+
+        urgency = _NEWS_URGENCY.get(priority, 0.3)
+        score = _compute_score(
+            urgency=urgency,
+            time_pressure=0.3,  # News isn't time-pressured like meetings
+            novelty=1.0,
+            user_relevance=0.7,  # Subscribed content, not user-specific
+        )
+
+        items.append(AwarenessItem(
+            id=f"news_{headline.get('id', 0)}",
+            source="news",
+            priority_score=score,
+            user_scope={user_id},
+            payload=headline,
+            summary=summary,
+            created_at=now,
+            expires_at=expires,
+            dedupe_key=dedupe,
+            tags=["news", category],
+        ))
+
+    return items
+
+
+# ---------------------------------------------------------------------------
 # Delivery Log — SQLite dedup
 # ---------------------------------------------------------------------------
 
@@ -511,11 +707,14 @@ class AwarenessAccumulator:
     and normalize into AwarenessItems with deterministic scoring.
     """
 
-    def __init__(self, config, calendar_manager=None, weather_db=None):
+    def __init__(self, config, calendar_manager=None, weather_db=None,
+                 reminder_manager=None, news_manager=None):
         self.logger = get_logger("awareness", config)
         self._config = config
         self._calendar_manager = calendar_manager
         self._weather_db = weather_db
+        self._reminder_manager = reminder_manager
+        self._news_manager = news_manager
 
         # Delivery log for dedup
         data_dir = config.get("system.storage_path", "/mnt/storage/jarvis")
@@ -551,6 +750,20 @@ class AwarenessAccumulator:
             except Exception as e:
                 self.logger.warning("Weather adapter failed: %s", e)
 
+            # Reminder adapter
+            try:
+                rem_items = adapt_reminders(self._reminder_manager, user_id)
+                items.extend(rem_items)
+            except Exception as e:
+                self.logger.warning("Reminder adapter failed: %s", e)
+
+            # News adapter
+            try:
+                news_items = adapt_news(self._news_manager, user_id)
+                items.extend(news_items)
+            except Exception as e:
+                self.logger.warning("News adapter failed: %s", e)
+
             # Apply novelty scoring from delivery log
             for item in items:
                 if self._delivery_log.was_surfaced(user_id, item.dedupe_key):
@@ -573,10 +786,12 @@ class AwarenessAccumulator:
             self._last_refresh = now
 
             self.logger.info(
-                "Awareness refresh: %d items (cal=%d, wx=%d)",
+                "Awareness refresh: %d items (cal=%d, wx=%d, rem=%d, news=%d)",
                 len(items),
                 sum(1 for i in items if i.source == "calendar"),
                 sum(1 for i in items if i.source == "weather"),
+                sum(1 for i in items if i.source == "reminder"),
+                sum(1 for i in items if i.source == "news"),
             )
 
             return len(items)
@@ -628,7 +843,8 @@ _instance: Optional[AwarenessAccumulator] = None
 
 
 def get_awareness_accumulator(config=None, calendar_manager=None,
-                               weather_db=None) -> Optional[AwarenessAccumulator]:
+                               weather_db=None, reminder_manager=None,
+                               news_manager=None) -> Optional[AwarenessAccumulator]:
     """Get or create the singleton AwarenessAccumulator."""
     global _instance
     if _instance is None and config is not None:
@@ -636,5 +852,7 @@ def get_awareness_accumulator(config=None, calendar_manager=None,
             config=config,
             calendar_manager=calendar_manager,
             weather_db=weather_db,
+            reminder_manager=reminder_manager,
+            news_manager=news_manager,
         )
     return _instance
