@@ -88,6 +88,7 @@ class PresenceDetector:
         # State tracking
         self._person_states: dict[str, PersonPresence] = {}
         self._face_cache: dict[str, np.ndarray] = {}  # person_id -> 512-dim encoding
+        self._face_user_map: dict[str, str] = {}      # person_id -> user_id (for identity propagation)
 
         # InsightFace app (lazy-loaded)
         self._face_app = None
@@ -408,6 +409,12 @@ class PresenceDetector:
         """Speak a presence greeting. Follows reminder_manager._fire_reminder() pattern."""
         from core.persona import presence_greeting, _time_of_day
 
+        # Propagate face identity to conversation (so voice pipeline inherits it)
+        user_id = self._face_user_map.get(person_id, "")
+        if user_id and self.conversation:
+            self.conversation.current_user = user_id
+            self.logger.info(f"Face ID → current_user={user_id}")
+
         # Restore owner honorific for greeting
         set_honorific("sir")
 
@@ -562,6 +569,7 @@ class PresenceDetector:
                     try:
                         encoding = np.load(path)
                         self._face_cache[person["person_id"]] = encoding
+                        self._face_user_map[person["person_id"]] = person.get("user_id", "")
                         loaded += 1
                     except Exception as e:
                         self.logger.warning(
