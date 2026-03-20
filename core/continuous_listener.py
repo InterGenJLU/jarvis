@@ -9,6 +9,7 @@ import os
 import re
 import sounddevice as sd
 import numpy as np
+from scipy.signal import resample_poly
 import threading
 import time
 from typing import Optional, Callable
@@ -317,13 +318,18 @@ class ContinuousListener:
             self.collecting_speech = False
             self.speech_buffer = []
 
-        # Batch resample device-rate audio → VAD rate (single np.interp on full buffer).
+        # Batch resample device-rate audio → VAD rate using bandlimited resampling.
+        # CRITICAL: must use resample_poly (same as enrollment path in speaker_id.py)
+        # to produce spectrally identical audio. np.interp (linear interpolation)
+        # causes spectral differences that destroy speaker ID scores.
         # RATE CONTRACT: pre_buffer is at self.sample_rate (from VAD ring buffer).
         # speech_audio must be resampled to match before concatenation.
         if self.device_sample_rate and self.device_sample_rate != self.sample_rate:
-            num_samples = int(len(speech_audio_raw) * self.sample_rate / self.device_sample_rate)
-            indices = np.linspace(0, len(speech_audio_raw) - 1, num_samples)
-            speech_audio = np.interp(indices, np.arange(len(speech_audio_raw)), speech_audio_raw).astype(np.float32)
+            from math import gcd
+            _up = self.sample_rate
+            _down = self.device_sample_rate
+            _g = gcd(_up, _down)
+            speech_audio = resample_poly(speech_audio_raw, _up // _g, _down // _g).astype(np.float32)
         else:
             speech_audio = speech_audio_raw
 
