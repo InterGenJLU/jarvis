@@ -67,6 +67,9 @@ class ConversationState:
     conversation_topic: str = ""                    # LLM-generated topic anchor (set after turn 1)
     exchange_summaries: list = field(default_factory=list)  # [{"turn": N, "summary": "..."}, ...]
 
+    # --- Window source (CAL integration) ---
+    window_source: str = ""              # Why the window is open: "presence_greeting", "briefing", ""
+
     # --- Timing ---
     last_interaction_time: float = 0.0   # time.time() of last command
     window_opened_at: float = 0.0        # When the conversation window opened
@@ -122,6 +125,7 @@ class ConversationState:
         self.readback_session = None
         self.conversation_topic = ""
         self.exchange_summaries = []
+        self.window_source = ""
 
     def set_research_context(self, results: list, exchange: dict):
         """Store research results for follow-up queries."""

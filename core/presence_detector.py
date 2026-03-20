@@ -96,6 +96,7 @@ class PresenceDetector:
         self._pause_listener_callback: Optional[Callable] = None
         self._resume_listener_callback: Optional[Callable] = None
         self._window_callback: Optional[Callable] = None
+        self._conv_state = None  # ConversationState (set post-init for window_source tagging)
 
         # Thread control
         self._running = False
@@ -159,6 +160,10 @@ class PresenceDetector:
     def set_window_callback(self, callback: Callable):
         """Set callback for opening a conversation window after greeting."""
         self._window_callback = callback
+
+    def set_conv_state(self, conv_state):
+        """Set conversation state for window_source tagging (CAL integration)."""
+        self._conv_state = conv_state
 
     # ------------------------------------------------------------------
     # Detection loop
@@ -433,6 +438,10 @@ class PresenceDetector:
 
         if self._resume_listener_callback:
             self._resume_listener_callback()
+
+        # Tag the conversation window as presence-triggered (CAL integration)
+        if self._conv_state:
+            self._conv_state.window_source = "presence_greeting"
 
         # Open a conversation window so user can respond
         if self._window_callback:

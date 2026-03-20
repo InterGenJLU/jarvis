@@ -851,16 +851,25 @@ class ConversationRouter:
             )
             return None
 
-        # CAL-L3 deference: if a presence greeting window is active,
-        # skip greeting handlers — L3 (Composer) will handle them.
+        # CAL deference: if a presence greeting window is active and the
+        # user responds with a greeting, absorb it silently. The presence
+        # detector already greeted them — no double-greeting needed.
+        # Later: CAL-L3 (Briefing Composer) will deliver proactive info here.
         handler_name = best_handler.__name__ if best_handler else ""
         if handler_name == "greeting":
             window_source = getattr(self.conv_state, 'window_source', None)
             if window_source == "presence_greeting":
                 logger.info(
-                    "CAL-L0: deferring greeting to CAL-L3 (presence window active)"
+                    "CAL-L0: absorbing greeting response (presence window active)"
                 )
-                return None
+                # Clear window_source so subsequent turns route normally
+                self.conv_state.window_source = ""
+                return RouteResult(
+                    text="",  # Silent — no response needed
+                    source="cal_l0",
+                    intent="cal_l0:presence_greeting_ack",
+                    handled=True,
+                )
 
         # Fire the handler
         try:

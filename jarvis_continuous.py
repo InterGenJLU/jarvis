@@ -404,6 +404,10 @@ class JarvisContinuous:
                 desktop_manager=self.desktop_manager,
                 metrics=self.metrics,
             )
+            # Wire presence detector to Coordinator's conv_state (CAL integration)
+            if hasattr(self, 'presence_detector') and self.presence_detector:
+                self.presence_detector.set_conv_state(self.coordinator.conv_state)
+
             self.logger.info("Event pipeline mode enabled")
 
         # Beep
