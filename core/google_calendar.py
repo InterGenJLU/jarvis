@@ -484,33 +484,59 @@ class GoogleCalendarManager:
             end_dt = now_dt + timedelta(hours=hours)
 
             tz = self._tz_offset()
-            events_result = self.service.events().list(
-                calendarId="primary",
-                timeMin=now_dt.strftime("%Y-%m-%dT%H:%M:%S") + tz,
-                timeMax=end_dt.strftime("%Y-%m-%dT%H:%M:%S") + tz,
-                singleEvents=True,
-                orderBy="startTime",
-                maxResults=10,
-            ).execute()
 
+            # Query both primary and JARVIS calendars
+            calendar_ids = ["primary"]
+            if self._jarvis_calendar_id:
+                calendar_ids.append(self._jarvis_calendar_id)
+
+            seen_ids = set()  # Dedup across calendars
             results = []
-            for event in events_result.get("items", []):
-                parsed = self._parse_google_event(event)
-                if parsed:
-                    delta = parsed["start_time"] - now_dt
-                    minutes_until = max(0, int(delta.total_seconds() / 60))
-                    # Extract attendees if available
-                    attendees = [
-                        a.get("displayName") or a.get("email", "")
-                        for a in event.get("attendees", [])
-                        if not a.get("self")
-                    ]
-                    results.append({
-                        "title": parsed["title"],
-                        "start_time": parsed["start_time"],
-                        "minutes_until": minutes_until,
-                        "attendees": attendees,
-                    })
+
+            for cal_id in calendar_ids:
+                try:
+                    events_result = self.service.events().list(
+                        calendarId=cal_id,
+                        timeMin=now_dt.strftime("%Y-%m-%dT%H:%M:%S") + tz,
+                        timeMax=end_dt.strftime("%Y-%m-%dT%H:%M:%S") + tz,
+                        singleEvents=True,
+                        orderBy="startTime",
+                        maxResults=10,
+                    ).execute()
+                except Exception as e:
+                    self.logger.warning(f"Calendar query failed for {cal_id}: {e}")
+                    continue
+
+                for event in events_result.get("items", []):
+                    eid = event.get("id", "")
+                    if eid in seen_ids:
+                        continue
+                    seen_ids.add(eid)
+
+                    parsed = self._parse_google_event(event)
+                    if parsed:
+                        # Detect all-day events (Google uses "date" not "dateTime")
+                        start_raw = event.get("start", {})
+                        is_all_day = "date" in start_raw and "dateTime" not in start_raw
+
+                        delta = parsed["start_time"] - now_dt
+                        minutes_until = max(0, int(delta.total_seconds() / 60))
+                        # Extract attendees if available
+                        attendees = [
+                            a.get("displayName") or a.get("email", "")
+                            for a in event.get("attendees", [])
+                            if not a.get("self")
+                        ]
+                        results.append({
+                            "title": parsed["title"],
+                            "start_time": parsed["start_time"],
+                            "minutes_until": minutes_until,
+                            "attendees": attendees,
+                            "all_day": is_all_day,
+                        })
+
+            # Sort merged results by start time
+            results.sort(key=lambda e: e["start_time"])
 
             setattr(self, cache_key, results)
             setattr(self, cache_ts_key, now)

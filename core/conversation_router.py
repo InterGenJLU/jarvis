@@ -146,7 +146,8 @@ class ConversationRouter:
                  self_awareness=None,
                  task_planner=None,
                  people_manager=None,
-                 awareness=None):
+                 awareness=None,
+                 accumulator=None):
         self.skill_manager = skill_manager
         self.conversation = conversation
         self.llm = llm
@@ -161,6 +162,7 @@ class ConversationRouter:
         self.task_planner = task_planner
         self.people_manager = people_manager
         self.awareness = awareness
+        self.accumulator = accumulator
         self._target_history = None  # Set per-request by jarvis_web.py
 
     @property
@@ -851,23 +853,50 @@ class ConversationRouter:
             )
             return None
 
-        # CAL deference: if a presence greeting window is active and the
-        # user responds with a greeting, absorb it silently. The presence
-        # detector already greeted them — no double-greeting needed.
-        # Later: CAL-L3 (Briefing Composer) will deliver proactive info here.
+        # CAL: if a presence greeting window is active and the user responds
+        # with a greeting, query the Accumulator for awareness items. If items
+        # exist, compose a briefing via the 4B model. If not, absorb silently.
         handler_name = best_handler.__name__ if best_handler else ""
         if handler_name == "greeting":
             window_source = getattr(self.conv_state, 'window_source', None)
             if window_source == "presence_greeting":
-                logger.info(
-                    "CAL-L0: absorbing greeting response (presence window active)"
-                )
                 # Clear window_source so subsequent turns route normally
                 self.conv_state.window_source = ""
+
+                # Query Accumulator for awareness items
+                briefing_text = ""
+                if self.accumulator:
+                    from core.awareness_accumulator import compose_briefing
+                    from core.honorific import get_honorific
+                    items = self.accumulator.get_top(
+                        n=3, threshold=0.3, user_id=self._user_id,
+                    )
+                    if items:
+                        # Resolve display name from current user identity
+                        _user_id = self._user_id
+                        _display_name = _user_id.capitalize() if _user_id else ""
+
+                        briefing_text = compose_briefing(
+                            items, self.llm,
+                            honorific=get_honorific(),
+                            user_name=_display_name,
+                            moment_type="greeting",
+                        )
+                        self.accumulator.mark_surfaced(items, self._user_id)
+                        logger.info(
+                            "CAL briefing: %d items → '%s'",
+                            len(items), briefing_text[:80],
+                        )
+
+                if not briefing_text:
+                    logger.info(
+                        "CAL-L0: absorbing greeting response (no items to surface)"
+                    )
+
                 return RouteResult(
-                    text="",  # Silent — no response needed
+                    text=briefing_text,  # Empty = silence, non-empty = briefing
                     source="cal_l0",
-                    intent="cal_l0:presence_greeting_ack",
+                    intent="cal_l0:presence_briefing" if briefing_text else "cal_l0:presence_greeting_ack",
                     handled=True,
                 )
 

@@ -113,35 +113,58 @@ def adapt_calendar(calendar_manager, user_id: str = "primary_user") -> list[Awar
         minutes_until = event.get("minutes_until", 0)
         start_time = event.get("start_time")
         attendees = event.get("attendees", [])
+        is_all_day = event.get("all_day", False)
 
         if not title:
             continue
 
         # Build summary
-        if minutes_until <= 5:
+        if is_all_day:
+            # Pre-naturalize all-day event summaries so the 4B has less to interpret
+            title_lower = title.lower()
+            if "birthday" in title_lower:
+                summary = f"Today is {title}"
+            elif "paycheck" in title_lower or "payday" in title_lower or "pay day" in title_lower:
+                summary = "Paycheck day today"
+            elif "holiday" in title_lower or "day off" in title_lower:
+                summary = f"{title} today"
+            elif "anniversary" in title_lower:
+                summary = f"Today is {title}"
+            else:
+                summary = f"{title} today"
+        elif minutes_until <= 5:
             time_label = "now"
+            summary = f"{title} {time_label}"
         elif minutes_until < 60:
             time_label = f"in {minutes_until} minutes"
+            summary = f"{title} {time_label}"
         else:
             hours = minutes_until // 60
             mins = minutes_until % 60
             time_label = f"in {hours}h{mins}m" if mins else f"in {hours} hour{'s' if hours > 1 else ''}"
+            summary = f"{title} {time_label}"
 
-        summary = f"{title} {time_label}"
         if attendees:
             summary += f" (with {', '.join(attendees[:3])})"
 
         # Dedupe key: same event on same day
         dedupe = f"cal:{title}:{start_time.strftime('%Y-%m-%d') if start_time else ''}"
 
-        # Expiry: event start time (no point surfacing after it starts)
-        expires = start_time.timestamp() if start_time else now + 3600
+        # Expiry: event start time for timed events, end of day for all-day
+        if is_all_day:
+            expires = start_time.replace(hour=23, minute=59).timestamp() if start_time else now + 86400
+        else:
+            expires = start_time.timestamp() if start_time else now + 3600
 
         # Score components
-        tp = _time_pressure(minutes_until)
-        urgency = 0.6  # Calendar events are moderately urgent by default
-        if minutes_until <= 15:
-            urgency = 0.9  # Imminent meetings are high urgency
+        if is_all_day:
+            tp = 0.3  # All-day events have moderate time pressure (not imminent)
+            urgency = 0.4  # Lower urgency than timed meetings
+        else:
+            tp = _time_pressure(minutes_until)
+            urgency = 0.6  # Calendar events are moderately urgent by default
+            if minutes_until <= 15:
+                urgency = 0.9  # Imminent meetings are high urgency
 
         score = _compute_score(
             urgency=urgency,
@@ -338,6 +361,143 @@ class DeliveryLog:
                 conn.commit()
             finally:
                 conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Briefing Composer (CAL Component 3) — LLM-powered, on demand
+# ---------------------------------------------------------------------------
+
+# CAUTION: Qwen treats prompt examples as potential output content.
+# Any specific word in an example (names, objects, actions) WILL leak
+# into generation. Use generic placeholders unless the specific value
+# IS the expected output. See feedback_qwen_prompt_leakage.md.
+
+# Single-item prompt — tight, focused, no room for interpretation
+_BRIEFING_PROMPT_SINGLE = """\
+You are JARVIS delivering a brief spoken update to {honorific}.
+The user's name is {user_name}. ONLY replace "{user_name}'s" with "your". \
+Other people's names must remain unchanged.
+
+Item: {items_block}
+
+Rules:
+- State this ONE item in a single natural sentence. Maximum 12 words.
+- Do NOT add any other information, context, or commentary.
+- Do NOT invent times, schedules, or actions.
+
+Examples:
+- "Your open meeting starts in two hours, {honorific}."
+- "Malikai's birthday is today, {honorific}."
+- "Freeze warning until nine tomorrow, {honorific}."
+"""
+
+# Multi-item prompt — gives the 4B room to weave and connect
+_BRIEFING_PROMPT_MULTI = """\
+You are JARVIS delivering a brief spoken update to {honorific}.
+The user's name is {user_name}. ONLY replace "{user_name}'s" with "your". \
+Other people's names must remain unchanged.
+Context: {moment_type} at {time_of_day}.
+Do NOT greet the user (they've already been greeted).
+
+Items to weave together naturally (prioritized):
+{items_block}
+
+Rules:
+- ONLY mention items listed above. Do NOT invent additional meetings, events, or details.
+- Do NOT claim you have taken any actions (scheduled, arranged, prepared, set up). You are REPORTING, not acting.
+- If an item says "today" without a specific time, do NOT invent a time. Say "today" only.
+- Maximum 35 words
+- Speak as a concise, warm butler
+- Lead with the most time-sensitive item
+- Group related items naturally
+- Connect related items naturally when possible
+
+Examples:
+- "Your open meeting in two hours, and today marks Malikai's birthday, {honorific}."
+- "Freeze warning until nine, and your team standup starts in thirty minutes, {honorific}."
+"""
+
+# Template fallback when LLM is unavailable
+_BRIEFING_TEMPLATE = "You have {count} item{plural} to be aware of — {first_summary}, {honorific}."
+
+
+def compose_briefing(items: list[AwarenessItem], llm_router,
+                     honorific: str = "sir",
+                     user_name: str = "",
+                     moment_type: str = "greeting") -> str:
+    """Compose a natural spoken briefing from ranked awareness items.
+
+    Uses the 4B model for synthesis. Falls back to a simple template
+    if the LLM is unavailable.
+
+    Args:
+        items: Ranked AwarenessItems (1-3, already filtered by budget)
+        llm_router: LLMRouter instance for generate()
+        honorific: User's honorific ("sir", "ma'am")
+        user_name: User's display name (for "your" substitution)
+        moment_type: "greeting", "return", "user_asked"
+
+    Returns:
+        Natural language briefing text ready for TTS
+    """
+    if not items:
+        return ""
+
+    # Determine time of day
+    hour = datetime.now().hour
+    if hour < 12:
+        time_of_day = "morning"
+    elif hour < 17:
+        time_of_day = "afternoon"
+    else:
+        time_of_day = "evening"
+
+    # Build structured items block
+    lines = []
+    for i, item in enumerate(items, 1):
+        lines.append(f"{i}. [{item.source}] {item.summary}")
+    items_block = "\n".join(lines)
+
+    # Select prompt: single-item (tight) vs multi-item (weaving)
+    if len(items) == 1:
+        prompt = _BRIEFING_PROMPT_SINGLE.format(
+            honorific=honorific,
+            user_name=user_name,
+            items_block=items[0].summary,
+        )
+    else:
+        prompt = _BRIEFING_PROMPT_MULTI.format(
+            honorific=honorific,
+            user_name=user_name,
+            moment_type=moment_type,
+            time_of_day=time_of_day,
+            items_block=items_block,
+        )
+
+    # Try 4B synthesis — tight token budget for single items (no room to hallucinate)
+    _max_tokens = 16 if len(items) == 1 else 60
+
+    if llm_router:
+        try:
+            result = llm_router.generate(
+                prompt,
+                use_small=True,
+                max_tokens=_max_tokens,
+                temperature=0.6,
+            )
+            if result and result.strip():
+                return result.strip()
+        except Exception:
+            pass
+
+    # Fallback: simple template
+    plural = "s" if len(items) > 1 else ""
+    return _BRIEFING_TEMPLATE.format(
+        count=len(items),
+        plural=plural,
+        first_summary=items[0].summary,
+        honorific=honorific,
+    )
 
 
 # ---------------------------------------------------------------------------

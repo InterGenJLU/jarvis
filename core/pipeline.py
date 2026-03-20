@@ -624,6 +624,7 @@ class Coordinator:
             task_planner=self.task_planner,
             people_manager=self.people_manager,
             awareness=self.awareness,
+            accumulator=self.accumulator,
         )
 
         # Wire profile manager to conversation for speaker labels
