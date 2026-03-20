@@ -524,6 +524,7 @@ class TextToSpeech:
         honorific, new template). Typically completes in 0s.
         """
         self._cal_l0_generating = True
+        _t0 = time.time()
         generated = self._tts_cache.generate_missing(
             templates=self._CAL_L0_TEMPLATES,
             honorifics=self._CAL_L0_PRIMARY_HONORIFICS,
@@ -533,7 +534,7 @@ class TextToSpeech:
         )
         self._cal_l0_generating = False
         self.logger.info(
-            "CAL-L0 cache complete: %d phrases in %.1fs", count, elapsed,
+            "CAL-L0 cache complete: %d phrases in %.1fs", generated, time.time() - _t0,
         )
 
     def _synthesize_to_pcm(self, text: str) -> bytes | None:
