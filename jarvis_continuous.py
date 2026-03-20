@@ -404,11 +404,12 @@ class JarvisContinuous:
                 desktop_manager=self.desktop_manager,
                 metrics=self.metrics,
             )
-            # Wire presence detector to Coordinator's conv_state + accumulator (CAL integration)
+            # Wire presence detector to Coordinator's conv_state + accumulator + LLM (CAL integration)
             if hasattr(self, 'presence_detector') and self.presence_detector:
                 self.presence_detector.set_conv_state(self.coordinator.conv_state)
                 if self.coordinator.accumulator:
                     self.presence_detector.set_accumulator(self.coordinator.accumulator)
+                self.presence_detector.set_llm_router(self.llm)
 
             self.logger.info("Event pipeline mode enabled")
 

@@ -824,6 +824,15 @@ class AwarenessAccumulator:
             self._delivery_log.mark_surfaced(user_id, item, session_id)
             item.surfaced_at = time.time()
 
+    def get_critical(self, user_id: str = "primary_user") -> list[AwarenessItem]:
+        """Return critical/safety items (score >= 0.85) for ambient awareness.
+
+        Always refreshes first to catch newly arrived alerts.
+        Only returns items not yet surfaced (delivery log checked).
+        """
+        self.refresh(user_id)
+        return self.get_top(n=1, threshold=0.85, user_id=user_id)
+
     @property
     def item_count(self) -> int:
         """Number of items currently in the queue."""

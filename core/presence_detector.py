@@ -99,6 +99,7 @@ class PresenceDetector:
         self._window_callback: Optional[Callable] = None
         self._conv_state = None  # ConversationState (set post-init for window_source tagging)
         self._accumulator = None  # AwarenessAccumulator (set post-init for precompute)
+        self._llm_router = None   # LLMRouter (set post-init for ambient briefing composition)
 
         # Thread control
         self._running = False
@@ -170,6 +171,10 @@ class PresenceDetector:
     def set_accumulator(self, accumulator):
         """Set awareness accumulator for precompute on detection (CAL integration)."""
         self._accumulator = accumulator
+
+    def set_llm_router(self, llm_router):
+        """Set LLM router for ambient awareness briefing composition."""
+        self._llm_router = llm_router
 
     # ------------------------------------------------------------------
     # Detection loop
@@ -342,6 +347,11 @@ class PresenceDetector:
                         state.state = PresenceState.ABSENT
                         self.logger.info(f"Person {pid} → ABSENT")
 
+        # CAL Phase 6: Ambient awareness — check for critical items when
+        # user is PRESENT, not in active conversation, pipeline is idle.
+        # Only safety/critical items (score >= 0.85) warrant unprompted speech.
+        self._check_ambient_awareness(seen_ids, now)
+
     def _handle_detection(self, person_id: str, confidence: float, now: float):
         """State machine: manage transitions and fire greetings."""
         if person_id not in self._person_states:
@@ -390,6 +400,82 @@ class PresenceDetector:
             state.state = PresenceState.PRESENT
 
         # PRESENT stays PRESENT until they leave
+
+    def _check_ambient_awareness(self, seen_ids: set, now: float):
+        """CAL Phase 6: Ambient awareness — speak critical items unprompted.
+
+        Only fires when:
+        - An identified user is in PRESENT state (not DETECTED/GREETED/ABSENT)
+        - Accumulator is wired
+        - Conversation window is NOT active (don't interrupt)
+        - At least 60s since last ambient delivery (prevent spam)
+        """
+        if not self._accumulator:
+            return
+
+        # Don't interrupt active conversations
+        if hasattr(self.conversation, 'conversation_active') and \
+                self.conversation.conversation_active:
+            return
+
+        # Cooldown: at least 60s between ambient deliveries
+        last_ambient = getattr(self, '_last_ambient_ts', 0)
+        if now - last_ambient < 60:
+            return
+
+        # Find a PRESENT identified user
+        for pid in seen_ids:
+            state = self._person_states.get(pid)
+            if not state or state.state != PresenceState.PRESENT:
+                continue
+
+            user_id = self._face_user_map.get(pid, "")
+            if not user_id:
+                continue
+
+            # Check for critical items
+            critical = self._accumulator.get_critical(user_id)
+            if not critical:
+                continue
+
+            # Speak the critical item
+            from core.awareness_accumulator import compose_briefing
+            from core.honorific import get_honorific, set_honorific
+
+            # Ensure correct honorific for this user
+            # (may have been reset since greeting)
+            set_honorific("sir" if user_id == "primary_user" else "ma'am")
+
+            briefing = compose_briefing(
+                critical, self._llm_router,
+                honorific=get_honorific(),
+                user_name=user_id.capitalize(),
+                moment_type="ambient",
+            )
+
+            if briefing:
+                self.logger.info(
+                    "CAL ambient: critical item for %s → '%s'",
+                    user_id, briefing[:80],
+                )
+
+                if self._pause_listener_callback:
+                    self._pause_listener_callback()
+
+                self.tts.speak(briefing)
+
+                if self._resume_listener_callback:
+                    self._resume_listener_callback()
+
+                self._accumulator.mark_surfaced(critical, user_id)
+                self._last_ambient_ts = now
+
+                # Open a brief window so user can respond
+                if self._window_callback:
+                    self._window_callback(6.0)
+
+            # Only one ambient delivery per cycle
+            break
 
     def _update_all_absent(self):
         """Mark all tracked people as absent if they've been gone long enough."""
