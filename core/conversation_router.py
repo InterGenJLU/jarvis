@@ -301,6 +301,13 @@ class ConversationRouter:
             if result:
                 return result
 
+            # --- Priority 2.58: Self-identification ("my name is X") ---
+            # Must intercept BEFORE social introductions (P2.6) to prevent
+            # "my name is the user" from routing to the third-party intro skill.
+            result = self._handle_self_identification(command)
+            if result:
+                return result
+
             # --- Priority 2.6: Introduction state machine (multi-turn) ---
             result = self._handle_intro_state(command)
             if result:
@@ -692,6 +699,47 @@ class ConversationRouter:
             source="vision", handled=True,
             match_info={"layer": "P2.55-enrollment", "skill_name": "enroll_face"},
             open_window=60.0 if not is_complete else None,
+        )
+
+    # Self-identification patterns — "my name is X", "I'm X", "call me X"
+    _SELF_ID_RE = re.compile(
+        r"^(?:my name is|i'm|i am|call me|they call me|you can call me)\s+(\w+)",
+        re.IGNORECASE,
+    )
+
+    def _handle_self_identification(self, command: str) -> RouteResult | None:
+        """P2.58: Self-identification → memory system.
+
+        Intercepts 'my name is X' before it reaches the social introductions
+        skill. Stores the name as a user fact in the memory system.
+        """
+        m = self._SELF_ID_RE.match(command.strip())
+        if not m:
+            return None
+
+        name = m.group(1).capitalize()
+        user_id = self._user_id
+
+        logger.info("Self-identification: user=%s name=%s", user_id, name)
+
+        # Store as a memory fact
+        if self.memory_manager:
+            try:
+                self.memory_manager.store_fact({
+                    "subject": user_id,
+                    "content": f"The user's name is {name}.",
+                    "user_id": user_id,
+                })
+            except Exception as e:
+                logger.warning("Failed to store self-identification fact: %s", e)
+
+        from core.honorific import get_honorific
+        h = get_honorific()
+        return RouteResult(
+            text=f"Of course, {name}. I'll remember that, {h}.",
+            source="cal_l0",
+            intent="self_identification",
+            handled=True,
         )
 
     def _handle_intro_state(self, command: str) -> RouteResult | None:
