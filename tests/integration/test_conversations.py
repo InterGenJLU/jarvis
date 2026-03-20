@@ -103,7 +103,7 @@ class ConversationResult:
 
 def load_config():
     """Load auth token and connection details from config.yaml."""
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.yaml')
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
     config_path = os.path.abspath(config_path)
 
     with open(config_path) as f:

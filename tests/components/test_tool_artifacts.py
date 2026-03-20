@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 # Add project root to path
-sys.path.insert(0, "/home/user/jarvis")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # Stub heavy imports before they're pulled in
 sys.modules.setdefault("porcupine", MagicMock())

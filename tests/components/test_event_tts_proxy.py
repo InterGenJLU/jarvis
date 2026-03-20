@@ -19,7 +19,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-sys.path.insert(0, "/home/user/jarvis")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 os.environ['JARVIS_LOG_FILE_ONLY'] = '1'
 
 from core.events import Event, EventType

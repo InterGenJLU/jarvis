@@ -33,7 +33,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import logging
 logging.disable(logging.INFO)  # Suppress INFO logs from llm_router during tests

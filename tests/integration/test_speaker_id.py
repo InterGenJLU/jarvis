@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-sys.path.insert(0, "/home/user/jarvis")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 os.environ['JARVIS_LOG_FILE_ONLY'] = '1'
 
 # Stub speechbrain and torchaudio before importing speaker_id

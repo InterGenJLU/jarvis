@@ -23,7 +23,7 @@ from datetime import date, timedelta
 from dataclasses import dataclass
 
 # Allow imports from project root
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 try:
     import aiohttp
@@ -173,7 +173,7 @@ def run_unit_tests(verbose: bool) -> list[TestResult]:
 
 def load_config():
     """Load auth token and connection details from config.yaml."""
-    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.yaml')
+    config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
     with open(os.path.abspath(config_path)) as f:
         config = yaml.safe_load(f)
     web = config.get('web', {})

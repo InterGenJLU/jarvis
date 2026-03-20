@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from typing import Optional
 
 # Add project root to path
-sys.path.insert(0, "/home/user/jarvis")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 # ─── Mock heavy imports before they're pulled in ───────────────────────────
 # Stub out modules that need GPU/hardware
