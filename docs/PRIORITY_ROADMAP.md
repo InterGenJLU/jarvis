@@ -100,6 +100,7 @@
 | H2 | **Ack cache rework** — the 9 filler phrases are jarring/disconnected from query context | 3-4 hours | Need context-aware ack selection + programmatic way to audition phrases. Build harness for query→ack→response playback evaluation. |
 | H3 | **Startup greeting timing** — presence detector fires greeting before TTS pipeline worker is ready | 1-2 hours | 21-second delay between trigger and playback. Greeting should wait for pipeline workers to start. |
 | H4 | **Disable router DEBUG logging** — `config.yaml` has `router: DEBUG` enabled for development | 5 min | Comment out when done tuning routing. Currently useful, disable before "production" use. |
+| H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command → "Opening that again, sir." Needs investigation into pause timing around ack TTS. |
 
 ---
 

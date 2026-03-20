@@ -552,6 +552,13 @@ class Coordinator:
         from core.interaction_cache import get_interaction_cache
         self.interaction_cache = get_interaction_cache(config=config)
 
+        # Awareness Accumulator (CAL Component 1)
+        from core.awareness_accumulator import get_awareness_accumulator
+        self.accumulator = get_awareness_accumulator(
+            config=config,
+            calendar_manager=calendar_manager,
+        )
+
         self.running = True
         self.state = PipelineState.IDLE
         self.wake_word = config.get("system.wake_word", "jarvis").lower()

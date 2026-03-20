@@ -98,6 +98,7 @@ class PresenceDetector:
         self._resume_listener_callback: Optional[Callable] = None
         self._window_callback: Optional[Callable] = None
         self._conv_state = None  # ConversationState (set post-init for window_source tagging)
+        self._accumulator = None  # AwarenessAccumulator (set post-init for precompute)
 
         # Thread control
         self._running = False
@@ -165,6 +166,10 @@ class PresenceDetector:
     def set_conv_state(self, conv_state):
         """Set conversation state for window_source tagging (CAL integration)."""
         self._conv_state = conv_state
+
+    def set_accumulator(self, accumulator):
+        """Set awareness accumulator for precompute on detection (CAL integration)."""
+        self._accumulator = accumulator
 
     # ------------------------------------------------------------------
     # Detection loop
@@ -356,6 +361,15 @@ class PresenceDetector:
             self.logger.info(
                 f"Person {person_id} detected (confidence={confidence:.2f})"
             )
+
+            # Precompute awareness items while greeting TTS plays
+            user_id = self._face_user_map.get(person_id, "primary_user")
+            if self._accumulator:
+                try:
+                    count = self._accumulator.refresh(user_id)
+                    self.logger.info(f"Awareness precompute: {count} items for {user_id}")
+                except Exception as e:
+                    self.logger.warning(f"Awareness precompute failed: {e}")
 
             # Check if we should greet
             if self._greeting_allowed(person_id, now):
