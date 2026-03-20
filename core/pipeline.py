@@ -890,6 +890,23 @@ class Coordinator:
             jarvis_asked_question=self.conv_state.jarvis_asked_question,
         )
 
+        # --- Fire contextual ack generation in background (4B, ~600ms) ---
+        # Runs in parallel with routing. If ready by the time the 1.5s timer
+        # fires, the user hears a contextual ack. If not, falls back to
+        # the generic cached ack.
+        self._contextual_ack_text = None
+        if not suppress_ack:
+            from core.honorific import get_honorific
+            _ack_cmd = command
+            _ack_hon = get_honorific()
+            def _gen_ack():
+                from core.persona import generate_contextual_ack
+                self._contextual_ack_text = generate_contextual_ack(
+                    _ack_cmd, self.llm, _ack_hon,
+                )
+            _ack_thread = threading.Thread(target=_gen_ack, daemon=True)
+            _ack_thread.start()
+
         # --- Route through shared priority chain ---
         # For skill-handled commands, play an ack if warranted (the skill
         # handler may take tens of seconds, e.g. document generation).
@@ -1732,12 +1749,26 @@ class Coordinator:
         return style, False
 
     def _play_ack_if_still_thinking(self, style_hint: str = None):
-        """Timer callback — plays ack if LLM hasn't responded yet."""
+        """Timer callback — plays ack if LLM hasn't responded yet.
+
+        Prefers contextual ack (4B-generated) if ready. Falls back to
+        generic cached ack if 4B hasn't finished or returned empty.
+        """
         if not self._llm_responded:
             # Pause mic BEFORE playback to prevent speaker-to-mic bleed
             # (ack phrase picked up as a new user command).  The main response
             # flow calls listener.resume_listening() when fully done.
             self.listener.pause_listening()
+
+            # Try contextual ack first (4B-generated, fired at command arrival)
+            ctx_ack = getattr(self, '_contextual_ack_text', None)
+            if ctx_ack and not self._llm_responded:
+                self.logger.info(f"Contextual ack: '{ctx_ack}'")
+                self.tts.speak(ctx_ack)
+                self.tts._ack_played = True
+                return
+
+            # Fallback: generic cached ack
             # Pass cancel_check so speak_ack rechecks after acquiring the
             # TTS lock — prevents stale acks when the response arrived
             # while this thread was blocked waiting for the lock.

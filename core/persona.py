@@ -612,6 +612,45 @@ def system_prompt_brief() -> str:
     )
 
 
+# CAUTION: Qwen treats prompt examples as potential output content.
+# See feedback_qwen_prompt_leakage.md.
+_CONTEXTUAL_ACK_PROMPT = """\
+You are JARVIS, a butler-like AI assistant. The user just asked you something, and you need a moment to look into it.
+User asked: "{command}"
+
+Write ONE sentence — a brief, warm acknowledgment (max 15 words) that shows you understood the topic. Address them as {honorific}.
+Do NOT answer the question. Do NOT add a second sentence.
+NEVER start with "I will". Use openers like "Let me...", "Give me a moment while I...", "One moment while I...".
+BANNED words: explain, delve, comprehensive, intricate, fascinating, compile, brief, summarize. Use action words like: look into, search, check, pull up, find, review, gather, locate, dig into.
+"""
+
+
+def generate_contextual_ack(command: str, llm_router, honorific: str = "sir") -> str:
+    """Generate a contextual acknowledgment via the 4B model.
+
+    Args:
+        command: The user's query
+        llm_router: LLMRouter instance
+        honorific: User's honorific
+
+    Returns:
+        Contextual ack string, or empty string on failure
+    """
+    if not llm_router or not command:
+        return ""
+    try:
+        prompt = _CONTEXTUAL_ACK_PROMPT.format(
+            command=command,
+            honorific=honorific,
+        )
+        result = llm_router.generate(
+            prompt, use_small=True, max_tokens=25, temperature=0.7,
+        )
+        return result.strip() if result else ""
+    except Exception:
+        return ""
+
+
 def system_prompt_minimal() -> str:
     """Minimal system prompt for conversation history formatting."""
     return "You are JARVIS, a personal AI assistant.\nYou are helpful, professional, and concise."
