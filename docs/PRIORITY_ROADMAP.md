@@ -98,10 +98,10 @@
 
 | # | Item | Effort | Notes |
 |---|------|--------|-------|
-| H1 | **Test directory consolidation** — migrate 24 `scripts/test_*.py` files into `tests/` subdirectories | 2-3 hours | Owner directive: "tests need to go in tests." New tests already use `tests/routing/`. Migrate incrementally when touching existing scripts. |
-| H2 | **Ack cache rework** — the 9 filler phrases are jarring/disconnected from query context | 3-4 hours | Need context-aware ack selection + programmatic way to audition phrases. Build harness for query→ack→response playback evaluation. |
-| H3 | **Startup greeting timing** — presence detector fires greeting before TTS pipeline worker is ready | 1-2 hours | 21-second delay between trigger and playback. Greeting should wait for pipeline workers to start. |
-| H4 | **Disable router DEBUG logging** — `config.yaml` has `router: DEBUG` enabled for development | 5 min | Comment out when done tuning routing. Currently useful, disable before "production" use. |
+| ~~H1~~ | ~~Test directory consolidation~~ | — | **DONE** (session 311) — 24 scripts → tests/{unit,integration,memory,components} |
+| ~~H2~~ | ~~Ack cache rework~~ | — | **DONE** (session 311) — contextual 4B ack generation replaces generic cached phrases |
+| ~~H3~~ | ~~Startup greeting timing~~ | — | **CLOSED** — log-vs-TTS delta only, not user-facing. Normal startup time. |
+| ~~H4~~ | ~~Disable router/llm DEBUG logging~~ | — | **DONE** (session 311) — both commented out in config.yaml |
 | H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command → "Opening that again, sir." Needs investigation into pause timing around ack TTS. |
 | H6 | **News feeds: add AI/LLM categories + reduce per-feed count** — add AI, LLMs, and Local LLMs to news feed categories. Reduce per-feed headline pull from 5 to 3. | 30 min | Owner interest in AI/LLM developments. Current feed count creates noise; 3 per feed is sufficient for briefing relevance. |
 | H7 | **find_files: skip `du -sh` for list queries** — `_find_list_files` calls `du -sh` on all visible subdirectories (4.7s). Skip when `sort_by='modified'` + limit set. Use `stat().st_size` for files only. | 15 min | Measured: 4,754ms → ~50ms for "show me recent files" queries. |
