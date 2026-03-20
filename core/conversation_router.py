@@ -751,6 +751,14 @@ class ConversationRouter:
     # Prevents fast-pathing compound utterances like "good morning, what's the weather?"
     _CAL_L0_COMPOUND_RATIO = 0.70
 
+    # Phrases that trigger explicit awareness briefing ("catch me up")
+    _CATCH_UP_PHRASES = [
+        "catch me up", "what did i miss", "anything i should know",
+        "any updates", "what's going on", "bring me up to speed",
+        "anything new", "what have i missed", "anything happening",
+        "fill me in",
+    ]
+
     def _handle_cal_l0(self, command: str) -> RouteResult | None:
         """P2.9: CAL-L0 reflexive conversational fast-path.
 
@@ -758,9 +766,46 @@ class ConversationRouter:
         Only intercepts pure social utterances — compound queries (greeting +
         task) fall through to the LLM via the compound guard.
 
-        Defers greeting handling to CAL-L3 when a presence-triggered
-        conversation window is active (window_source == 'presence_greeting').
+        Also handles explicit awareness requests ("catch me up") with
+        wider budget (5 items, 0.1 threshold).
+
+        Defers greeting handling to CAL briefing when a presence-triggered
+        conversation window is active.
         """
+        # Explicit awareness request — "catch me up", "anything I should know"
+        cmd_lower = command.strip().lower()
+        if self.accumulator and any(p in cmd_lower for p in self._CATCH_UP_PHRASES):
+            from core.awareness_accumulator import compose_briefing
+            from core.honorific import get_honorific
+
+            items = self.accumulator.get_top(
+                n=5, threshold=0.1, user_id=self._user_id,
+            )
+            if items:
+                _display_name = self._user_id.capitalize() if self._user_id else ""
+                briefing_text = compose_briefing(
+                    items, self.llm,
+                    honorific=get_honorific(),
+                    user_name=_display_name,
+                    moment_type="user_asked",
+                )
+                self.accumulator.mark_surfaced(items, self._user_id)
+                logger.info(
+                    "CAL briefing (user_asked): %d items → '%s'",
+                    len(items), briefing_text[:80],
+                )
+            else:
+                h = get_honorific()
+                briefing_text = f"Nothing pressing at the moment, {h}."
+                logger.info("CAL briefing (user_asked): no items to surface")
+
+            return RouteResult(
+                text=briefing_text,
+                source="cal_l0",
+                intent="cal_l0:catch_me_up",
+                handled=True,
+            )
+
         sm = self.skill_manager
         conv_skill = sm.skills.get("conversation")
         if not conv_skill or not hasattr(conv_skill, 'semantic_intents'):
@@ -853,13 +898,19 @@ class ConversationRouter:
             )
             return None
 
-        # CAL: if a presence greeting window is active and the user responds
-        # with a greeting, query the Accumulator for awareness items. If items
-        # exist, compose a briefing via the 4B model. If not, absorb silently.
+        # CAL: if a presence window is active and the user responds with a
+        # greeting, query the Accumulator for awareness items. Budget varies
+        # by moment type (greeting=3/0.3, return=2/0.4 per CAL plan).
         handler_name = best_handler.__name__ if best_handler else ""
         if handler_name == "greeting":
             window_source = getattr(self.conv_state, 'window_source', None)
-            if window_source == "presence_greeting":
+            if window_source in ("presence_greeting", "presence_return"):
+                is_return = (window_source == "presence_return")
+                # Budget: greeting=3 items/0.3 threshold, return=2/0.4
+                _budget = 2 if is_return else 3
+                _threshold = 0.4 if is_return else 0.3
+                _moment = "return" if is_return else "greeting"
+
                 # Clear window_source so subsequent turns route normally
                 self.conv_state.window_source = ""
 
@@ -869,7 +920,7 @@ class ConversationRouter:
                     from core.awareness_accumulator import compose_briefing
                     from core.honorific import get_honorific
                     items = self.accumulator.get_top(
-                        n=3, threshold=0.3, user_id=self._user_id,
+                        n=_budget, threshold=_threshold, user_id=self._user_id,
                     )
                     if items:
                         # Resolve display name from current user identity
@@ -880,12 +931,12 @@ class ConversationRouter:
                             items, self.llm,
                             honorific=get_honorific(),
                             user_name=_display_name,
-                            moment_type="greeting",
+                            moment_type=_moment,
                         )
                         self.accumulator.mark_surfaced(items, self._user_id)
                         logger.info(
-                            "CAL briefing: %d items → '%s'",
-                            len(items), briefing_text[:80],
+                            "CAL briefing (%s): %d items → '%s'",
+                            _moment, len(items), briefing_text[:80],
                         )
 
                 if not briefing_text:

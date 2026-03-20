@@ -461,8 +461,9 @@ class PresenceDetector:
             self._resume_listener_callback()
 
         # Tag the conversation window as presence-triggered (CAL integration)
+        # Return-from-absence gets a distinct tag for different briefing budget
         if self._conv_state:
-            self._conv_state.window_source = "presence_greeting"
+            self._conv_state.window_source = "presence_return" if is_return else "presence_greeting"
 
         # Open a conversation window so user can respond
         if self._window_callback:
