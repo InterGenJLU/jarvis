@@ -2102,10 +2102,18 @@ class Coordinator:
                 f"honorific={honorific}, formal={formal})"
             )
         elif speaker_id is None and self.profile_manager:
-            # Unknown speaker — activate guest mode with security boundary
-            set_honorific("friend")
-            self.conversation.current_user = "__guest__"
-            self.logger.info(f"Guest mode activated (confidence={confidence:.3f})")
+            # Unknown speaker — but don't override if face ID already identified them.
+            # Face recognition (99.83% LFW) is more authoritative than speaker ID.
+            current = getattr(self.conversation, 'current_user', None)
+            if current and current not in (None, "", "__guest__"):
+                self.logger.info(
+                    f"Speaker ID unknown (confidence={confidence:.3f}) but face ID "
+                    f"already set current_user={current} — keeping face ID"
+                )
+            else:
+                set_honorific("friend")
+                self.conversation.current_user = "__guest__"
+                self.logger.info(f"Guest mode activated (confidence={confidence:.3f})")
 
     # ----- resume handler -----
 

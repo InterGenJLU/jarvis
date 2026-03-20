@@ -260,9 +260,9 @@ news:
   enabled: true
   db_path: /mnt/storage/jarvis/data/news_headlines.db
   poll_interval_seconds: 900
-  max_headlines_per_feed: 20
+  max_headlines_per_feed: 3
   dedup_threshold: 0.82
-  max_per_category: 25
+  max_per_category: 10
   feeds:
     # Technology
     - name: "Ars Technica"
@@ -310,6 +310,36 @@ news:
     - name: "The Hacker News"
       url: "https://feeds.feedburner.com/TheHackersNews"
       category: "cyber"
+    # AI
+    - name: "MIT Technology Review AI"
+      url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
+      category: "ai"
+    - name: "VentureBeat AI"
+      url: "https://venturebeat.com/category/ai/feed/"
+      category: "ai"
+    - name: "The Decoder"
+      url: "https://the-decoder.com/feed/"
+      category: "ai"
+    # LLMs
+    - name: "Hugging Face Blog"
+      url: "https://huggingface.co/blog/feed.xml"
+      category: "llm"
+    - name: "AI News (LLM)"
+      url: "https://news.google.com/rss/search?q=when:7d+large+language+model&ceid=US:en&hl=en-US&gl=US"
+      category: "llm"
+    - name: "Towards AI"
+      url: "https://pub.towardsai.net/feed"
+      category: "llm"
+    # Local LLMs
+    - name: "r/LocalLLaMA"
+      url: "https://www.reddit.com/r/LocalLLaMA/hot.rss"
+      category: "local_llm"
+    - name: "Ollama Blog"
+      url: "https://ollama.com/blog/rss.xml"
+      category: "local_llm"
+    - name: "Local AI News"
+      url: "https://news.google.com/rss/search?q=when:7d+local+llm+OR+ollama+OR+llama.cpp+OR+gguf&ceid=US:en&hl=en-US&gl=US"
+      category: "local_llm"
     # Local (Your City)
     - name: "Your Local News"
       url: "https://news.google.com/rss/search?q=when:24h+Your+City&ceid=US:en&hl=en-US&gl=US"
