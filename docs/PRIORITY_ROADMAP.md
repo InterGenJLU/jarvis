@@ -104,6 +104,7 @@
 | H4 | **Disable router DEBUG logging** — `config.yaml` has `router: DEBUG` enabled for development | 5 min | Comment out when done tuning routing. Currently useful, disable before "production" use. |
 | H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command → "Opening that again, sir." Needs investigation into pause timing around ack TTS. |
 | H6 | **News feeds: add AI/LLM categories + reduce per-feed count** — add AI, LLMs, and Local LLMs to news feed categories. Reduce per-feed headline pull from 5 to 3. | 30 min | Owner interest in AI/LLM developments. Current feed count creates noise; 3 per feed is sufficient for briefing relevance. |
+| H7 | **find_files: skip `du -sh` for list queries** — `_find_list_files` calls `du -sh` on all visible subdirectories (4.7s). Skip when `sort_by='modified'` + limit set. Use `stat().st_size` for files only. | 15 min | Measured: 4,754ms → ~50ms for "show me recent files" queries. |
 
 ---
 
