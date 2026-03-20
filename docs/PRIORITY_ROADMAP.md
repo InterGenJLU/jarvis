@@ -114,8 +114,8 @@
 |---|------|----------|-------|
 | B2-new | **Memory recall 768/384 dimension mismatch** | **HIGH** | context_window interaction recall hits stale 384-dim FAISS data with 768-dim nomic queries. Every LLM-routed command logs `shapes (768,) and (384,) not aligned`. Breaks conversation history, "what were we talking about", context-aware responses. |
 | B3-new | **"my name is X" → SocialIntroductions loop** | **HIGH** | Semantic matcher routes self-identification to third-party intro skill. 3x loop: "Who would you like me to meet?" Need to distinguish self-intro from third-party intro. |
-| B4-new | **TTS honorific split** | Medium | Post-processing honorific injector appends ", sir" as separate LLM chunk → separate TTS call with awkward pause. "Tokyo" [pause] ", sir." |
-| B8 | EventTTSProxy `speak()` returns None | Medium | `done.wait()` return not captured. Causes reminder retry false positives. Nag cap mitigates. Zero tests |
+| ~~B4-new~~ | ~~TTS honorific split~~ | — | **RESOLVED** — honorific appended to final text chunk before TTS, not as separate call (pipeline.py:1535) |
+| ~~B8~~ | ~~EventTTSProxy speak() returns None~~ | — | **RESOLVED** — `return done.wait(timeout=60)` propagates True/False to caller (pipeline.py:300) |
 | B8-new | **FAISS index empty after upgrade** | Low | Expected: 384→768 dim upgrade cleared index. Run `HIP_VISIBLE_DEVICES=0 python3 scripts/backfill_memory.py` to rebuild from chat history. |
 | B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
 
