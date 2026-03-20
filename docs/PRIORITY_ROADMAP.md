@@ -73,6 +73,8 @@
 | 64 | **4-user concurrent inference** — expand llama-server to 4 parallel slots | Research + 2-4h | Mid-2026, once 2-user data exists |
 | 26 | **STT worker process** — GPU isolation via separate subprocess | 2-3 hours | Only if GPU conflicts resurface |
 | 28 | **GitHub publishing cleanup** — CONTRIBUTING.md, INSTALLATION.md, API_KEYS.md, setup.sh | 3-4 hours | Community adoption |
+| 65 | **CAL-L0 Option 1 consolidation** — merge P1 dismissals + P2.8 bare acks into L0 category system, remove redundant handlers, re-enable conversation skill as single backend | 3-4 hours | Daily usage confirms L0 coverage with no false intercepts reported |
+| 66 | **TTS prosody variants** — multiple tonal variations per cached phrase (warm/neutral/urgent), context-aware mood selection at playback | 4-6 hours | Ack cache rework (H2) complete, mood schema column already in TTSCache DB |
 
 ---
 
