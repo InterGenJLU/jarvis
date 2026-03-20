@@ -166,10 +166,13 @@
 - **Observability** — V3 test suite captures dual-model data: llm_calls, llm_provider, llm_routing_model, routing_ttft_ms, synthesis_ttft_ms. Report includes Model Dispatch section. Console shows [4B synth] / [35B] tags.
 - **Validated** — run_038 (4/4 PASS, dual-model confirmed), run_039 (3/4 PASS 1 MIXED, 60% TTFT reduction confirmed)
 
-### CAL Phases 1-3 (Session 311, Mar 19-20) — COMPLETE
+### CAL Phases 1-6 (Session 311, Mar 19-20) — ALL COMPLETE
 - **Phase 1: Greeting flow foundation** — window_source tagging on ConversationState, presence greeting absorption in CAL-L0, face ID → speaker identity propagation. Validated live.
 - **Phase 2: Awareness Accumulator** — always-on priority queue with calendar + weather adapters. Deterministic scoring (urgency × 0.3 + time_pressure × 0.3 + novelty × 0.2 + user_relevance × 0.2). Delivery log SQLite dedup. Calendar fix: queries both primary + JARVIS calendars. All-day event detection + pre-naturalized summaries.
 - **Phase 3: Briefing Composer** — 4B-powered natural language synthesis. Split prompt (single-item tight/12w vs multi-item weaving/35w). User identity flows through full pipeline. Extensive prompt engineering: Qwen prompt leakage discovery, token/word dual constraints.
+- **Phase 4: Reminder + News adapters** — pending acks, upcoming reminders within 2h, critical/high news headlines.
+- **Phase 5: Moment expansion** — return-from-absence trigger (budget 2/0.4), "catch me up" explicit request (budget 5/0.1), post-task nudge (budget 1/0.6, gated to substantive tasks only).
+- **Phase 6: Ambient awareness** — critical items (score >= 0.85) spoken unprompted when user PRESENT, conversation inactive, 60s cooldown.
 - **Calendar bug fix** — get_upcoming_context() was querying primary calendar only; events on JARVIS calendar were invisible. Now queries both.
 - **Face ID → speaker identity** — presence detector sets conversation.current_user from face recognition, voice pipeline inherits identity.
 
