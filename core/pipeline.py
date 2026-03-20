@@ -988,6 +988,35 @@ class Coordinator:
         else:
             self._manage_conversation_window(response, in_conversation)
 
+        # CAL: Post-task awareness nudge — surface one critical item after
+        # substantive tasks (tool calls, LLM responses). Skip for quick
+        # conversational exchanges (CAL-L0 greetings, bare acks).
+        _is_substantive = used_llm or (result.handled and result.source not in ("cal_l0", "dismissal"))
+        if _is_substantive and self.accumulator:
+            try:
+                _user_id = getattr(self.conversation, 'current_user', None) or 'christopher'
+                _nudge_items = self.accumulator.get_top(
+                    n=1, threshold=0.6, user_id=_user_id,
+                )
+                if _nudge_items:
+                    from core.awareness_accumulator import compose_briefing
+                    from core.honorific import get_honorific
+                    _display_name = _user_id.capitalize() if _user_id else ""
+                    _nudge_text = compose_briefing(
+                        _nudge_items, self.llm,
+                        honorific=get_honorific(),
+                        user_name=_display_name,
+                        moment_type="task_end",
+                    )
+                    if _nudge_text:
+                        self.logger.info(
+                            "CAL nudge (task_end): '%s'", _nudge_text[:80],
+                        )
+                        self._speak_and_wait(_nudge_text)
+                        self.accumulator.mark_surfaced(_nudge_items, _user_id)
+            except Exception as e:
+                self.logger.warning("CAL post-task nudge failed: %s", e)
+
         # Stats and resume
         stats = self.conversation.get_conversation_stats()
         print(f"\n📊 Session: {stats['session_user_messages']} user, "
