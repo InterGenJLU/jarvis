@@ -71,7 +71,9 @@ def main():
     if args.force and mm.faiss_index is not None and mm.faiss_index.ntotal > 0:
         print(f"Force mode: clearing existing index ({mm.faiss_index.ntotal} vectors)...")
         import faiss
-        mm.faiss_index = faiss.IndexFlatIP(384)
+        embed_dim = embedding_model.get_sentence_embedding_dimension()
+        print(f"Embedding dimension: {embed_dim}")
+        mm.faiss_index = faiss.IndexFlatIP(embed_dim)
         mm.faiss_metadata = []
 
     print(f"\nStarting backfill...")
