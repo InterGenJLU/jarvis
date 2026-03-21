@@ -38,7 +38,6 @@
 |---|------|--------|-----|-------|
 | 43 | **Mid-rundown interruption** — item-by-item delivery with "continue"/"skip"/"stop"/"defer" | 4-6 hours | Currently `deliver_rundown()` blocks on single TTS call | Needs item-at-a-time loop + active listener |
 | 55 | **Network awareness skill** — device discovery, anomaly detection, threat alerts | 4-8 hours | Fits threat hunting background | Natural skill: `skills/system/network/` |
-| 50 | **AI image generation (FLUX.1-schnell)** — local image gen for doc gen, hybrid with Pexels | 4-6 hours | Pexels fails for tech/abstract topics | Research complete. FLUX FP8 fits 20GB VRAM, ~12-20s/image |
 | 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility | Shared access with secondary user |
 | 13 | **Audio recording skill** — voice-triggered recording, date-based playback, 6 intents | 4-6 hours | Meeting notes, voice memos, dictation | skills/personal/audio_recording/ |
 | 14 | **Music control (Apple Music)** — playlist learning, volume via pactl | 6-10 hours | Entertainment integration | Per-user playlists. Apple Music web interface finicky |
@@ -95,7 +94,7 @@
 | # | Item | Effort | Notes |
 |---|------|--------|-------|
 | H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command. Needs investigation into pause timing around ack TTS. |
-| H6 | **News feeds: add AI/LLM categories + reduce per-feed count** — add AI, LLMs, and Local LLMs to news feed categories. Reduce per-feed headline pull from 5 to 3. | 30 min | Owner interest in AI/LLM developments. Current feed count creates noise; 3 per feed is sufficient for briefing relevance. |
+| ~~H6~~ | ~~News feeds: add AI/LLM categories + reduce per-feed count~~ | — | **DONE** (session 311) — 3 new categories (AI, LLM, local_llm), 9 new feeds, max_headlines_per_feed 20→3 |
 | H7 | **find_files: skip `du -sh` for list queries** — `_find_list_files` calls `du -sh` on all visible subdirectories (4.7s). Skip when `sort_by='modified'` + limit set. Use `stat().st_size` for files only. | 15 min | Measured: 4,754ms -> ~50ms for "show me recent files" queries. |
 | H8 | **Presence greeting latency + prosody review** — greeting-to-briefing pipeline takes ~11s total. Kokoro prosody issue with certain phrases (wrong pitch). | 1-2 hours | Review latency budget for presence->briefing pipeline. Kokoro prosody issue may need pronunciation override or phrase replacement. |
 
@@ -105,23 +104,22 @@
 
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
-| B2-new | **Memory recall 768/384 dimension mismatch** | **HIGH** | context_window interaction recall hits stale 384-dim FAISS data with 768-dim nomic queries. Every LLM-routed command logs `shapes (768,) and (384,) not aligned`. Breaks conversation history, "what were we talking about", context-aware responses. |
-| B3-new | **"my name is X" -> SocialIntroductions loop** | **HIGH** | Semantic matcher routes self-identification to third-party intro skill. 3x loop: "Who would you like me to meet?" Need to distinguish self-intro from third-party intro. |
-| B8-new | **FAISS index empty after upgrade** | Low | Expected: 384->768 dim upgrade cleared index. Run `HIP_VISIBLE_DEVICES=0 python3 scripts/backfill_memory.py` to rebuild from chat history. |
 | B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
 
 ---
 
-## Test Gaps (validated Mar 7, session 190)
+## Test Gaps (updated Mar 21, session 311)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Routing integration tests | **CLOSED** | `test_router.py` — 718 lines, 12 categories, adversarial priority conflicts, guest mode, multi-speaker |
-| Web UI automation | **CLOSED** | `test_web_handler.py` — 61 tests, 5 phases (handler smoke, mobile routing, client detection, tool overrides, WS dispatch) |
-| Skill execution tests | **OPEN** | `test_edge_cases.py` Tier 3-4 marked "future" — routing tested but no actual handler execution |
-| EventTTSProxy tests | **OPEN** | Zero tests for speak() return value / timeout behavior |
+| Routing integration tests | **CLOSED** | `tests/routing/test_routing.py` — 87 tests, CAL-L0 + tool gate + latency |
+| Web UI automation | **CLOSED** | `tests/unit/test_web_handler.py` — 61 tests, 5 phases |
+| Speaker ID tests | **CLOSED** | `tests/integration/test_speaker_id.py` — 5-part suite |
+| V3 conversation tests | **CLOSED** | `scripts/test_suite_v3/` — 52 conversations, dual-model dispatch tracking |
+| Skill execution tests | **OPEN** | `tests/unit/test_edge_cases.py` Tier 3-4 marked "future" — routing tested but no actual handler execution |
+| EventTTSProxy tests | **OPEN** | speak() return value fixed but zero formal tests |
 | Batch extraction tests | **OPEN** | Feature implemented (Phase 4), zero test coverage |
-| Speaker ID tests | **CLOSED** | `test_speaker_id.py` — 5-part suite (embedding extraction, enrollment, identification, verification, cache management) |
+| CAL briefing tests | **OPEN** | Composer tested manually during session 311, no automated suite |
 
 ---
 
@@ -194,8 +192,12 @@
 - **H4:** Disable router/llm DEBUG logging (session 311) — both commented out in config.yaml
 
 ### Resolved Bugs
+- **B2-new:** Memory recall 768/384 dimension mismatch — RESOLVED (session 311). FAISS rebuilt with 768-dim nomic embeddings, backfill script fixed for dynamic dimension.
+- **B3-new:** "my name is X" → SocialIntroductions loop — RESOLVED (session 311). P2.58 self-identification pre-filter routes to memory system.
 - **B4-new:** TTS honorific split — RESOLVED. Honorific appended to final text chunk before TTS, not as separate call (pipeline.py:1535)
 - **B8:** EventTTSProxy speak() returns None — RESOLVED. `return done.wait(timeout=60)` propagates True/False to caller (pipeline.py:300)
+- **B8-new:** FAISS index empty after upgrade — RESOLVED (session 311). Backfill rebuilt 299 vectors at 768-dim.
+- **#50:** AI image generation — DONE (session 285+). FLUX.2-klein-4B on RX 7900 XT via GPU swap. Text-to-image + img2img. ~12-20s warm, ~90-200s cold.
 - **B1:** "Fullscreen" Whisper misrecognition — fixed by mic upgrade + retraining (Feb 21)
 - **B3:** Console logging broken — fixed logger.py (Feb 19)
 - **B4:** Topic shift threshold — already set to 0.35 (Feb 19)
