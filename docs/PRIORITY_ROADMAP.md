@@ -94,7 +94,6 @@
 | # | Item | Effort | Notes |
 |---|------|--------|-------|
 | H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command. Needs investigation into pause timing around ack TTS. |
-| ~~H6~~ | ~~News feeds: add AI/LLM categories + reduce per-feed count~~ | — | **DONE** (session 311) — 3 new categories (AI, LLM, local_llm), 9 new feeds, max_headlines_per_feed 20→3 |
 | H7 | **find_files: skip `du -sh` for list queries** — `_find_list_files` calls `du -sh` on all visible subdirectories (4.7s). Skip when `sort_by='modified'` + limit set. Use `stat().st_size` for files only. | 15 min | Measured: 4,754ms -> ~50ms for "show me recent files" queries. |
 | H8 | **Presence greeting latency + prosody review** — greeting-to-briefing pipeline takes ~11s total. Kokoro prosody issue with certain phrases (wrong pitch). | 1-2 hours | Review latency budget for presence->briefing pipeline. Kokoro prosody issue may need pronunciation override or phrase replacement. |
 
@@ -190,6 +189,7 @@
 - **H2:** Ack cache rework (session 311) — contextual 4B ack generation replaces generic cached phrases
 - **H3:** Startup greeting timing — CLOSED. Log-vs-TTS delta only, not user-facing. Normal startup time.
 - **H4:** Disable router/llm DEBUG logging (session 311) — both commented out in config.yaml
+- **H6:** News feeds (session 311) — 3 new categories (AI, LLM, local_llm), 9 new feeds, max_headlines_per_feed 20→3
 
 ### Resolved Bugs
 - **B2-new:** Memory recall 768/384 dimension mismatch — RESOLVED (session 311). FAISS rebuilt with 768-dim nomic embeddings, backfill script fixed for dynamic dimension.
