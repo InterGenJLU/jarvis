@@ -29,7 +29,7 @@ Work these in sequence (strategic direction: cross-platform utility — desktop 
 
 ### 2. IMAP Email via MCP
 **Status:** Config stub at `config.yaml:299-318` + MCP bridge infrastructure ready
-**What:** Email access for both users (the user=Gmail, secondary=AOL)
+**What:** Email access for both users (primary user=Gmail, secondary user=AOL)
 
 ### 3. Mobile iOS App (#60)
 **Status:** Phase 1 DONE (web UI responsive). Native iOS = 6 phases, not started

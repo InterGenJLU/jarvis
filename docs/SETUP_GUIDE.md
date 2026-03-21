@@ -37,10 +37,14 @@ sudo apt install build-essential cmake
 # Follow: https://rocm.docs.amd.com/en/latest/deploy/linux/quick_start.html
 ```
 
-### 3. Install Python Dependencies
+### 3. Set Up Python Virtual Environment
 ```bash
-pip install --break-system-packages -r requirements.txt
+python3 -m venv .venv --system-site-packages
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
+
+The `--system-site-packages` flag allows the venv to access system-installed packages (e.g., PyTorch built from source).
 
 ### 4. Configure API Keys
 
@@ -68,6 +72,9 @@ PEXELS_API_KEY=<get from https://www.pexels.com/api/>
 HSA_OVERRIDE_GFX_VERSION=11.0.0
 ROCM_PATH=/opt/rocm-7.2.0
 LD_LIBRARY_PATH=/opt/rocm-7.2.0/lib
+
+# PyTorch is built from source at /home/user/pytorch-build (torch 2.10.0+rocm7.2)
+# DO NOT install PyTorch from pip — use the source build for ROCm compatibility
 ```
 
 ### 5. Download Models
@@ -208,7 +215,7 @@ sudo ldconfig
 
 # Install Python bindings
 cd ../python
-pip install --break-system-packages .
+pip install .
 ```
 
 ### Verify GPU
@@ -282,7 +289,7 @@ python3 jarvis_console.py
 - **LLM tool calling (local Qwen3.5):** ~2.5s (1s tool decision + 1.5s response)
 - **LLM direct (local Qwen3.5):** 1-4s depending on response length
 - **LLM (Claude API fallback):** 1-3s
-- **TTS (Kokoro):** 0.3-0.8s
+- **TTS (Kokoro):** 0.3-0.8s (TTSCache: 281 pre-synthesized phrases, 11ms load, persistent disk cache for instant startup)
 
 ### System Resources
 - **Idle:** ~500MB RAM, ~18.8GB VRAM
@@ -333,7 +340,7 @@ python3 jarvis_console.py
 ```bash
 cd ~/jarvis
 git pull
-pip install --break-system-packages -r requirements.txt
+pip install -r requirements.txt
 systemctl --user restart llama-server jarvis jarvis-web
 ```
 

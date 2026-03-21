@@ -9,7 +9,7 @@
 
 ## Automated Test Suite
 
-The automated test harness (`scripts/test_edge_cases.py`) validates routing and unit-level behavior
+The automated test harness (`tests/unit/test_edge_cases.py`) validates routing and unit-level behavior
 by injecting text directly into the pipeline — no voice/mic/TTS needed.
 
 **Current results: 314/314 (100%) — Tier 1: 122/122 | Tier 2: 151/151 | Tier 3: 13/13 | Tier 4: 28/28**
@@ -17,15 +17,15 @@ by injecting text directly into the pipeline — no voice/mic/TTS needed.
 ### Quick Reference
 
 ```bash
-python3 scripts/test_edge_cases.py              # Tiers 1+2 (default)
-python3 scripts/test_edge_cases.py --tier 1     # Unit tests only (<1s)
-python3 scripts/test_edge_cases.py --tier 2     # Routing tests only (~5s load)
-python3 scripts/test_edge_cases.py --tier 4     # LLM tests only (requires llama-server)
-python3 scripts/test_edge_cases.py --all        # All tiers (1+2+4)
-python3 scripts/test_edge_cases.py --phase 4A   # Single phase (e.g. system prompt adherence)
-python3 scripts/test_edge_cases.py --id 4A-01   # Single test
-python3 scripts/test_edge_cases.py --verbose     # Show all tests (not just failures)
-python3 scripts/test_edge_cases.py --json        # JSON output
+python3 tests/unit/test_edge_cases.py              # Tiers 1+2 (default)
+python3 tests/unit/test_edge_cases.py --tier 1     # Unit tests only (<1s)
+python3 tests/unit/test_edge_cases.py --tier 2     # Routing tests only (~5s load)
+python3 tests/unit/test_edge_cases.py --tier 4     # LLM tests only (requires llama-server)
+python3 tests/unit/test_edge_cases.py --all        # All tiers (1+2+4)
+python3 tests/unit/test_edge_cases.py --phase 4A   # Single phase (e.g. system prompt adherence)
+python3 tests/unit/test_edge_cases.py --id 4A-01   # Single test
+python3 tests/unit/test_edge_cases.py --verbose     # Show all tests (not just failures)
+python3 tests/unit/test_edge_cases.py --json        # JSON output
 ```
 
 ### Tiers
@@ -140,7 +140,7 @@ Commands that should escalate through routing layers (exact → fuzzy → keywor
 
 Tests for the 7-priority command handling chain in `ConversationRouter.route()`.
 
-**Automated coverage: 28/30 tests** — covered by `scripts/test_edge_cases.py` Tier 2 (marked `[P]` below).
+**Automated coverage: 28/30 tests** — covered by `tests/unit/test_edge_cases.py` Tier 2 (marked `[P]` below).
 Remaining 4 tests (2A-05..08) require a mid-rundown interruption feature that doesn't exist yet — see Future Features below.
 
 ### 2A. Rundown State Machine (Priority 1)
@@ -593,7 +593,7 @@ These test cases (2A-05..08) describe **mid-rundown interruption** — a feature
 
 ## Voice Pipeline Tests (Separate Suite)
 
-Automated TTS→STT round-trip tests (`scripts/test_voice_pipeline.py`). Generates WAV audio via
+Automated TTS→STT round-trip tests (`tests/components/test_voice_pipeline.py`). Generates WAV audio via
 Kokoro TTS, feeds into Whisper STT, compares transcription against expectations. Validates the
 full audio pipeline without a microphone — catches pronunciation issues, Whisper correction gaps,
 and TTS normalization round-trip failures.
@@ -601,11 +601,11 @@ and TTS normalization round-trip failures.
 **Current results: 25/25 (100%)**
 
 ```bash
-python3 scripts/test_voice_pipeline.py              # All phases
-python3 scripts/test_voice_pipeline.py --phase V2   # Single phase
-python3 scripts/test_voice_pipeline.py --id V2-03   # Single test
-python3 scripts/test_voice_pipeline.py --verbose     # Show all (not just failures)
-python3 scripts/test_voice_pipeline.py --save-wav /tmp/debug  # Save WAVs
+python3 tests/components/test_voice_pipeline.py              # All phases
+python3 tests/components/test_voice_pipeline.py --phase V2   # Single phase
+python3 tests/components/test_voice_pipeline.py --id V2-03   # Single test
+python3 tests/components/test_voice_pipeline.py --verbose     # Show all (not just failures)
+python3 tests/components/test_voice_pipeline.py --save-wav /tmp/debug  # Save WAVs
 ```
 
 | Phase | Category | Tests | What It Validates |
@@ -626,10 +626,10 @@ python3 scripts/test_voice_pipeline.py --save-wav /tmp/debug  # Save WAVs
 Interactive companion for subjective pronunciation review:
 
 ```bash
-python3 scripts/pronunciation_audit.py                    # Generate 16 WAVs to /tmp
-python3 scripts/pronunciation_audit.py --play             # Generate + interactive review
-python3 scripts/pronunciation_audit.py --category Names   # Filter by category
-python3 scripts/pronunciation_audit.py --custom "Hello"   # Ad-hoc phrase
+python3 tests/components/pronunciation_audit.py                    # Generate 16 WAVs to /tmp
+python3 tests/components/pronunciation_audit.py --play             # Generate + interactive review
+python3 tests/components/pronunciation_audit.py --category Names   # Filter by category
+python3 tests/components/pronunciation_audit.py --custom "Hello"   # Ad-hoc phrase
 ```
 
 Categories: Names (3), Persona (4), Technical (4), Normalizer (5)
@@ -693,7 +693,7 @@ Look for these log patterns:
 ---
 
 **Total: ~200 manual test cases across 9 phases, 30+ subsections**
-**Automated: 314 tests (Tier 1: 122 unit + Tier 2: 151 routing + Tier 3: 13 router integration + Tier 4: 28 LLM) via `scripts/test_edge_cases.py` — includes post-test artifact cleanup**
-**Additional: 61 web handler tests (`test_web_handler.py`) + 25 voice pipeline tests (`test_voice_pipeline.py`) + 62 conversational tests (`test_conversations.py`)**
+**Automated: 314 tests (Tier 1: 122 unit + Tier 2: 151 routing + Tier 3: 13 router integration + Tier 4: 28 LLM) via `tests/unit/test_edge_cases.py` — includes post-test artifact cleanup**
+**Additional: 61 web handler tests (`tests/integration/test_web_handler.py`) + 25 voice pipeline tests (`tests/components/test_voice_pipeline.py`) + 62 conversational tests (V3 suite)**
 **Phase 2: 28/30 automated, 4 deferred (mid-rundown interruption — future feature)**
 **Remaining: Phases 3-9 manual test cases require live voice/hybrid/web testing**

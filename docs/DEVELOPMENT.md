@@ -63,13 +63,13 @@ Create a directory in `skills/system/` or `skills/personal/` with `skill.py` and
 
 ```bash
 # Unit/routing tests (314 tests, no LLM needed for Tier 1-2)
-scripts/unit_tests.sh --all --verbose
+python3 -m pytest tests/unit/ tests/integration/ tests/components/ --verbose
 
-# Conversation tests (62 conversations, requires jarvis-web running)
-python3 scripts/test_conversations.py --verbose --save tests/iterative_results/run_NNN_results.json
+# Conversation tests (V3 suite, requires jarvis-web running)
+python3 tests/v3_runner.py --verbose --save tests/v3_results/run_NNN
 
 # Voice pipeline tests (25 TTS→STT round-trip tests)
-python3 scripts/test_voice_pipeline.py --verbose
+python3 tests/components/test_voice_pipeline.py --verbose
 ```
 
 **Important:** Never run tests in parallel — all test scripts hit llama-server sequentially.

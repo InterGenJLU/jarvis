@@ -17,7 +17,7 @@ This guide documents the complete process for training a custom Whisper model on
 
 ### Software
 - Ubuntu 24.04 LTS
-- Python 3.12 (system Python — venv-tts is broken/unused)
+- Python 3.12 (project venv at `.venv` with `--system-site-packages`)
 - sox (audio processing)
 - arecord/aplay (recording/playback)
 
@@ -123,9 +123,9 @@ Expected output: `Created metadata for 150 files`
 
 ### Phase 3: Model Training (~90 seconds on GPU)
 
-**1. Use System Python 3.12** (NOT venv-tts — that's broken/unused)
+**1. Use the project venv** (`.venv` with `--system-site-packages` — gives access to the source-built PyTorch)
 
-**Key packages:** `transformers`, `datasets`, `torch` (2.10.0+rocm7.1), `accelerate`, `evaluate`
+**Key packages:** `transformers`, `datasets`, `torch` (2.10.0+rocm7.2, built from source at `/home/user/pytorch-build`), `accelerate`, `evaluate`
 
 **2. Training Script Configuration**
 
@@ -274,7 +274,7 @@ model.config.forced_decoder_ids = processor.get_decoder_prompt_ids(
 
 **Cause:** Multiprocessing conflicts with file I/O
 
-**Solution:** Change to `num_proc=1` or use venv-tts
+**Solution:** Change to `num_proc=1`
 
 ---
 

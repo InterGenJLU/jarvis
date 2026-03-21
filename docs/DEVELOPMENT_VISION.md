@@ -57,7 +57,14 @@ Pre-P4c:  Pending skill confirmations
 P4-LLM:   ★ TOOL CALLING — semantic pruning → LLM with 11 tools (PRIMARY PATH)
 P4:       Skill routing — stateful skills (app_launcher, file_editor, social_intros)
 P5:       News continuation
-Fallback:  LLM streaming with tools (Qwen3.5 → quality gate → Claude API)
+Fallback:  LLM streaming with tools (Qwen3.5-35B → quality gate → Claude API)
+```
+
+**Dual-Model Architecture:** Qwen3.5-35B-A3B (port 8080) handles tool calling and complex queries. Qwen3.5-4B (port 8081) handles synthesis, contextual acknowledgments, and briefing composition — lower latency for lightweight tasks.
+
+**Conversational Awareness Layer (CAL):** A 6-phase system layered on top of the routing chain — reflexive layer (L0), awareness accumulator, briefing composer, and higher layers for contextual intelligence. CAL enables JARVIS to surface relevant information (news, reminders, calendar, weather) in response to conversational greetings rather than dead-end dismissals.
+
+```
 ```
 
 **P4-LLM is now the primary routing path** for most queries. The semantic pruner (threshold 0.40, hard cap 4 domain tools) selects relevant tools, then Qwen3.5 decides which to call via `stream_with_tools()`. 11 tools: 6 domain (get_system_info, find_files, get_weather, manage_reminders, developer_tools, get_news) + 5 always-included (web_search, recall_memory, take_screenshot, capture_webcam, enroll_face). Time/date queries are handled by the TimeInfoSkill (instant response via semantic matching, no LLM needed).
@@ -148,7 +155,7 @@ All 7 vision phases implemented. Qwen3.5's early-fusion multimodal architecture 
 | **Reminder state machine** | Scheduling, nag behavior, Google Calendar sync — too stateful, reliability-critical. A missed reminder is worse than awkward phrasing. (Note: reminder *queries* are LLM-driven via `manage_reminders` tool; the *state machine* stays hard-coded) |
 | **News RSS polling** | Background daemon behavior, not request-response. (Note: headline *delivery* is LLM-driven via `get_news` tool; the *polling/classification* stays hard-coded) |
 | **Conversation memory / context window** | Persistence and retrieval layers that *feed* the LLM |
-| **Speaker identification** | Real-time d-vector matching during audio processing |
+| **Speaker identification** | Real-time ECAPA-TDNN embedding matching during audio processing |
 | **Streaming TTS pipeline** | Gapless playback, aplay management, chunking — all latency-critical |
 
 ### Keep as Fast-Paths (Pre-P4 in router)

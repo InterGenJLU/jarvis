@@ -1,6 +1,6 @@
 # JARVIS System-Specific Configuration Notes
 
-**IMPORTANT:** These are system-specific settings that differ from defaults.
+**IMPORTANT:** These are the owner's system-specific settings that differ from defaults.
 
 ## TTS Configuration
 
@@ -52,10 +52,14 @@ Fallback base model (CPU only):
 ```
 /etc/systemd/system/llama-server.service
 ```
-- Port 8080, ROCm backend, GPU offload, `--parallel 1`
+- Port 8080 (35B model), ROCm backend, GPU offload, `--parallel 1`
 - `systemctl status llama-server` to check
 - Qwen3.5 supports native tool calling (web research) and thinking mode (disabled via `--reasoning-budget 0`)
 - mmproj vision encoder (mmproj-F16.gguf) available for vision queries via `--no-mmproj-offload` (CPU). Vision is fully operational across all 7 phases
+
+**Secondary Model:** Qwen3.5-4B on port 8081
+- Handles synthesis, contextual acknowledgments, and briefing composition
+- Lower latency for lightweight tasks that don't need the full 35B model
 
 **Fallback:** Claude API (Anthropic) — used when local quality gate fails
 
@@ -110,4 +114,4 @@ When updating `config.yaml`, always verify:
 ---
 
 **Last Updated:** March 12, 2026
-**System:** ubuntu2404 (the user's workstation)
+**System:** ubuntu2404 (the owner's workstation)

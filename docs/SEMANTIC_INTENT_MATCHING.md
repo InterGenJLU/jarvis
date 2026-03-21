@@ -8,7 +8,7 @@
 
 ## Overview
 
-JARVIS uses sentence-transformer embeddings (all-MiniLM-L6-v2, 23MB) for semantic similarity matching. This replaced brittle exact-pattern matching — 3-9 example phrases per intent instead of 100+ regex patterns.
+JARVIS uses sentence-transformer embeddings (nomic-embed-text-v1.5, 768-dim, GPU-accelerated on RX 7600) for semantic similarity matching. This replaced brittle exact-pattern matching — 3-9 example phrases per intent instead of 100+ regex patterns.
 
 With the LLM-centric migration (Phases 1-2, Feb 26-27), semantic matching now serves two roles:
 1. **Skill routing** — matching queries to the 3 non-migrated skills (app_launcher, file_editor, social_introductions)
@@ -22,9 +22,9 @@ For the 11 tools (6 domain: system_info, filesystem, weather, reminders, develop
 
 ### Model
 
-**Model:** `all-MiniLM-L6-v2`
-- Size: 23MB on disk, ~100MB in RAM
-- Speed: ~100ms inference on CPU
+**Model:** `nomic-embed-text-v1.5`
+- Dimensions: 768 (upgraded from 384-dim all-MiniLM-L6-v2)
+- GPU-accelerated on RX 7600 via `HIP_VISIBLE_DEVICES=0`
 - Offline-capable, no API calls
 - Cache: `/mnt/models/sentence-transformers/`
 
@@ -32,7 +32,7 @@ For the 11 tools (6 domain: system_info, filesystem, weather, reminders, develop
 
 ```python
 class SemanticMatcher:
-    def __init__(self, model_name="all-MiniLM-L6-v2", cache_dir=None)
+    def __init__(self, model_name="nomic-embed-text-v1.5", cache_dir=None)
     def register_intent(self, intent_id, examples, threshold=0.85)
     def match(self, query, default_threshold=0.85) -> (intent_id, score)
 ```
@@ -84,7 +84,7 @@ The `match_intent()` method uses a 4-layer hybrid approach. Each layer is tried 
 | 1 | Exact regex `.match()` | Pattern `^...$` against normalized text | <1ms |
 | 2 | Fuzzy regex `.search()` | Pattern found anywhere in text | <1ms |
 | 3 | `_match_by_keywords()` | Whole-word `\b` keyword count + alias bonus + suffix match + sub-semantic | ~1-5ms |
-| 4 | `_match_semantic_intents()` | Cross-skill embedding similarity (all-MiniLM-L6-v2) | ~100ms |
+| 4 | `_match_semantic_intents()` | Cross-skill embedding similarity (nomic-embed-text-v1.5) | ~100ms |
 
 ### Layer 3 Details (Keyword Matching)
 
@@ -155,7 +155,8 @@ Both Layer 4 (global semantic) and the semantic pruner use cached embeddings —
 # In config.yaml
 semantic_matching:
   enabled: true
-  model: "all-MiniLM-L6-v2"
+  model: "nomic-embed-text-v1.5"
+  device: "cuda"  # GPU-accelerated on RX 7600
   cache_dir: "/mnt/models/sentence-transformers"
   default_threshold: 0.85
   fallback_to_llm: true

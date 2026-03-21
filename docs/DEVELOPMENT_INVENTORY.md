@@ -22,7 +22,7 @@
 
 | # | Item | Effort | Status | Notes |
 |---|------|--------|--------|-------|
-| 1 | **IMAP Email via MCP** — read, search, archive by voice/web/mobile | Variable | NOT STARTED | Config stub commented out. MCP bridge ready. the user=Gmail, secondary=AOL |
+| 1 | **IMAP Email via MCP** — read, search, archive by voice/web/mobile | Variable | NOT STARTED | Config stub commented out. MCP bridge ready. Primary user=Gmail, secondary user=AOL |
 | 2 | **Mobile iOS App** — native app with wake word + WebRTC voice | 5-8 days | PHASE 1 DONE | Plan at `.claude/PLANS/INCOMPLETE/plan_mobile_ios_app.md`. Requires Apple Dev account |
 | 3 | **CalDAV Calendar (secondary user)** — Apple Calendar integration | 4-6 hrs | PARTIAL | Code complete (`caldav_calendar.py`), disabled — waiting on app-specific password |
 | 4 | **Concurrent multi-user support** — two simultaneous mobile users | 4-8 hrs | NOT STARTED | Depends on #2. Needs `--parallel 2`, per-user history, STT/TTS queuing |

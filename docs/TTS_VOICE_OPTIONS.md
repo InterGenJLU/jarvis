@@ -25,6 +25,8 @@ tts:
 
 **Piper fallback:** `en_GB-northern_english_male-medium.onnx` — activates automatically if Kokoro fails. Lower quality but guaranteed to work.
 
+**TTSCache:** 281 pre-synthesized phrases stored in a persistent disk cache. Loads in 11ms at startup, providing instant playback for common acknowledgments, greetings, and system responses without waiting for TTS generation.
+
 ---
 
 ## Evaluation History (Feb 15)
