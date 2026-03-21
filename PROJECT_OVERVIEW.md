@@ -8,12 +8,12 @@
 
 ## What Is This?
 
-JARVIS is a voice assistant built on two cooperating local LLMs, a 6-phase conversational awareness system, and face + voice identity fusion — all running on consumer AMD hardware. No cloud APIs in the critical path. The 35B-parameter model reasons and calls tools. The 4B model synthesizes results, generates contextual acknowledgments, and composes natural-language briefings. If either model fails, the other takes over transparently.
+JARVIS is a voice assistant where two local LLMs cooperate in real time, a 6-phase awareness system composes butler-style briefings, and face + voice biometrics identify who's in the room before they speak. Everything runs on consumer AMD hardware. No cloud in the critical path.
 
-It started as a wake-word-to-response loop in February 2026. Six weeks and ~66,000 lines of Python later, it has an 18-layer conversation router, 11 LLM tools with 100% calling accuracy, a self-managing memory system, computer vision, a conversational awareness layer that proactively briefs you on what you need to know, and three frontends (voice, console, web) all sharing the same routing engine.
+It started as a wake-word-to-response loop in February 2026. Six weeks and ~66,000 lines of Python later, it has a dual-model architecture (35B for reasoning + 4B for synthesis), a Conversational Awareness Layer that proactively briefs users on calendar events and news, InsightFace + SpeechBrain identity fusion, 11 LLM tools with 100% calling accuracy across 1,200+ trials, self-managing memory (MemGPT pattern, CMA 6/6), computer vision through desktop and mobile cameras, a task planner that decomposes compound requests, and three frontends (voice, console, web) sharing the same 18-layer routing engine.
 
-**Hardware:** Ryzen 9 5900X, 64GB RAM, RX 7900 XT (20GB, 35B LLM) + RX 7600 (8GB, 4B LLM + Whisper + embeddings), FIFINE K669B mic
-**Stack:** Python 3.12, ROCm 7.2, llama.cpp (rocWMMA flash attention), CTranslate2, Kokoro TTS, faster-whisper, FAISS, SpeechBrain, InsightFace, Silero VAD, aiohttp
+**Hardware:** Ryzen 9 5900X, 64GB RAM, RX 7900 XT (20GB, 35B model) + RX 7600 (8GB, 4B model + embeddings), FIFINE K669B mic
+**Stack:** Python 3.12, ROCm 7.2, llama.cpp (rocWMMA flash attention), CTranslate2, Kokoro TTS, faster-whisper, FAISS, InsightFace, SpeechBrain, Silero VAD, aiohttp
 
 ---
 
