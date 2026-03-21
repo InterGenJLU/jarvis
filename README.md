@@ -320,7 +320,7 @@ A single 20GB+ GPU can run the 35B LLM, Whisper STT, and embeddings — but with
 | OS | Ubuntu 24.04 LTS |
 | ROCm | 7.2.0 |
 
-> **GPU acceleration is optional but transformative.** CPU-only Whisper takes 0.3-0.5s per transcription. With GPU: 0.1-0.2s. The local LLM (Qwen3.5-35B-A3B) runs via llama.cpp with full GPU offload at ~48-63 tok/s. Dual GPU setup dedicates the RX 7900 XT entirely to compute while the RX 7600 handles the desktop compositor.
+> **GPU acceleration is optional but transformative.** CPU-only Whisper takes 0.3-0.5s per transcription. With GPU: 0.1-0.2s. The 35B LLM runs via llama.cpp with full GPU offload at ~48-63 tok/s. Dual GPU setup: RX 7900 XT runs the 35B, RX 7600 runs the 4B synthesis model + Whisper STT + embeddings.
 
 ---
 
@@ -344,15 +344,20 @@ sudo apt install -y \
     ffmpeg
 ```
 
-### 3. Install Python Dependencies
+### 3. Create Virtual Environment + Install Dependencies
 
-JARVIS uses **system Python 3.12** — not a virtualenv. See [Python & ROCm Pitfalls](#python--rocm-pitfalls) for why.
+JARVIS uses a venv with system site-packages access (required for ROCm library bindings). See the [AMD ROCm Build Guide](#amd-rocm-build-guide) for the full rationale and PyTorch source build instructions.
 
 ```bash
-pip install --break-system-packages -r requirements.txt
+# Create venv (--system-site-packages needed for ROCm)
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
 
-# Additional packages not in requirements.txt
-pip install --break-system-packages \
+# Core dependencies
+pip install -r requirements.txt
+
+# Additional packages
+pip install \
     faster-whisper \
     sentence-transformers \
     speechbrain \
@@ -371,20 +376,24 @@ pip install --break-system-packages \
 cd ~
 git clone https://github.com/ggml-org/llama.cpp
 cd llama.cpp
-mkdir build && cd build
 
-# CPU-only build:
-cmake .. -DCMAKE_BUILD_TYPE=Release
-# OR with ROCm GPU:
-cmake .. -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON -DCMAKE_HIP_ARCHITECTURES=gfx1100
+# ROCm GPU build (RDNA 3 flash attention enabled):
+HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+cmake -S . -B build \
+  -DGGML_HIP=ON \
+  -DGPU_TARGETS="gfx1100;gfx1102" \
+  -DGGML_HIP_ROCWMMA_FATTN=ON \
+  -DCMAKE_BUILD_TYPE=Release
 
-make -j$(nproc)
+cmake --build build --config Release -j $(nproc)
 ```
+
+See [AMD ROCm Build Guide](#amd-rocm-build-guide) for full details on GFX targets and multi-GPU configuration.
 
 ### 5. Install Piper TTS (fallback)
 
 ```bash
-pip install --break-system-packages piper-tts
+pip install piper-tts
 ```
 
 ### 6. Configure API Keys
@@ -1107,11 +1116,15 @@ Skills register semantic intents (natural language examples) and the sentence-tr
 - [faster-whisper](https://github.com/SYSTRAN/faster-whisper) by SYSTRAN — GPU-accelerated Whisper
 - [CTranslate2](https://github.com/OpenNMT/CTranslate2) by OpenNMT — Inference engine
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) by ggml-org — LLM inference
-- [Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) by Qwen — Local LLM (MoE, native tool calling)
+- [Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B) by Qwen — Reasoning LLM (MoE, native tool calling)
+- [Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) by Qwen — Synthesis LLM
 - [Piper](https://github.com/rhasspy/piper) by rhasspy — Fallback TTS
-- [sentence-transformers](https://github.com/UKPLab/sentence-transformers) — Semantic matching
+- [SpeechBrain](https://github.com/speechbrain/speechbrain) — Speaker identification (ECAPA-TDNN)
+- [InsightFace](https://github.com/deepinsight/insightface) — Face recognition (ArcFace)
+- [Silero VAD](https://github.com/snakers4/silero-vad) — Voice activity detection
+- [nomic-embed-text](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) by Nomic AI — Semantic embeddings
+- [sentence-transformers](https://github.com/UKPLab/sentence-transformers) — Embedding framework
 - [Porcupine](https://picovoice.ai/) by Picovoice — Wake word detection
-- [Resemblyzer](https://github.com/resemble-ai/Resemblyzer) by Resemble AI — Speaker identification
 - [Playwright](https://playwright.dev/) — Web navigation
 
 ---
@@ -1122,6 +1135,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Version:** 5.0.0
+**Version:** 6.0.0
 **Status:** Production — actively developed
-**Last Updated:** March 11, 2026
+**Last Updated:** March 21, 2026
