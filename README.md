@@ -295,25 +295,28 @@ FLUX.2-klein-4B runs locally on the RX 7900 XT via GPU swap — JARVIS pauses th
 
 ## Hardware Requirements
 
-### Minimum
+### Minimum (single GPU)
 
-| Component | Requirement |
-|-----------|------------|
-| CPU | x86_64, 4+ cores |
-| RAM | 8GB |
-| Storage | 10GB free |
-| Audio | USB microphone + speakers |
-| OS | Ubuntu 24.04 LTS |
+| Component | Requirement | Why |
+|-----------|------------|-----|
+| CPU | x86_64, 8+ cores | Kokoro TTS runs on CPU, concurrent with audio processing |
+| RAM | 32GB | Models + Python + OS overhead |
+| GPU | 20GB+ VRAM (AMD or NVIDIA) | 35B LLM at Q3_K_M needs ~19.5GB with 32K context |
+| Storage | 30GB free | Models (~25GB) + code + cache |
+| Audio | USB microphone + speakers | Voice mode requires both |
+| OS | Ubuntu 24.04 LTS | ROCm tested on this; other distros may work |
+
+A single 20GB+ GPU can run the 35B LLM, Whisper STT, and embeddings — but without the 4B synthesis model you lose the 60% TTFT improvement and contextual acks.
 
 ### Recommended (What This Was Built On)
 
-| Component | Spec |
-|-----------|------|
-| CPU | AMD Ryzen 9 5900X (24 threads) |
-| GPU (compute) | AMD RX 7900 XT (20GB VRAM) — STT + LLM |
-| GPU (display) | AMD RX 7600 — compositor only |
-| RAM | 64GB |
-| Microphone | USB condenser mic (FIFINE K669B tested) |
+| Component | Spec | Role |
+|-----------|------|------|
+| CPU | AMD Ryzen 9 5900X (24 threads) | Kokoro TTS, FAISS, VAD, general processing |
+| GPU 1 (compute) | AMD RX 7900 XT (20GB VRAM) | 35B LLM — reasoning + tool calling |
+| GPU 2 (inference) | AMD RX 7600 (8GB VRAM) | 4B LLM + Whisper STT + nomic embeddings |
+| RAM | 64GB | Headroom for concurrent models + browser + desktop |
+| Microphone | USB condenser mic (FIFINE K669B tested) | Voice input |
 | OS | Ubuntu 24.04 LTS |
 | ROCm | 7.2.0 |
 
