@@ -76,7 +76,7 @@ A fully local, GPU-accelerated voice assistant with fine-tuned speech recognitio
 - [Usage](#usage)
 - [Project Structure](#project-structure)
 - [Configuration Reference](#configuration-reference)
-- [Python & ROCm Pitfalls](#python--rocm-pitfalls)
+- [AMD ROCm Build Guide](#amd-rocm-build-guide) — complete RDNA 3 GFX target reference + build instructions
 - [Fine-Tuning Whisper](#fine-tuning-whisper)
 - [Development](#development)
 - [License](#license)
@@ -789,24 +789,147 @@ For the full configuration reference, see the comments in `config.yaml`.
 
 ---
 
-## Python & ROCm Pitfalls
+## AMD ROCm Build Guide
 
-Building JARVIS on an AMD GPU with ROCm taught some hard lessons. Here's what to watch out for.
+> **Complete RDNA 3 (RX 7000 Series) GFX target reference, PyTorch source build, llama.cpp flash attention, and CTranslate2 for ROCm 7.2 on AMD GPUs.**
 
-### Use System Python, Not Virtualenvs
+Building a production AI system on AMD GPUs with ROCm requires careful attention to GFX targets, resampling pipelines, and build order. These are hard-won lessons from building and running dual-GPU inference (RX 7900 XT + RX 7600) 24/7.
 
-JARVIS runs on **system Python 3.12** with `--break-system-packages`. This sounds wrong, but:
+### GPU Architecture Targets — Complete RDNA 3 Reference
 
-- **ROCm libraries** (`/opt/rocm-7.2.0/lib/`) must be on the system `LD_LIBRARY_PATH`
-- **CTranslate2** is built from source against ROCm — it links to system-level `.so` files
-- **PyTorch ROCm** (`torch+rocm7.1`) also needs the same ROCm libraries
-- Virtualenvs create isolation that **breaks these shared library dependencies**
+**This is the single most important thing to get right.** Each AMD GPU has a native GFX target determined by its chip. `rocminfo` may report the *overridden* identity (usually gfx1100) rather than the actual hardware target — don't rely on it blindly.
 
-We tested a CUDA-targeted venv. It was 9.3GB and completely non-functional on AMD hardware. Lesson learned.
+Find your GPU's true architecture: `rocminfo | grep gfx` (without HSA_OVERRIDE set)
 
-### CTranslate2 Must Be Built from Source for ROCm
+#### Chip-to-GFX Mapping
 
-The pip version of CTranslate2 is CUDA-only. For AMD GPUs:
+| Chip | GFX Target | LLVM Target | Architecture |
+|------|-----------|-------------|--------------|
+| **Navi 31** | gfx1100 | {11, 0, 0} | RDNA 3 Chiplet |
+| **Navi 32** | gfx1101 | {11, 0, 1} | RDNA 3 Chiplet |
+| **Navi 33** | gfx1102 | {11, 0, 2} | RDNA 3 Monolithic |
+| **Phoenix (APU)** | gfx1103 | {11, 0, 3} | RDNA 3 iGPU |
+
+#### Desktop GPUs
+
+| GPU | Chip | Native GFX | `HSA_OVERRIDE_GFX_VERSION` | CUs | VRAM |
+|-----|------|-----------|---------------------------|-----|------|
+| RX 7900 XTX | Navi 31 | gfx1100 | `11.0.0` | 96 | 24 GB |
+| RX 7900 XT | Navi 31 | gfx1100 | `11.0.0` | 84 | 20 GB |
+| RX 7900 GRE | Navi 31 | gfx1100 | `11.0.0` | 80 | 16 GB |
+| RX 7800 XT | Navi 32 | gfx1101 | `11.0.0` or `11.0.1`* | 60 | 16 GB |
+| RX 7700 XT | Navi 32 | gfx1101 | `11.0.0` or `11.0.1`* | 54 | 12 GB |
+| RX 7600 XT | Navi 33 | gfx1102 | `11.0.0` or `11.0.2` | 32 | 16 GB |
+| RX 7600 | Navi 33 | gfx1102 | `11.0.0` or `11.0.2` | 32 | 8 GB |
+
+*`11.0.1` for Navi 32 is supported by ROCm 7.2+ (native gfx1101 kernels ship in rocBLAS) but is less widely tested than `11.0.0`. We have confirmed `11.0.2` works for Navi 33 in production.
+
+#### Workstation GPUs
+
+| GPU | Chip | Native GFX |
+|-----|------|-----------|
+| Radeon PRO W7900 | Navi 31 | gfx1100 |
+| Radeon PRO W7800 | Navi 31 | gfx1100 |
+| Radeon PRO W7700 | Navi 32 | gfx1101 |
+| Radeon PRO W7600 | Navi 33 | gfx1102 |
+| Radeon PRO W7500 | Navi 33 | gfx1102 |
+
+#### Mobile GPUs
+
+| GPU | Chip | Native GFX |
+|-----|------|-----------|
+| RX 7600M XT | Navi 33 | gfx1102 |
+| RX 7600M / 7600S / 7700S | Navi 33 | gfx1102 |
+
+#### APU iGPUs
+
+| iGPU | Native GFX | `HSA_OVERRIDE_GFX_VERSION` |
+|------|-----------|---------------------------|
+| Radeon 780M / 760M / 740M | gfx1103 | `11.0.0` |
+
+#### Why `11.0.0` for Everything?
+
+ROCm libraries (rocBLAS, MIOpen) ship pre-compiled kernels for gfx1100. The `HSA_OVERRIDE_GFX_VERSION=11.0.0` override tells the runtime to use these kernels, which are binary-compatible across the GFX11 family. PyTorch ROCm wheels are also compiled for gfx1100 only, so non-gfx1100 GPUs **require** this override to use pre-built wheels.
+
+As of ROCm 7.2.0, rocBLAS ships native kernels for gfx1100, gfx1101, and gfx1102 — so `11.0.2` also works for Navi 33 GPUs. However, `11.0.0` is the most widely tested and community-recommended value.
+
+#### The rocminfo Reporting Gotcha
+
+With `HSA_OVERRIDE_GFX_VERSION=11.0.0` set system-wide, `rocminfo` reports **all** GPUs as gfx1100 — even if the hardware is actually gfx1102. This is expected behavior: rocminfo shows the overridden identity, not the true hardware target. To see the real GFX target, temporarily unset the override: `unset HSA_OVERRIDE_GFX_VERSION && rocminfo | grep gfx`.
+
+#### Historical Note
+
+Early ROCm documentation ([issue #2475](https://github.com/ROCm/ROCm/issues/2475), [issue #2500](https://github.com/ROCm/ROCm/issues/2500)) incorrectly listed the RX 7600 as gfx1100 instead of gfx1102. Additionally, early WCCFtech reporting swapped Navi 32 and Navi 33 targets. The LLVM source code is the authoritative reference.
+
+### Step 1: Create a Virtual Environment
+
+**Do not use `--break-system-packages`.** Use a venv with system site-packages access (needed for ROCm bindings):
+
+```bash
+python3 -m venv --system-site-packages /path/to/your/project/.venv
+source /path/to/your/project/.venv/bin/activate
+```
+
+All subsequent pip installs and service `ExecStart` paths should use the venv Python.
+
+### Step 2: Build PyTorch from Source
+
+The pip wheels for PyTorch+ROCm often have mismatched GFX targets or version string issues. Building from source ensures your PyTorch matches your exact ROCm installation and GPU architecture:
+
+```bash
+# Install build dependencies
+pip install "setuptools>=70.1.0,<82" cmake ninja numpy packaging pyyaml \
+  requests six "typing-extensions>=4.10.0" mkl-static mkl-include wheel
+
+# Clone and checkout
+cd ~
+git clone --recursive https://github.com/pytorch/pytorch pytorch-build
+cd pytorch-build
+git checkout v2.10.0
+git submodule sync
+git submodule update --init --recursive
+
+# Set build environment — adjust PYTORCH_ROCM_ARCH for YOUR GPUs
+export ROCM_PATH=/opt/rocm-7.2.0
+export PYTORCH_ROCM_ARCH="gfx1100;gfx1102"  # Both GPUs!
+export USE_ROCM=1
+export USE_CUDA=0
+export USE_MKLDNN=0
+export USE_NINJA=1
+export BUILD_TEST=0
+export MAX_JOBS=16
+export CMAKE_PREFIX_PATH="${ROCM_PATH}:${CMAKE_PREFIX_PATH}"
+export PATH="${ROCM_PATH}/bin:${PATH}"
+export HSA_OVERRIDE_GFX_VERSION=11.0.0
+
+# Hipify CUDA code to HIP, then build (~60-120 min)
+python tools/amd_build/build_amd.py
+pip install --no-build-isolation -v -e . 2>&1 | tee /tmp/pytorch_build.log
+```
+
+**Important:** This creates an editable install. The `pytorch-build` directory must NOT be deleted — Python links to it at runtime.
+
+### Step 3: Build llama.cpp with Flash Attention
+
+RDNA 3 supports flash attention via rocWMMA. This flag (`GGML_HIP_ROCWMMA_FATTN`) significantly improves inference performance:
+
+```bash
+cd ~/llama.cpp
+rm -rf build
+
+HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+cmake -S . -B build \
+  -DGGML_HIP=ON \
+  -DGPU_TARGETS="gfx1100;gfx1102" \
+  -DGGML_HIP_ROCWMMA_FATTN=ON \
+  -DCMAKE_BUILD_TYPE=Release
+
+cmake --build build --config Release -j 16
+```
+
+### Step 4: Build CTranslate2 from Source
+
+The pip version is CUDA-only. For AMD GPUs, build with HIP support. **Target both GPU architectures:**
 
 ```bash
 git clone --recursive https://github.com/OpenNMT/CTranslate2.git
@@ -816,7 +939,7 @@ cmake .. \
   -DWITH_HIP=ON \
   -DWITH_MKL=OFF \
   -DWITH_OPENBLAS=ON \
-  -DCMAKE_HIP_ARCHITECTURES=gfx1100 \
+  -DCMAKE_HIP_ARCHITECTURES="gfx1100;gfx1102" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_HIP_COMPILER=/opt/rocm/lib/llvm/bin/clang++ \
   -DCMAKE_CXX_COMPILER=/opt/rocm/lib/llvm/bin/clang++ \
@@ -827,40 +950,53 @@ cmake .. \
 make -j$(nproc)
 sudo make install && sudo ldconfig
 
-# Python bindings
+# Python bindings (into your venv)
 cd ../python
-pip install --break-system-packages .
+pip install .
 ```
 
-Find your GPU architecture with `rocminfo | grep gfx`.
+### Step 5: Service Configuration — Per-GPU GFX Overrides
 
-### PyTorch + CTranslate2 Coexistence
+Each systemd service must set the correct GFX override for the GPU it runs on:
 
-Both PyTorch (`torch 2.10.0+rocm7.1`) and CTranslate2 use `/opt/rocm-7.2.0/lib/`. They coexist fine **if**:
+```ini
+# 35B LLM on RX 7900 XT (llama-server.service)
+Environment=HSA_OVERRIDE_GFX_VERSION=11.0.0
+Environment=HIP_VISIBLE_DEVICES=1
 
-1. Both are installed at the system level (not in separate venvs)
-2. `LD_LIBRARY_PATH` includes `/opt/rocm-7.2.0/lib/`
-3. The ROCm environment variables are set:
+# 4B LLM on RX 7600 (llama-server-small.service)
+Environment=HSA_OVERRIDE_GFX_VERSION=11.0.2
+Environment=HIP_VISIBLE_DEVICES=0
 
-```bash
-export HSA_OVERRIDE_GFX_VERSION=11.0.0
-export ROCM_PATH=/opt/rocm-7.2.0
-export LD_LIBRARY_PATH=/opt/rocm-7.2.0/lib
+# Voice service (Whisper + embeddings on RX 7600)
+Environment=HSA_OVERRIDE_GFX_VERSION=11.0.2
+Environment=HIP_VISIBLE_DEVICES=0
 ```
 
-### Environment Variables for ROCm
+We use `11.0.2` (native gfx1102) for the RX 7600 and it works correctly on ROCm 7.2.0. The community standard is `11.0.0` for all RDNA 3 — both values are valid for Navi 33 GPUs since ROCm 7.2 ships native gfx1102 kernels.
 
-These must be set for both the systemd service and any manual runs:
+### Environment Variables Reference
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
-| `HSA_OVERRIDE_GFX_VERSION` | `11.0.0` | GPU architecture override for RDNA 3 |
+| `HSA_OVERRIDE_GFX_VERSION` | `11.0.0` | GPU architecture override — standard for all RDNA 3 (see reference table above) |
+| `HIP_VISIBLE_DEVICES` | `0` or `1` | Which GPU a process sees (0=first, 1=second) |
 | `ROCM_PATH` | `/opt/rocm-7.2.0` | ROCm installation path |
-| `LD_LIBRARY_PATH` | `/opt/rocm-7.2.0/lib` | Shared library search path |
+| `PYTORCH_ROCM_ARCH` | `gfx1100;gfx1102` | Build-time only: which architectures to compile for |
 
-### Import Order Matters (Historical)
+### Audio Resampling — Speaker ID Pitfall
 
-Early in development, the order of `import torch` vs `import ctranslate2` determined which ROCm version was loaded. This is resolved now, but as a defensive practice, `core/stt.py` avoids importing torch directly.
+If you use speaker identification (ECAPA-TDNN or similar), the resampling method used for enrollment **must match** the resampling method used in production. We discovered that enrollment using `scipy.signal.resample_poly` (bandlimited anti-aliasing) and production using `np.interp` (linear interpolation) produced spectrally different audio from the same speaker — causing cosine similarity scores to drop from 0.81 to -0.003 (effectively treating the same person as a stranger).
+
+**Fix:** Use `resample_poly` in both paths. Never use `np.interp` for audio that feeds into speaker embedding models.
+
+### PyTorch + CTranslate2 Coexistence
+
+Both use `/opt/rocm-7.2.0/lib/`. They coexist in the same venv if:
+
+1. Both target the same ROCm version
+2. `LD_LIBRARY_PATH` includes `/opt/rocm-7.2.0/lib/`
+3. `core/stt.py` avoids importing torch directly (historical import-order sensitivity)
 
 ---
 
