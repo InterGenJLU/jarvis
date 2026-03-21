@@ -170,7 +170,13 @@ class Watchdog(threading.Thread):
         last_tx = self._coordinator._last_transcription_ts
         if last_vad <= last_tx:
             return False  # No VAD activity since last transcription — just silence
-        idle_duration = time.monotonic() - last_tx
+        # Don't fire if listening recently resumed after TTS playback.
+        # The last_tx timestamp may be stale from before a long TTS sequence
+        # (greeting → briefing → rundown). Measure from the later of
+        # last_tx or last_idle to avoid false "stuck" triggers.
+        last_idle = self._coordinator._last_idle_ts
+        baseline = max(last_tx, last_idle)
+        idle_duration = time.monotonic() - baseline
         return idle_duration > self._listener_stuck_threshold
 
     def _recover_listener_stuck(self):
