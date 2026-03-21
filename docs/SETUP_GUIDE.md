@@ -185,43 +185,36 @@ python3 jarvis_console.py
 ## GPU Acceleration Setup
 
 ### Requirements
-- AMD GPU (RDNA 2/3 recommended)
+- AMD GPU (RDNA 3 recommended — full GFX target reference below)
 - ROCm 7.2+
-- 16GB+ VRAM recommended (20GB for Qwen3.5 Q3_K_M + ctx-size 32768)
+- 20GB+ VRAM recommended for the 35B LLM (Qwen3.5 Q3_K_M + 32K context)
+- Second GPU optional but recommended (4B synthesis model, Whisper, embeddings)
 
-### Build CTranslate2 with ROCm (for Whisper STT)
+### Complete Build Guide
+
+The full GPU setup — including PyTorch from source, llama.cpp with RDNA 3 flash attention, CTranslate2, per-GPU service configuration, and the complete RDNA 3 GFX target reference for every RX 7000 series GPU — is in the README:
+
+**[AMD ROCm Build Guide](../README.md#amd-rocm-build-guide)**
+
+This covers:
+1. **GFX target reference** — every RX 7000 desktop, mobile, workstation, and APU GPU mapped to its chip, native GFX target, and HSA_OVERRIDE_GFX_VERSION
+2. **Venv setup** — `--system-site-packages` for ROCm bindings
+3. **PyTorch from source** — built against ROCm 7.2.0 with dual GPU architecture targets
+4. **llama.cpp** — with `GGML_HIP_ROCWMMA_FATTN=ON` for RDNA 3 flash attention
+5. **CTranslate2** — built with HIP support and dual GPU targets
+6. **Per-GPU service configuration** — different `HSA_OVERRIDE_GFX_VERSION` per systemd service
+7. **Speaker ID resampling pitfall** — enrollment vs production audio pipeline matching
+
+### Quick Verify
 ```bash
-cd ~/
-git clone --recursive https://github.com/OpenNMT/CTranslate2.git
-cd CTranslate2
-mkdir build && cd build
-
-cmake .. \
-  -DWITH_HIP=ON \
-  -DWITH_MKL=OFF \
-  -DWITH_OPENBLAS=ON \
-  -DCMAKE_HIP_ARCHITECTURES=gfx1100 \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DOPENMP_RUNTIME=COMP \
-  -DCMAKE_HIP_COMPILER=/opt/rocm/lib/llvm/bin/clang++ \
-  -DCMAKE_CXX_COMPILER=/opt/rocm/lib/llvm/bin/clang++ \
-  -DCMAKE_C_COMPILER=/opt/rocm/lib/llvm/bin/clang \
-  -DCMAKE_PREFIX_PATH=/opt/rocm \
-  -DBUILD_CLI=OFF
-
-make -j$(nproc)
-sudo make install
-sudo ldconfig
-
-# Install Python bindings
-cd ../python
-pip install .
-```
-
-### Verify GPU
-```bash
+# Check ROCm sees your GPU(s)
 rocm-smi
-journalctl --user -u jarvis | grep "GPU ACTIVE"
+
+# Check llama-server is running
+systemctl status llama-server.service
+
+# Check JARVIS logs for GPU activity
+journalctl --user -u jarvis | grep -i "gpu\|cuda\|hip" | tail -5
 ```
 
 ## Voice Training (Optional)
