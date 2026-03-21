@@ -1,302 +1,272 @@
 # JARVIS — Project Overview
 
-**Version:** 5.0.0
-**Last Updated:** March 11, 2026
-**Status:** Production — running 24/7 as a systemd service
+**Version:** 6.0.0
+**Last Updated:** March 21, 2026
+**Status:** Production — running 24/7 as systemd services
 
 ---
 
 ## What Is This?
 
-JARVIS is a voice assistant that runs entirely on local hardware. No cloud APIs in the critical path. Speech recognition, language understanding, tool calling, vision, memory, and text-to-speech all run on a single desktop with an AMD GPU.
+JARVIS is a voice assistant built on two cooperating local LLMs, a 6-phase conversational awareness system, and face + voice identity fusion — all running on consumer AMD hardware. No cloud APIs in the critical path. The 35B-parameter model reasons and calls tools. The 4B model synthesizes results, generates contextual acknowledgments, and composes natural-language briefings. If either model fails, the other takes over transparently.
 
-It started as a wake-word-to-response loop in February 2026. Five weeks and ~66,000 lines of Python later, it has an 18-layer conversation router, 11 LLM tools with 100% calling accuracy, a self-managing memory system, computer vision through desktop and mobile cameras, a task planner that decomposes compound requests, and three frontends (voice, console, web) all sharing the same routing engine.
+It started as a wake-word-to-response loop in February 2026. Six weeks and ~66,000 lines of Python later, it has an 18-layer conversation router, 11 LLM tools with 100% calling accuracy, a self-managing memory system, computer vision, a conversational awareness layer that proactively briefs you on what you need to know, and three frontends (voice, console, web) all sharing the same routing engine.
 
-**Hardware:** Ryzen 9 5900X, 64GB RAM, RX 7900 XT (20GB, compute) + RX 7600 (display), FIFINE K669B mic
-**Stack:** Python 3.12, ROCm 7.2, llama.cpp, CTranslate2, Kokoro TTS, faster-whisper, FAISS, aiohttp
+**Hardware:** Ryzen 9 5900X, 64GB RAM, RX 7900 XT (20GB, 35B LLM) + RX 7600 (8GB, 4B LLM + Whisper + embeddings), FIFINE K669B mic
+**Stack:** Python 3.12, ROCm 7.2, llama.cpp (rocWMMA flash attention), CTranslate2, Kokoro TTS, faster-whisper, FAISS, SpeechBrain, InsightFace, Silero VAD, aiohttp
 
 ---
 
-## What Makes It Interesting
+## Dual-Model Architecture
 
-### 100% Tool Calling Accuracy on a Local 3B-Active MoE
+Two Qwen3.5 models run simultaneously on separate GPUs:
 
-Qwen3.5-35B-A3B is a mixture-of-experts model: 35B total parameters, but only ~3B active per token. At Q3_K_M quantization it fits in ~19.5GB VRAM with 32K context. JARVIS gives it 11 tools via OpenAI-compatible function calling through llama.cpp, and across 1,200+ test trials it has never called the wrong tool or hallucinated a tool call.
-
-The key is a **semantic pruning layer** that runs before the LLM sees the tools. A sentence-transformer model (nomic-embed-text-v1.5, 768-dim on RX 7600 GPU — evolved from all-MiniLM-L6-v2) scores all 11 tools against the query by embedding similarity and only passes the top 4 to the LLM. This keeps the tool schema small enough that a 3B-active model handles it reliably. The pruner also scores always-included tools (web_search, recall_memory, screenshots, webcam, face enrollment) via `INTENT_EXAMPLES` on each tool module — without this, the pruner would defer them to the skill layer and they'd never reach the LLM.
-
-### 18-Layer Conversation Router, One Router for Three Frontends
-
-Every request — voice, console keyboard, or browser WebSocket — enters the same `ConversationRouter.route()` method. The 18-layer priority chain evaluates top-to-bottom:
-
-- **P0-P2.8** — Deterministic fast paths: delivery mode commands, rundown acceptance, task planner interrupts (cancel/skip/pause/resume), reminder acknowledgments, memory forget confirmations, multi-turn social introduction state machine, dismissal detection ("that's all"), bare acknowledgment filtering ("yeah", "ok"). Zero LLM calls, sub-10ms.
-- **P3-P3.7** — Memory and artifact resolution: recall/forget/transparency, structured readback with section navigation (next/previous/section N), artifact reference resolution ("the second result", "that recipe", "repeat that"), news article pull-up.
-- **Pre-P4** — Compound request detection via 22 conjunctive regex patterns ("and then", "after that"). Triggers the task planner: LLM generates a JSON plan (max 4 steps), executes sequentially with per-step LLM evaluation, voice interrupts between steps.
-- **P4-LLM** — The primary path. Semantic pruner selects top 4 tools, LLM calls one (or none), 17-domain classifier selects a specialized synthesis prompt, LLM streams the answer.
-- **P4-Skill** — Stateful skills (app_launcher, file_editor, social_introductions) via 5-layer semantic intent matching.
-- **Fallback** — Pure LLM conversation with quality gating and Claude API fallback.
-
-Building it once and sharing it across three frontends eliminated an entire class of "works in console but not voice" bugs.
-
-### Self-Managing Memory (MemGPT Pattern + CMA 6/6)
-
-After every exchange, the LLM extracts durable facts and stores them in SQLite. The `recall_memory` tool (always available) searches stored facts via text matching and FAISS semantic similarity. The system hit CMA 6/6 (Consolidation, Mapping, Abstraction) — all six requirements of the original MemGPT evaluation framework:
-
-1. **Importance scoring** — facts ranked by salience
-2. **Retrieval-driven mutation** — facts update when contradicted
-3. **Associative linking** — graph edges between related facts
-4. **Consolidation** — episode-to-semantic knowledge promotion
-5. **Abstraction** — pattern recognition across episodes
-6. **Proactive surfacing** — relevant facts injected into LLM context before the user asks
-
-The LLM doesn't just answer questions about memories — it proactively surfaces them. Ask about weekend plans and it'll mention your stored preference for a particular BBQ restaurant.
-
-### Domain-Aware Anti-Hallucination
-
-When the LLM calls a tool, the response doesn't just get dumped into a generic "summarize this" prompt. A 17-domain regex classifier categorizes the query (math, veterinary, medical, nutrition, finance, legal, gaming, sports, automotive, real estate, programming, science/tech, history, travel, factual, geo), and one of 14 domain-specific synthesis prompts is injected. Medical queries get disclaimer language. Programming responses specify language versions. Legal responses cite jurisdiction limitations. Sports queries avoid speculation on games not yet played.
-
-This turns out to matter more than expected. Without it, a local model confidently tells you the wrong drug interaction or invents a Supreme Court ruling.
-
-### Computer Vision — Desktop, Mobile, and Presence
-
-JARVIS sees through three paths:
-
-- **Desktop webcam** — ffmpeg MJPEG singleton (v4l2, 1280x720, 15fps) with auto-start/stop and 30s idle shutdown. "What do you see?" captures a frame, downscales via PIL, and sends it to Qwen3.5's multimodal pipeline (mmproj-F16.gguf on CPU, 90s timeout).
-- **Mobile camera relay** — When accessed from a phone, the server sends a `frame_request` over WebSocket, the browser captures from `getUserMedia`, returns a base64 JPEG `frame_response`. Same LLM pipeline, but the camera is in your pocket.
-- **`take_screenshot`** — Captures the desktop via gnome-screenshot with optional window cropping. "What's on my screen?" works.
-- **Face enrollment** — `enroll_face` tool stores face embeddings for presence-based greetings. Walk into the room and JARVIS greets you by name.
-
-All vision runs on the local Qwen3.5 multimodal model. No cloud vision APIs.
-
-### 5-Phase Interaction Artifact Cache
-
-Every tool result is stored as a typed artifact in a hot/warm/cold tiered cache:
-
-1. **Typed storage** — weather, search, reminder, news, system, file, dev_tools, memory artifacts
-2. **Reference resolution** — "the second result", "that recipe", "repeat that" resolve to cached artifacts
-3. **Sub-item navigation** — on-demand LLM decomposition of complex results
-4. **Memory promotion** — session-end summarization pushes artifacts to long-term memory
-5. **Cross-session retrieval** — FAISS semantic search across cold-tier artifacts
-
-This means JARVIS remembers what it told you, can refer back to specific results, and can retrieve information from previous sessions without being explicitly asked.
-
-### Streaming Everything
-
-The LLM streams tokens. As they arrive, a sentence chunker buffers until it hits sentence-ending punctuation, then hands complete sentences to Kokoro TTS. Kokoro generates audio in a background thread. A single persistent `aplay` process plays audio segments with zero gaps between sentences. The user hears the first sentence while the LLM is still generating the third.
-
-The contextual acknowledgment cache (10 pre-synthesized phrases tagged as neutral/checking/working/research) plays an appropriate "working on it" phrase if the LLM hasn't responded within 300ms, so there's never dead air.
-
-### Persona Engine — Not Just Templates
-
-38 response pool categories with ~184 templates. But it's more than random selection:
-
-- **Style-tagged acks** — "checking" acks for factual queries, "research" acks for web searches, "working" acks for tool calls
-- **Dynamic honorifics** — "sir" for the primary user, "ma'am" and "Ms. Guest" (formal on greetings/farewells) for the secondary user, "friend" for unknown speakers
-- **Guest mode** — Unknown speakers get a security boundary: HAL 9000 easter egg greetings, only `get_weather` and `web_search` tools, no memory access, no personal tools
-- **Domain disclaimers** — Dry-humor disclaimers for medical and legal queries
-- **Multi-speaker tracking** — Per-speaker history labels, rapid-switch detection (3 switches in 60s triggers a butler-style retort)
-
-### One-File Tool Plugin System
-
-Adding a new tool to JARVIS:
-
-```python
-# core/tools/your_tool.py
-TOOL_NAME = "your_tool"
-SKILL_NAME = "your_skill"       # or None
-SCHEMA = { ... }                 # OpenAI function schema
-SYSTEM_PROMPT_RULE = "..."       # When the LLM should use this tool
-def handler(args):
-    return "result"
+```
+                    User speaks
+                        │
+            ┌───────────▼───────────┐
+            │   RX 7600 (8GB)       │
+            │   Whisper STT         │
+            │   Speaker ID (ECAPA)  │
+            │   Embeddings (nomic)  │
+            │   Qwen3.5-4B (8081)   │
+            └───────────┬───────────┘
+                        │ text + identity
+            ┌───────────▼───────────┐
+            │   ConversationRouter  │
+            │   18-layer priority   │
+            └───┬─────────────┬─────┘
+                │             │
+    ┌───────────▼──┐   ┌──────▼──────────┐
+    │  Fast paths  │   │  RX 7900 XT     │
+    │  CAL-L0      │   │  (20GB)         │
+    │  Skills      │   │  Qwen3.5-35B    │
+    │  (<50ms)     │   │  (port 8080)    │
+    └───────────┬──┘   │  Tool selection │
+                │      │  Reasoning      │
+                │      └──────┬──────────┘
+                │             │ tool result
+                │      ┌──────▼──────────┐
+                │      │  RX 7600        │
+                │      │  Qwen3.5-4B     │
+                │      │  Synthesis      │
+                │      │  (60% faster)   │
+                │      └──────┬──────────┘
+                │             │
+            ┌───▼─────────────▼─────┐
+            │  Persona + TTS        │
+            │  Kokoro → aplay       │
+            └───────────────────────┘
 ```
 
-Drop it in `core/tools/`. The registry auto-discovers it at startup, builds the schema, injects runtime dependencies, and makes it available to the LLM. No imports to update, no wiring changes, no registry edits.
+**How it works:**
+- The **35B** (MoE, ~3B active per token, 19.5GB VRAM) handles reasoning, tool selection, and complex conversation
+- The **4B** (Q4_K_M, 2.6GB VRAM) handles three tasks:
+  1. **Tool result synthesis** — converts structured tool data into natural speech (60% TTFT reduction vs 35B)
+  2. **Contextual acknowledgments** — generates butler-like acks in ~600ms ("Let me look into those buffer overflow CVEs for you, sir") while the 35B is still routing
+  3. **Briefing composition** — weaves awareness items into natural spoken briefings
+- **Transparent fallback** — if the 4B fails (HTTP error, connection refused, quality issue), the 35B handles it. The user never knows which model answered
+- **Call chain tracking** — every pipeline run records which model handled each phase (routing, synthesis) with TTFT per model
+
+### Focused Synthesis Prompt
+
+The 4B doesn't receive the same bloated system prompt as the 35B. Tool-calling rules, web search guidelines, and tool schemas are stripped — the 4B gets `persona.system_prompt_brief()` (identity + honorific + anti-filler rules only). This cuts ~1,000 tokens of prefill and is the primary driver of the 60% TTFT reduction.
+
+---
+
+## Conversational Awareness Layer (CAL)
+
+A 6-phase system that transforms JARVIS from reactive command-response into a contextually aware conversational participant.
+
+### Phase 1: Greeting Flow Foundation
+
+When the presence detector identifies a user via face recognition, it:
+1. Sets `conversation.current_user` (face ID is authoritative)
+2. Tags the conversation window as `"presence_greeting"` or `"presence_return"`
+3. Opens an 8-second response window
+
+When the user responds with a greeting, CAL-L0 absorbs it silently (no double-greeting) and triggers the briefing pipeline.
+
+### Phase 2: Awareness Accumulator
+
+An always-on priority queue that pulls from four data sources via thin adapters:
+
+| Source | Adapter | What It Surfaces |
+|--------|---------|-----------------|
+| **Calendar** | `adapt_calendar()` | Events within 4h (morning) / 2h (afternoon). Queries BOTH primary + JARVIS calendars. All-day events pre-naturalized ("Today is Malikai's Birthday") |
+| **Weather** | `adapt_weather()` | Active NWS alerts with severity-based urgency (extreme=1.0, severe=0.9, moderate=0.7) |
+| **Reminders** | `adapt_reminders()` | Pending acks + upcoming within 2h |
+| **News** | `adapt_news()` | Critical/high priority unread headlines (priority 1-2 only) |
+
+**Scoring formula (deterministic, no LLM):**
+```
+score = (urgency × 0.3) + (time_pressure × 0.3) + (novelty × 0.2) + (user_relevance × 0.2)
+```
+
+**Delivery log:** SQLite dedup with 24h TTL prevents re-surfacing the same item.
+
+### Phase 3: Briefing Composer
+
+The 4B model synthesizes ranked awareness items into natural butler-style speech.
+
+**Split prompt architecture:**
+- **Single item (12-word cap, 16 max_tokens):** Tight, focused — no room for hallucination. "Malikai's birthday is today, sir."
+- **Multi-item (35-word cap, 60 max_tokens):** Room to weave and connect. "Your open meeting in two hours, and today marks Malikai's birthday, sir."
+
+**Prompt engineering lessons (hard-won):**
+- Qwen treats prompt examples as output content — specific words in examples WILL appear in generation. Use generic placeholders.
+- Token budget is the mechanical enforcer, word cap is the intent signal — use BOTH.
+- BANNED word list for negative reinforcement (explain, delve, comprehensive, fascinating, compile).
+- User identity flows through: face ID → `current_user` → `user_name` in prompt → "your" substitution for the user's own items.
+
+### Phase 4: Adapters
+
+News and reminder adapters extend the Accumulator with additional data sources. News filters to critical/high priority only (urgency: critical=0.85, high=0.5). Reminders surface pending acks and upcoming events within 2 hours.
+
+### Phase 5: Moment Expansion
+
+Five trigger types with different budgets:
+
+| Moment | Budget | Threshold | Trigger |
+|--------|--------|-----------|---------|
+| Morning greeting | 3 items | 0.3 | Face detected, user responds with greeting |
+| Return from absence | 2 items | 0.4 | Face detected after >30 min absence |
+| "Catch me up" | 5 items | 0.1 | User explicitly asks (10 keyword phrases) |
+| Post-task nudge | 1 item | 0.6 | After substantive task completes (not conversational exchanges) |
+| Ambient awareness | 1 item | 0.85 | User PRESENT, conversation idle, 60s cooldown — critical/safety only |
+
+### Phase 6: Ambient Awareness
+
+Critical items (score >= 0.85) spoken unprompted when the user is present and not in active conversation. Only extreme/severe weather alerts and critical news qualify. Fires in the presence detector's 10-second poll cycle with a 60-second cooldown between deliveries.
+
+---
+
+## Face + Voice Identity Fusion
+
+Two biometric systems cooperate with a clear authority model:
+
+| System | Model | Accuracy | Role |
+|--------|-------|----------|------|
+| **Face ID** | InsightFace ArcFace (512-dim) | 99.83% LFW | **Authoritative** — sets identity at detection time |
+| **Speaker ID** | SpeechBrain ECAPA-TDNN (192-dim) | 0.80% EER | **Confirmatory** — can upgrade to identified, never downgrades to guest |
+
+**Flow:** Face detection → `current_user` set → greeting fired → user speaks → speaker ID runs → if speaker ID matches: confirmed. If speaker ID misses: face ID holds (no guest mode override).
+
+**Enrollment:** Multi-clip enrollment (5 clips × 5 seconds) with `scipy.signal.resample_poly` for bandlimited resampling. Production audio path uses identical resampling — mismatched resampling methods destroy embedding consistency.
+
+---
+
+## Contextual Acknowledgments
+
+Instead of generic cached phrases ("Let me check"), the 4B generates contextual acks in ~600ms:
+
+```
+User: "Search for recent buffer overflow CVEs"
+
+Generic ack:    "Let me check."
+Contextual ack: "Let me search for the recent buffer overflow CVEs, sir."
+```
+
+**How it works:**
+1. Command arrives → `_classify_ack()` determines if an ack is needed
+2. If yes, fire 4B generation in a background thread immediately (parallel with routing)
+3. 1.5-second timer fires → check if contextual ack is ready
+4. If ready → speak it. If not → fall back to generic cached ack
+5. Zero added latency — the 4B runs in parallel, not in series
+
+---
+
+## 18-Layer Conversation Router
+
+Every request — voice, console, or web — enters `ConversationRouter.route()`. One router, three frontends.
+
+- **CAL-L0 (P2.9)** — Reflexive layer: 13 categories, ~200 patterns, <50ms. Greetings, farewells, thanks, compliments, small talk, meta-questions. Defers to CAL briefing during presence windows.
+- **P0-P2.8** — Deterministic fast paths: delivery modes, rundown acceptance, task planner control, reminder acks, memory forget, face enrollment, self-identification → memory, introduction state machine, dismissals, bare ack filtering.
+- **P3-P3.7** — Memory ops, structured readback, artifact references, news pull-up.
+- **Pre-P4** — Compound detection (22 regex patterns) → task planner → LLM plan generation → sequential execution with voice interrupts.
+- **P4-LLM** — Semantic pruner selects top 4 tools → 35B decides → tool executes → 4B synthesizes → 17-domain classifier → domain-specific anti-hallucination prompt.
+- **P4-Skill** — Stateful skills via 5-layer semantic intent matching.
+- **Fallback** — Pure 35B streaming with quality gating → Claude API last resort.
 
 ---
 
 ## The Numbers
 
-| Metric | Value | How Measured |
-|--------|-------|-------------|
-| Tool calling accuracy | 100% | 1,200+ trials, 10-category taxonomy, `--sweep` mode |
-| Unit tests | 314/314 | 4 tiers: edge cases, routing, tool calling, LLM quality |
-| Conversation tests | 62 conversations | End-to-end behavioral suite via WebSocket |
-| STT accuracy | 94%+ | Fine-tuned Whisper v2, 198 phrases, Southern accent |
-| STT latency | 0.1-0.2s | CTranslate2 on RX 7900 XT via ROCm |
-| LLM throughput | 48-63 tok/s | Qwen3.5-35B-A3B Q3_K_M, full GPU offload |
-| End-to-end latency | 2-4s | Wake word to first spoken word (streaming) |
-| VRAM usage | ~19.5 / 20 GB | 32K context, all layers offloaded |
-| TTS normalization | 22 passes | Markdown, heteronyms, IPs, ports, currencies, measurements, etc. |
-| Response pools | 38 categories, ~184 templates | Style-tagged, honorific-injected |
-| Domain classifiers | 17 domains | Regex-based, feeds 14 synthesis prompt blocks |
-| Codebase | ~66,000 lines Python | ~40 modules + 11 skills + test suites |
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Tool calling accuracy | 100% | 1,200+ trials, 10-category taxonomy |
+| LLMs | 2 | Qwen3.5-35B (reasoning) + Qwen3.5-4B (synthesis) |
+| LLM tools | 11 | Auto-discovered one-file plugin system |
+| Skills | 14 | 3 stateful + 8 with companion tools + 3 internal |
+| CAL-L0 patterns | 13 categories, ~200 | <50ms reflexive responses |
+| Unit tests | 314/314 | tests/{unit,integration,memory,components} |
+| Conversation tests | 52 conversations | V3 suite with dual-model tracking |
+| STT accuracy | 94%+ | Fine-tuned Whisper, 198 phrases |
+| STT latency | 0.1-0.2s | CTranslate2 on GPU |
+| LLM throughput | 48-63 tok/s | 35B Q3_K_M, full GPU offload |
+| 4B synthesis TTFT | 4-5s | 60% reduction from focused prompt |
+| TTS cache | 281 phrases | 11ms load, zero-latency on hits |
+| Persona templates | 38 pools, ~184 | Style-tagged, honorific-injected |
+| Domain classifiers | 17 domains | 14 anti-hallucination synthesis prompts |
+| Codebase | ~66,000 lines | ~40 modules + 14 skills + test suites |
 
 ---
 
-## Architecture at a Glance
+## Latency Budget
 
-```
-Voice/Console/Web
-        │
-        ▼
-ConversationRouter ─── 18-layer priority chain
-        │
-        ├── P0-P2.8: Deterministic fast paths (sub-10ms)
-        ├── P3-P3.7: Memory, artifacts, readback
-        ├── Pre-P4:  Task planner (compound requests)
-        ├── P4-LLM:  Semantic pruner → Qwen3.5 tool calling → domain synthesis
-        ├── P4-Skill: Stateful skills (desktop, doc gen, introductions)
-        └── Fallback: LLM streaming (Qwen → Claude)
-                │
-                ▼
-        Persona Engine ─── 38 pools, ~184 templates
-                │
-                ▼
-        Kokoro TTS ─── StreamingAudioPipeline ─── aplay (gapless)
-```
-
-### Core Module Map
-
-| Module | Lines | Role |
-|--------|-------|------|
-| `conversation_router.py` | ~3,003 | 18-layer priority chain, shared across 3 frontends |
-| `pipeline.py` | ~2,054 | Event-driven Coordinator, STT/TTS workers |
-| `interaction_cache.py` | ~1,993 | 5-phase artifact cache with cross-session retrieval |
-| `llm_router.py` | ~1,814 | Qwen/Claude routing, tool calling, 14 domain synthesis prompts |
-| `task_planner.py` | ~1,097 | Compound detection, LLM plan gen, voice interrupts |
-| `tts_normalizer.py` | ~1,072 | 22-pass text normalization for spoken output |
-| `skill_manager.py` | ~931 | 5-layer semantic intent matching |
-| `health_check.py` | ~908 | 5-layer system diagnostic |
-| `continuous_listener.py` | ~885 | VAD, wake word, ambient filter, conversation windows |
-| `persona.py` | ~726 | Response pools, system prompts, guest mode |
-| `tts.py` | ~722 | Kokoro + Piper, streaming pipeline, ack cache |
-| `jarvis_web.py` | ~3,875 | aiohttp WebSocket server, vision, file handling |
-
-### 11 LLM Tools
-
-| Tool | What | Always Available |
-|------|------|:---:|
-| `get_weather` | OpenWeatherMap forecast | |
-| `get_system_info` | CPU, RAM, disk, GPU, processes (8 sub-handlers) | |
-| `find_files` | File search, line counting, dir sizes (11 actions) | |
-| `developer_tools` | Git, codebase search, shell, system admin (13 actions, 3-tier safety) | |
-| `manage_reminders` | Add, list, cancel, ack, snooze + Google Calendar sync | |
-| `get_news` | 16 RSS feeds, urgency classification, semantic dedup | |
-| `web_search` | Serper primary + DDG fallback, trafilatura multi-source synthesis | Yes |
-| `recall_memory` | SQLite text + FAISS semantic search across stored facts | Yes |
-| `take_screenshot` | gnome-screenshot + window crop → LLM vision | Yes |
-| `capture_webcam` | Desktop webcam or mobile camera relay → LLM vision | Yes |
-| `enroll_face` | Face detection + embedding storage for presence greetings | Yes |
-
-### 3 Stateful Skills
-
-| Skill | Intents | Why Not a Tool |
-|-------|---------|---------------|
-| **App Launcher** | 16: launch, close, fullscreen, minimize, maximize, volume, workspace, focus, clipboard | Needs D-Bus + desktop integration |
-| **File Editor** | 5: write, edit, read, delete, list + PPTX/DOCX/PDF generation | Two-stage LLM pipeline, confirmation flows |
-| **Social Introductions** | 5: meet, who-is, recall, forget, update | Multi-turn state machine with pronunciation checks |
+| Path | Time | What Happens |
+|------|------|-------------|
+| **CAL-L0 / Skill** | <500ms | Pattern match → cached TTS → aplay |
+| **Knowledge (35B)** | 2-4s | Router → 35B stream → Kokoro → aplay |
+| **Tool call (4B synth)** | 3-8s | Router → 35B tool selection → tool exec → 4B synthesis → Kokoro |
+| **Web search** | 5-10s | Router → 35B → Serper API → page fetch → 4B synthesis → Kokoro |
+| **CAL briefing** | ~2s | Accumulator query → 4B compose → Kokoro (items precomputed at detection) |
+| **Contextual ack** | ~600ms | 4B generates in parallel with routing (zero added latency) |
+| **TTS cache hit** | <5ms | Pre-generated PCM → aplay (no Kokoro) |
 
 ---
 
-## Development Timeline (Condensed)
+## Development Timeline
 
 | Period | What Happened |
 |--------|-------------|
 | **Feb 9-13** | Foundation: voice loop, Whisper, Piper TTS, basic skills, GPU CTranslate2 on ROCm |
-| **Feb 14-17** | Feature explosion: 12 bug fixes, news, reminders, web nav, developer tools, console mode, Kokoro TTS, streaming pipeline, user profiles, conversational memory, context window, health check |
-| **Feb 18-20** | Web research, prescriptive prompt design, 27 bug fixes, GNOME desktop integration, web chat UI, file editor, ambient wake word filter, edge case testing |
-| **Feb 21** | Conversational flow refactor: persona engine, ConversationState, shared ConversationRouter, contextual acks. Whisper v2 fine-tuning (94%+) |
-| **Feb 22-23** | Document generation (PPTX/DOCX/PDF), LLM metrics dashboard, systemd services |
-| **Feb 24-25** | Qwen3.5-35B-A3B upgrade, self-awareness layer, task planner (4 phases), social introductions + people manager |
-| **Feb 26-27** | LLM-centric tool calling migration: Phase 1 (3 skills, 600/600 trials) + Phase 2 (7 tools, 1,200+ trials, tool-connector plugin system) |
-| **Feb 28** | Dual GPU setup (RX 7900 XT compute + RX 7600 display), ctx-size 7168 → 32768 |
-| **Mar 1-3** | Unified awareness, MCP bridge (bidirectional), interaction artifact cache (5 phases), self-managing memory (CMA 6/6), recall_memory tool |
-| **Mar 4-7** | Vision: 7 phases (multimodal LLM, web/mobile upload, console commands, screenshot tool, webcam tool, mobile camera relay, presence detection). 180 vision tests. |
-| **Mar 7-11** | 62-conversation behavioral test suite, 10 iterative fix rounds, 17-domain classifier, 14 synthesis prompts, 314 unit tests |
-
----
-
-## Roadmap
-
-### Current Priority (Owner-Directed)
-
-1. **IMAP email via MCP** — Read, search, archive email by voice/web/mobile. Config stub + MCP bridge ready.
-2. **Mobile iOS app** — Web UI works on mobile now. Native iOS app planned (6 phases).
-3. **CalDAV calendar** — Apple Calendar integration for secondary user. Blocked on app-specific password.
-4. **Concurrent multi-user** — Handle two simultaneous mobile users. Depends on mobile app.
-
-### Medium Term
-
-- LLM news classification (activate dead code in news_manager.py)
-- Reminder snooze in P2 chain
-- Reduce aplay 150ms sleep (PipeWire device-ready)
-- Inject user facts into web search queries
-
-### Long Term
-
-- Threat hunting / malware analysis framework
-- Home automation integration
-- Emotional context awareness
-
----
-
-## Performance
-
-### Latency Breakdown
-
-| Stage | Time |
-|-------|------|
-| Wake word detection | <100ms |
-| Speech transcription | 0.1-0.2s (GPU) |
-| Semantic intent matching | <100ms (cached embeddings) |
-| Skill-handled queries | 300-600ms total |
-| LLM tool calling | 2-4s (streaming, first spoken word) |
-| TTS generation | <1s per sentence (Kokoro, CPU) |
-
-### Resource Usage
-
-| Resource | Usage |
-|----------|-------|
-| RAM | ~4GB (all models loaded) |
-| CPU | 10-30% during processing |
-| GPU VRAM | ~19.5 / 20 GB (RX 7900 XT) |
-| Disk | ~25GB (models + code) |
-
-### Test Coverage
-
-| Suite | Count | Pass Rate |
-|-------|-------|-----------|
-| Unit tests (4 tiers) | 314 | 100% |
-| Conversation tests | 62 | Iterative (run 037 in progress) |
-| Tool calling | 1,200+ trials | 100% |
-| Tool artifacts | 175 | 100% |
-| Vision pipeline | 180 | 100% |
-| Web handler | 61 | 100% |
-| Memory management | 43 | 100% |
+| **Feb 14-17** | Feature explosion: news, reminders, web nav, developer tools, Kokoro TTS, streaming, profiles, memory |
+| **Feb 18-21** | Web research, prompt design, GNOME desktop, web UI, file editor, Whisper fine-tuning (94%+) |
+| **Feb 22-25** | Doc gen, Qwen3.5-35B-A3B upgrade, task planner, social introductions |
+| **Feb 26-28** | LLM-centric migration (1,200+ trials, 100%), dual GPU, ctx-size 32768 |
+| **Mar 1-3** | MCP bridge, artifact cache (5 phases), self-managing memory (CMA 6/6) |
+| **Mar 4-7** | Vision (7 phases), 180 tests, presence detection, face recognition |
+| **Mar 7-11** | V3 test suite (52 conversations), 17-domain classifier, 314 unit tests |
+| **Mar 12-17** | Component upgrade wave: SpeechBrain ECAPA-TDNN, InsightFace ArcFace, nomic embeddings, Silero VAD |
+| **Mar 18-19** | Latency Phase 1: tool gate, CAL-L0, TTSCache (11ms), KV cache reuse. ROCm stack rebuild (PyTorch from source). Qwen3.5-4B deployed |
+| **Mar 19-21** | Dual-model dispatch (60% TTFT), CAL all 6 phases, contextual acks, FAISS rebuild, test consolidation, speaker ID resampling fix, watchdog fix, doc overhaul |
 
 ---
 
 ## Design Principles
 
-1. **Local first, cloud never** — Claude API exists as a quality fallback. In practice it fires <1% of the time. Everything else is on-box.
-2. **The LLM decides** — Qwen3.5 picks which tools to call. Skills exist only for things that need deterministic control flow (desktop integration, multi-turn state machines, nested LLM pipelines).
-3. **Stream everything** — LLM tokens stream to TTS, TTS streams to audio. No buffering full responses.
-4. **One router, three frontends** — Voice, console, and web share the same 18-layer ConversationRouter. Add a frontend, not a routing layer.
-5. **One file, one tool** — Drop a `.py` file in `core/tools/` and it's live. No wiring, no imports, no registry edits.
-6. **Degrade gracefully** — GPU → CPU. Kokoro → Piper. Qwen → Claude. Desktop webcam → mobile camera. Every component has a fallback.
-7. **Test like a user** — The 62-conversation behavioral suite sends natural language over WebSocket and validates the full pipeline. Unit tests are necessary but not sufficient.
+1. **Local first** — Claude API is a quality fallback that fires <1% of the time. Everything else runs on-box.
+2. **Two models cooperate** — The 35B reasons, the 4B synthesizes. Each does what it's best at.
+3. **Face ID is authoritative** — Speaker ID confirms but never overrides. The more accurate system wins.
+4. **Stream everything** — LLM tokens → sentence chunker → Kokoro → aplay. No buffering full responses.
+5. **One router, three frontends** — Voice, console, web share the same 18-layer priority chain.
+6. **One file, one tool** — Drop a `.py` in `core/tools/` and it's live. No wiring needed.
+7. **Degrade gracefully** — 4B fails → 35B. GPU fails → CPU. Kokoro fails → Piper. Qwen fails → Claude.
+8. **The butler model** — Greet, brief, then be quiet. Silence IS a valid response when there's nothing to say.
+9. **Prompt examples are output** — Qwen treats every word in a prompt example as a candidate for generation. Design prompts accordingly.
 
 ---
 
 ## Getting Started
 
-See the [README](README.md) for full installation instructions, model download links, and configuration reference.
+See the [README](README.md) for installation, model downloads, the [AMD ROCm Build Guide](README.md#amd-rocm-build-guide), and configuration reference.
 
 ```bash
-# Quick start — console mode (no mic needed)
+# Console mode (no mic needed)
 python3 jarvis_console.py
 
-# Voice mode (requires mic + wake word setup)
+# Voice mode
 systemctl --user start jarvis
 
 # Web UI
@@ -306,4 +276,4 @@ python3 jarvis_web.py
 
 ---
 
-*Built with care, tested obsessively, improved daily.*
+*Built iteratively. Tested obsessively. Improved daily.*
