@@ -284,9 +284,12 @@ JARVIS generates PPTX, DOCX, and PDF documents through a two-stage LLM pipeline.
 
 ### Local Image Generation (FLUX.2)
 
-FLUX.2-klein-4B runs locally on the RX 7900 XT via GPU swap — JARVIS pauses the LLM, loads FLUX, generates 1024x1024 images in ~20s, then resumes. Supports text-to-image and img2img by voice or web UI.
+FLUX.2-klein-4B runs locally on the RX 7900 XT via GPU swap — JARVIS pauses the LLM, loads FLUX into VRAM, generates 1024x1024 images, then unloads and resumes the LLM. Supports text-to-image and img2img by voice or web UI.
 
-![JARVIS Web UI — local FLUX.2 img2img generation. User uploaded a photo and asked "Can you make me look steampunk?" Generated in 196s on an RX 7900 XT.](images/JARVIS_FLUX_IMG2IMG.png)
+- **Warm (FLUX already loaded):** ~12-20s per image
+- **Cold (GPU swap required):** ~90-200s total (includes model load/unload + generation). Img2img is on the higher end due to the additional image encoding step.
+
+![JARVIS Web UI — local FLUX.2 img2img generation. User uploaded a photo and asked "Can you make me look steampunk?" Cold start including GPU swap.](images/JARVIS_FLUX_IMG2IMG.png)
 
 ---
 
