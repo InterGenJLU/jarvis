@@ -282,6 +282,12 @@ These handle things that need multi-turn flows, confirmations, or direct desktop
 
 JARVIS generates PPTX, DOCX, and PDF documents through a two-stage LLM pipeline. Stage 1 gathers content (optionally via web research). Stage 2 structures it into the target format. Presentations pull stock images from the Pexels API. Generated documents land in a shared folder and can be opened on the desktop via "open it" or read back via "read it to me" with structured section navigation.
 
+### Local Image Generation (FLUX.2)
+
+FLUX.2-klein-4B runs locally on the RX 7900 XT via GPU swap — JARVIS pauses the LLM, loads FLUX, generates 1024x1024 images in ~20s, then resumes. Supports text-to-image and img2img by voice or web UI.
+
+![JARVIS Web UI — local FLUX.2 img2img generation. User uploaded a photo and asked "Can you make me look steampunk?" Generated in 196s on an RX 7900 XT.](images/JARVIS_FLUX_IMG2IMG.png)
+
 ---
 
 ## Hardware Requirements
