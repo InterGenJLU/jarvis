@@ -751,21 +751,13 @@ class EventLogger:
                 status = check.get("status", "unknown")
                 detail = check.get("detail", "")
 
-                # Parse key=value pairs from detail string
+                # Parse key=value pairs from detail string.
+                # Handles both plain (load=1.5) and percent (percent=37.2%)
+                # forms — the trailing % is simply not part of the [\d.] group.
                 for match in _re.finditer(r'(\w+)=([\d.]+)', detail):
                     key, val = match.group(1), match.group(2)
                     try:
                         metric_name = f"{name}.{key}"
-                        metrics.append((timestamp, metric_name, float(val),
-                                       status, detail))
-                    except ValueError:
-                        continue
-
-                # Also extract percentage values like "45%"
-                for match in _re.finditer(r'(\w+)=([\d.]+)%', detail):
-                    key, val = match.group(1), match.group(2)
-                    try:
-                        metric_name = f"{name}.{key}_pct"
                         metrics.append((timestamp, metric_name, float(val),
                                        status, detail))
                     except ValueError:
