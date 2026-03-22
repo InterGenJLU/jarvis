@@ -286,7 +286,80 @@ def _():
 
 
 # ---------------------------------------------------------------------------
-# 6. Persona and conversation state
+# 6. Governance module
+# ---------------------------------------------------------------------------
+
+@test("import core.governance")
+def _():
+    from core.governance import Governance, Tier, ACTION_TIERS, get_governance
+
+@test("governance tier definitions")
+def _():
+    from core.governance import Tier
+    assert Tier.READ == 0
+    assert Tier.CONFIG == 1
+    assert Tier.PROMPT == 2
+    assert Tier.LOGIC == 3
+    assert Tier.ARCHITECTURE == 4
+
+@test("governance check — tier 0 approved")
+def _():
+    from core.governance import Governance
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        class C:
+            def get(self, k, d=None):
+                if k == 'governance.commandments_path': return os.path.join(td, 'cmd.md')
+                if k == 'governance.hash_path': return os.path.join(td, '.hash')
+                return d
+        gov = Governance(C())
+        r = gov.check('query_metrics')
+        assert r.approved, f"Tier 0 should be approved: {r.reason}"
+        gov.stop()
+
+@test("governance check — tier 3 denied")
+def _():
+    from core.governance import Governance
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        class C:
+            def get(self, k, d=None):
+                if k == 'governance.commandments_path': return os.path.join(td, 'cmd.md')
+                if k == 'governance.hash_path': return os.path.join(td, '.hash')
+                return d
+        gov = Governance(C())
+        r = gov.check('modify_routing')
+        assert not r.approved, "Tier 3 should be denied"
+        gov.stop()
+
+@test("governance fail-closed on unknown action")
+def _():
+    from core.governance import Governance
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        class C:
+            def get(self, k, d=None):
+                if k == 'governance.commandments_path': return os.path.join(td, 'cmd.md')
+                if k == 'governance.hash_path': return os.path.join(td, '.hash')
+                return d
+        gov = Governance(C())
+        r = gov.check('totally_unknown_action')
+        assert not r.approved, "Unknown action should be denied (fail-closed)"
+        assert r.tier == 3, "Unknown action should default to Tier 3"
+        gov.stop()
+
+@test("commandments file exists")
+def _():
+    from pathlib import Path
+    cmd_path = Path(__file__).parent.parent / "governance" / "commandments.md"
+    assert cmd_path.exists(), f"Commandments file missing: {cmd_path}"
+    text = cmd_path.read_text()
+    assert "Serve the household" in text, "Commandment I missing"
+    assert "owner's voice is final" in text, "Commandment X missing"
+
+
+# ---------------------------------------------------------------------------
+# 7. Persona and conversation state
 # ---------------------------------------------------------------------------
 
 @test("persona has required pools")
