@@ -163,6 +163,23 @@ class EventLogger:
                     ON health_snapshots(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_health_metric
                     ON health_snapshots(metric, timestamp);
+
+                CREATE TABLE IF NOT EXISTS odd_events (
+                    id          TEXT PRIMARY KEY,
+                    timestamp   REAL NOT NULL,
+                    reported_at REAL NOT NULL,
+                    category    TEXT,
+                    description TEXT NOT NULL,
+                    root_cause  TEXT,
+                    action      TEXT,
+                    resolved    INTEGER DEFAULT 0,
+                    context     TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_odd_ts
+                    ON odd_events(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_odd_resolved
+                    ON odd_events(resolved);
             """)
             conn.commit()
         finally:
@@ -850,6 +867,186 @@ class EventLogger:
             conn.close()
 
     # ------------------------------------------------------------------
+    # Odd Events — structured anomaly tracking
+    # ------------------------------------------------------------------
+
+    def capture_odd_event(self, description: str, *,
+                           lookback_minutes: float = 5,
+                           category: str = None,
+                           timestamp: float = None) -> str:
+        """Capture an odd event with full pipeline context from recent history.
+
+        Queries all observations from the past N minutes and bundles them
+        as context alongside the user's description.
+
+        Args:
+            description: What happened (user-provided or auto-generated).
+            lookback_minutes: How far back to capture context (default 5).
+            category: Optional category (e.g. "audio", "routing", "speaker_id").
+            timestamp: When the odd thing happened (default: now).
+
+        Returns:
+            The odd event ID.
+        """
+        now = time.time()
+        if timestamp is None:
+            timestamp = now
+
+        # Capture pipeline context from recent observations
+        recent_obs = self.query(hours=lookback_minutes / 60, limit=200)
+        context = json.dumps(recent_obs, default=str) if recent_obs else None
+
+        odd_id = self.new_id()
+        with self._db_lock:
+            conn = sqlite3.connect(str(self.db_path))
+            try:
+                conn.execute("""
+                    INSERT INTO odd_events
+                        (id, timestamp, reported_at, category, description,
+                         root_cause, action, resolved, context)
+                    VALUES (?, ?, ?, ?, ?, NULL, NULL, 0, ?)
+                """, (odd_id, timestamp, now, category, description, context))
+                conn.commit()
+            finally:
+                conn.close()
+
+        logger.info("Odd event captured: %s (%d observations as context)",
+                     odd_id[:8], len(recent_obs) if recent_obs else 0)
+        return odd_id
+
+    def update_odd_event(self, odd_id: str, *,
+                          root_cause: str = None,
+                          action: str = None,
+                          resolved: bool = None,
+                          category: str = None,
+                          description: str = None) -> None:
+        """Update an odd event with root cause analysis or resolution."""
+        updates = []
+        params = []
+        if root_cause is not None:
+            updates.append("root_cause = ?")
+            params.append(root_cause)
+        if action is not None:
+            updates.append("action = ?")
+            params.append(action)
+        if resolved is not None:
+            updates.append("resolved = ?")
+            params.append(1 if resolved else 0)
+        if category is not None:
+            updates.append("category = ?")
+            params.append(category)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+
+        if not updates:
+            return
+
+        params.append(odd_id)
+        with self._db_lock:
+            conn = sqlite3.connect(str(self.db_path))
+            try:
+                conn.execute(
+                    f"UPDATE odd_events SET {', '.join(updates)} WHERE id = ?",
+                    params,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get_odd_events(self, resolved: bool = None,
+                        category: str = None,
+                        limit: int = 50) -> list[dict]:
+        """Retrieve odd events, optionally filtered."""
+        clauses = []
+        params: list[Any] = []
+        if resolved is not None:
+            clauses.append("resolved = ?")
+            params.append(1 if resolved else 0)
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+
+        where = " AND ".join(clauses) if clauses else "1=1"
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                f"""SELECT * FROM odd_events
+                    WHERE {where}
+                    ORDER BY timestamp DESC
+                    LIMIT ?""",
+                params + [limit],
+            ).fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if d.get("context"):
+                    try:
+                        d["context"] = json.loads(d["context"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                results.append(d)
+            return results
+        finally:
+            conn.close()
+
+    def get_odd_event(self, odd_id: str) -> dict | None:
+        """Retrieve a single odd event by ID with parsed context."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM odd_events WHERE id = ?", (odd_id,),
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("context"):
+                try:
+                    d["context"] = json.loads(d["context"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return d
+        finally:
+            conn.close()
+
+    def get_odd_event_patterns(self, hours: float = 720) -> dict:
+        """Analyze odd events for patterns.
+
+        Returns category counts, resolution rate, and recent frequency.
+        Default window: 30 days.
+        """
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM odd_events WHERE timestamp >= ?",
+                (cutoff,),
+            ).fetchone()["cnt"]
+            resolved = conn.execute(
+                "SELECT COUNT(*) as cnt FROM odd_events WHERE timestamp >= ? AND resolved = 1",
+                (cutoff,),
+            ).fetchone()["cnt"]
+
+            categories = {}
+            for r in conn.execute(
+                "SELECT COALESCE(category, 'uncategorized') as cat, COUNT(*) as cnt "
+                "FROM odd_events WHERE timestamp >= ? "
+                "GROUP BY category ORDER BY cnt DESC",
+                (cutoff,),
+            ):
+                categories[r["cat"]] = r["cnt"]
+
+            return {
+                "total": total,
+                "resolved": resolved,
+                "unresolved": total - resolved,
+                "resolution_rate": round(resolved / total * 100, 1) if total else 0,
+                "categories": categories,
+            }
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Read — DB Stats (for health check)
     # ------------------------------------------------------------------
 
@@ -869,6 +1066,9 @@ class EventLogger:
             health_count = conn.execute(
                 "SELECT COUNT(*) as cnt FROM health_snapshots"
             ).fetchone()["cnt"]
+            odd_count = conn.execute(
+                "SELECT COUNT(*) as cnt FROM odd_events"
+            ).fetchone()["cnt"]
 
             size_bytes = self.db_path.stat().st_size if self.db_path.exists() else 0
 
@@ -877,6 +1077,7 @@ class EventLogger:
                 "scores": score_count,
                 "reflections": reflect_count,
                 "health_snapshots": health_count,
+                "odd_events": odd_count,
                 "size_kb": round(size_bytes / 1024, 1),
                 "db_path": str(self.db_path),
             }
