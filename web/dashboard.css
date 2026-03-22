@@ -137,7 +137,7 @@ header {
 /* Summary Cards */
 #summary-cards {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 12px;
     padding: 16px 24px;
 }
@@ -208,7 +208,8 @@ header {
 
 .chart-box canvas {
     width: 100% !important;
-    max-height: 250px;
+    min-height: 130px;
+    max-height: 190px;
 }
 
 /* Data Explorer */
@@ -401,7 +402,7 @@ body::-webkit-scrollbar-thumb:hover {
 /* Responsive */
 @media (max-width: 1024px) {
     #summary-cards {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     }
 }
 

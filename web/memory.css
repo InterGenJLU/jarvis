@@ -22,11 +22,59 @@
 .btn-refresh:hover { border-color: var(--accent); }
 
 /* Charts — bigger legend on 4K */
-#charts .chart-box canvas { max-height: 300px; }
+#charts .chart-box canvas { min-height: 145px; max-height: 210px; }
 
 /* DB Health section */
 #db-health {
     margin: 0 24px 28px;
+}
+
+.health-summary-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.health-summary-chip {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+}
+
+.health-summary-chip .chip-name {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.health-summary-chip .chip-value {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.health-summary-chip .chip-size {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+}
+
+.health-summary-chip .chip-stat {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.health-summary-chip .chip-stat strong {
+    color: var(--text-primary);
+}
+
+.chip-wide {
+    flex-wrap: wrap;
 }
 #db-health h3 {
     font-size: 0.9rem;
@@ -78,6 +126,12 @@
     font-size: 0.88rem;
     color: var(--text-secondary);
     line-height: 1.7;
+}
+
+.rec-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 16px;
 }
 .health-card-meta {
     font-size: 0.8rem;

@@ -978,6 +978,22 @@
     if (btnMemory) btnMemory.addEventListener('click', function () {
         window.open(authUrl('/memory'), '_blank');
     });
+    var btnPipeline = document.getElementById('btn-pipeline');
+    var btnHealth = document.getElementById('btn-health');
+    if (btnPipeline) btnPipeline.addEventListener('click', function () {
+        window.open(authUrl('/dashboard/pipeline'), '_blank');
+    });
+    if (btnHealth) btnHealth.addEventListener('click', function () {
+        window.open(authUrl('/dashboard/health'), '_blank');
+    });
+
+    // Sidebar nav links — apply auth token
+    document.querySelectorAll('.sidebar-nav-link').forEach(function (a) {
+        a.addEventListener('click', function (e) {
+            e.preventDefault();
+            window.open(authUrl(a.getAttribute('href')), '_blank');
+        });
+    });
 
     // --- Image attachment ---
     var IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);

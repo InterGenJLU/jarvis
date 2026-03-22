@@ -259,9 +259,11 @@ async function loadSummary() {
 
         document.getElementById('val-facts').textContent = (facts.total ?? '--').toLocaleString();
         document.getElementById('val-interactions').textContent = (ilog.total_7d ?? '--').toLocaleString();
-        document.getElementById('val-faiss').textContent = (faiss.vectors ?? '--').toLocaleString();
         document.getElementById('val-context').textContent = fmtPct(ctx.usage_pct);
         document.getElementById('val-ctx-tokens').textContent = (ctx.estimated_tokens ?? '--').toLocaleString();
+
+        // Store FAISS data for chip rendering in loadDbHealth
+        state.faissData = faiss;
 
         renderFactsCategoryChart(facts.by_category_user || []);
         renderInteractionTypesChart(ilog.by_type_user || []);
@@ -283,34 +285,75 @@ async function loadTimeseries() {
 // ---------------------------------------------------------------------------
 // DB Health — card grid with sparklines
 // ---------------------------------------------------------------------------
+// Stores that get compact summary chips instead of full cards
+const CHIP_STORES = new Set([
+    'news_headlines.db', 'profiles.db', 'chat_history.jsonl', 'people.db',
+    'events.db', 'FAISS index',
+]);
+
 async function loadDbHealth() {
     try {
         const data = await apiFetch('/api/memory/db-health');
         const stores = data.stores || [];
         document.getElementById('val-db-size').textContent = fmtBytes(data.total_bytes || 0);
 
+        const chipContainer = document.getElementById('health-summary-cards');
         const grid = document.getElementById('health-grid');
+        chipContainer.innerHTML = '';
         grid.innerHTML = '';
 
-        stores.forEach((s, i) => {
-            const canvasId = `sparkline-${i}`;
-            const records = Object.entries(s.row_counts || {})
-                .map(([k, v]) => `<span class="rec-label">${k}:</span> <strong>${v?.toLocaleString() ?? '—'}</strong>`)
-                .join('<br>');
-            const hasTimeline = s.timeline && s.timeline.length > 0;
-            grid.insertAdjacentHTML('beforeend', `
-                <div class="health-card">
-                    <div class="health-card-name">${escHtml(s.name)}</div>
-                    <div class="health-card-records">${records || '—'}</div>
-                    ${hasTimeline ? `<canvas id="${canvasId}" class="health-sparkline" width="220" height="50"></canvas>` : ''}
-                    <div class="health-card-meta">
-                        <span>${fmtBytes(s.size_bytes)} · ${s.last_modified || 'unknown'}</span>
+
+        let cardIdx = 0;
+        stores.forEach((s) => {
+            if (CHIP_STORES.has(s.name)) {
+                const label = s.name.replace('.db', '').replace('.jsonl', '').replace(/_/g, ' ');
+                const rc = s.row_counts || {};
+                const entries = Object.entries(rc).filter(([, v]) => v != null);
+                let valueHtml;
+                if (entries.length > 1) {
+                    // Multi-table: show each count inline
+                    valueHtml = entries.map(([k, v]) =>
+                        `<span class="chip-stat">${k}: <strong>${v.toLocaleString()}</strong></span>`
+                    ).join(' ');
+                } else {
+                    const primaryCount = entries.length ? entries[0][1] : null;
+                    valueHtml = `<span class="chip-value">${primaryCount != null ? primaryCount.toLocaleString() : '—'}</span>`;
+                }
+                chipContainer.insertAdjacentHTML('beforeend', `
+                    <div class="health-summary-chip${entries.length > 1 ? ' chip-wide' : ''}">
+                        <span class="chip-name">${escHtml(label)}</span>
+                        ${valueHtml}
+                        <span class="chip-size">${fmtBytes(s.size_bytes)}</span>
                         ${statusBadge(s.status)}
                     </div>
-                </div>
-            `);
-            if (hasTimeline) {
-                requestAnimationFrame(() => renderSparkline(canvasId, s.timeline));
+                `);
+            } else {
+                // Full health card with sparkline
+                const canvasId = `sparkline-${cardIdx++}`;
+                const recEntries = Object.entries(s.row_counts || {});
+                const useTwoCols = recEntries.length > 3;
+                const records = useTwoCols
+                    ? '<div class="rec-grid">' + recEntries.map(([k, v]) =>
+                        `<span><span class="rec-label">${k}:</span> <strong>${v?.toLocaleString() ?? '—'}</strong></span>`
+                      ).join('') + '</div>'
+                    : recEntries.map(([k, v]) =>
+                        `<span class="rec-label">${k}:</span> <strong>${v?.toLocaleString() ?? '—'}</strong>`
+                      ).join('<br>');
+                const hasTimeline = s.timeline && s.timeline.length > 0;
+                grid.insertAdjacentHTML('beforeend', `
+                    <div class="health-card">
+                        <div class="health-card-name">${escHtml(s.name)}</div>
+                        <div class="health-card-records">${records || '—'}</div>
+                        ${hasTimeline ? `<canvas id="${canvasId}" class="health-sparkline" width="220" height="50"></canvas>` : ''}
+                        <div class="health-card-meta">
+                            <span>${fmtBytes(s.size_bytes)} · ${s.last_modified || 'unknown'}</span>
+                            ${statusBadge(s.status)}
+                        </div>
+                    </div>
+                `);
+                if (hasTimeline) {
+                    requestAnimationFrame(() => renderSparkline(canvasId, s.timeline));
+                }
             }
         });
     } catch (e) {

@@ -3592,6 +3592,12 @@ async def events_routing_handler(request):
             "intents": intents,
             "avg_latency_ms": round(sum(latencies) / len(latencies), 1) if latencies else 0,
             "p50_latency_ms": round(latencies[len(latencies) // 2], 1) if latencies else 0,
+            "data_points": [{
+                "timestamp": e["timestamp"],
+                "latency_ms": e.get("latency_ms"),
+                "intent": (e.get("metadata") or {}).get("intent", "unknown"),
+                "status": e.get("status"),
+            } for e in events if e.get("latency_ms")],
         }
 
     data = await asyncio.to_thread(_fetch)
@@ -3968,19 +3974,28 @@ async def memory_db_health_handler(request):
             'tables': {'news_headlines': 'SELECT COUNT(*) FROM news_headlines'},
         },
         {
+            'name': 'events.db',
+            'path': str(data_dir / 'events.db'),
+            'tables': {
+                'observations': 'SELECT COUNT(*) FROM observations',
+                'scores': 'SELECT COUNT(*) FROM scores',
+                'reflections': 'SELECT COUNT(*) FROM reflections',
+                'health_snapshots': 'SELECT COUNT(*) FROM health_snapshots',
+                'odd_events': 'SELECT COUNT(*) FROM odd_events',
+            },
+            'timeline_sql': "SELECT date(timestamp, 'unixepoch', 'localtime') as d, COUNT(*) as c FROM observations WHERE timestamp > ? GROUP BY d ORDER BY d",
+        },
+        {
             'name': 'people.db',
             'path': str(data_dir / 'people.db'),
             'tables': {'people': 'SELECT COUNT(*) FROM people'},
-        },
-        {
-            'name': 'web_queries.db',
-            'path': str(data_dir / 'web_queries.db'),
-            'tables': {'web_queries': 'SELECT COUNT(*) FROM web_queries'},
+            'stale_days': 30,  # Low-frequency — only written on introductions
         },
         {
             'name': 'profiles.db',
             'path': str(data_dir / 'profiles' / 'profiles.db'),
             'tables': {'profiles': 'SELECT COUNT(*) FROM profiles'},
+            'stale_days': 30,  # Low-frequency — only written on enrollment
         },
     ]
 
@@ -4002,7 +4017,8 @@ async def memory_db_health_handler(request):
                 stat = p.stat()
                 entry['size_bytes'] = stat.st_size
                 entry['last_modified'] = datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
-                stale = (now - stat.st_mtime) > 86400 * 2  # >2 days old = warn
+                stale_days = cfg.get('stale_days', 2)
+                stale = (now - stat.st_mtime) > 86400 * stale_days
                 try:
                     conn = sqlite3.connect(str(p))
                     row_counts = {}

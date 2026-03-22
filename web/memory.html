@@ -17,7 +17,10 @@
         </div>
         <div class="header-right">
             <button id="btn-refresh" class="btn-refresh">Refresh</button>
-            <a href="/dashboard" class="back-link">Metrics</a>
+            <a href="/dashboard" class="back-link">Overview</a>
+            <a href="/dashboard/pipeline" class="back-link">Pipeline</a>
+            <a href="/dashboard/health" class="back-link">System</a>
+            <a href="/memory" class="back-link active-nav">Memory</a>
             <a href="/" class="back-link">Back to Chat</a>
         </div>
     </header>
@@ -33,11 +36,6 @@
             <div class="card-label">Interactions (7d)</div>
             <div class="card-value" id="val-interactions">--</div>
             <div class="card-sub">all users · last 7 days</div>
-        </div>
-        <div class="card" id="card-faiss">
-            <div class="card-label">FAISS Vectors</div>
-            <div class="card-value" id="val-faiss">--</div>
-            <div class="card-sub">conversation history index</div>
         </div>
         <div class="card" id="card-context">
             <div class="card-label">Context Used</div>
@@ -76,9 +74,10 @@
         </div>
     </section>
 
-    <!-- DB Health Card Grid -->
+    <!-- DB Health -->
     <section id="db-health">
         <h3>Data Store Health</h3>
+        <div id="health-summary-cards" class="health-summary-row"></div>
         <div id="health-grid" class="health-grid"></div>
     </section>
 

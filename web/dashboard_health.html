@@ -40,15 +40,23 @@
             <div class="card-value" id="val-cpu-temp">--</div>
         </div>
         <div class="card">
-            <div class="card-label">GPU Compute Temp</div>
-            <div class="card-value" id="val-gpu-temp">--</div>
+            <div class="card-label">RX 7600 Temp</div>
+            <div class="card-value" id="val-gpu0-temp">--</div>
         </div>
         <div class="card">
-            <div class="card-label">GPU VRAM Used</div>
-            <div class="card-value" id="val-vram">--</div>
+            <div class="card-label">RX 7600 VRAM</div>
+            <div class="card-value" id="val-gpu0-vram">--</div>
         </div>
         <div class="card">
-            <div class="card-label">RAM Used</div>
+            <div class="card-label">RX 7900 XT Temp</div>
+            <div class="card-value" id="val-gpu1-temp">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">RX 7900 XT VRAM</div>
+            <div class="card-value" id="val-gpu1-vram">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">System RAM</div>
             <div class="card-value" id="val-ram">--</div>
         </div>
         <div class="card">
@@ -64,20 +72,36 @@
     <!-- Charts -->
     <section id="charts">
         <div class="chart-box">
-            <h3>Temperature (CPU + GPUs)</h3>
+            <h3>Temperature — CPU + GPUs</h3>
             <canvas id="chart-temps"></canvas>
         </div>
         <div class="chart-box">
-            <h3>GPU VRAM (Compute)</h3>
-            <canvas id="chart-vram"></canvas>
+            <h3>CPU Load</h3>
+            <canvas id="chart-cpu-load"></canvas>
         </div>
         <div class="chart-box">
-            <h3>RAM + Process Memory</h3>
+            <h3>RX 7600 — VRAM Usage</h3>
+            <canvas id="chart-gpu0-vram"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>RX 7900 XT — VRAM Usage</h3>
+            <canvas id="chart-gpu1-vram"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>System RAM</h3>
             <canvas id="chart-ram"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>JARVIS Process Memory</h3>
+            <canvas id="chart-proc"></canvas>
         </div>
         <div class="chart-box">
             <h3>Network Latency</h3>
             <canvas id="chart-ping"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>LLM Server Health Check</h3>
+            <canvas id="chart-llm"></canvas>
         </div>
     </section>
 

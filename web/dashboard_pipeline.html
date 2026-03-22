@@ -37,47 +37,63 @@
     <!-- Summary Cards -->
     <section id="summary-cards">
         <div class="card">
-            <div class="card-label">TTS Syntheses</div>
+            <div class="card-label">TTS Phrases Spoken</div>
             <div class="card-value" id="val-tts-count">--</div>
         </div>
         <div class="card">
-            <div class="card-label">TTS Cache Hit Rate</div>
+            <div class="card-label">TTS Cache Hits</div>
             <div class="card-value" id="val-tts-cache">--</div>
         </div>
         <div class="card">
-            <div class="card-label">Avg Generation</div>
+            <div class="card-label">Avg TTS Generation</div>
             <div class="card-value" id="val-tts-gen">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Transcriptions</div>
+            <div class="card-value" id="val-stt-count">--</div>
         </div>
         <div class="card">
             <div class="card-label">STT Success Rate</div>
             <div class="card-value" id="val-stt-rate">--</div>
         </div>
         <div class="card">
-            <div class="card-label">Speaker ID Match</div>
+            <div class="card-label">Speaker ID Match Rate</div>
             <div class="card-value" id="val-spk-match">--</div>
         </div>
         <div class="card">
-            <div class="card-label">Routing (Handled)</div>
+            <div class="card-label">Routes Handled / Total</div>
             <div class="card-value" id="val-route-handled">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Avg Routing Latency</div>
+            <div class="card-value" id="val-route-latency">--</div>
         </div>
     </section>
 
     <!-- Charts -->
     <section id="charts">
         <div class="chart-box">
-            <h3>TTS Generation Time</h3>
+            <h3>TTS Generation Time vs Realtime Factor</h3>
             <canvas id="chart-tts"></canvas>
         </div>
         <div class="chart-box">
-            <h3>Speaker ID Scores</h3>
+            <h3>Speaker ID — Confidence Scores vs Threshold</h3>
             <canvas id="chart-speaker"></canvas>
         </div>
         <div class="chart-box">
-            <h3>Routing Distribution</h3>
+            <h3>Routing — Where Commands Go</h3>
             <canvas id="chart-routing"></canvas>
         </div>
         <div class="chart-box">
-            <h3>Web Search Performance</h3>
+            <h3>Routing — Decision Latency</h3>
+            <canvas id="chart-route-latency"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>STT — Transcriptions Over Time</h3>
+            <canvas id="chart-stt"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Web Search — Pages Fetched vs Latency</h3>
             <canvas id="chart-search"></canvas>
         </div>
     </section>

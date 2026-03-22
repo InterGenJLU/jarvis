@@ -4,10 +4,7 @@
     'use strict';
 
     let currentHours = 24;
-    let chartTTS = null;
-    let chartSpeaker = null;
-    let chartRouting = null;
-    let chartSearch = null;
+    const charts = {};
 
     const token = new URLSearchParams(location.search).get('token');
 
@@ -28,6 +25,17 @@
         return `${d.getMonth() + 1}/${d.getDate()} ${fmtTime(ts)}`;
     }
 
+    function emptyChart(id, msg) {
+        if (charts[id]) { charts[id].destroy(); charts[id] = null; }
+        const canvas = document.getElementById(id);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '14px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(msg, canvas.width / 2, canvas.height / 2);
+    }
+
     // ── TTS ──────────────────────────────────────────────────────────
 
     async function fetchTTS() {
@@ -36,52 +44,48 @@
             if (!r.ok) return;
             const data = await r.json();
 
-            document.getElementById('val-tts-count').textContent = data.total_syntheses;
-            document.getElementById('val-tts-cache').textContent = data.cache_hit_rate + '%';
-            document.getElementById('val-tts-gen').textContent = data.avg_generation_s
-                ? data.avg_generation_s.toFixed(2) + 's' : '--';
+            document.getElementById('val-tts-count').textContent = data.total_syntheses || 0;
+            document.getElementById('val-tts-cache').textContent =
+                (data.total_syntheses + data.cache_hits) > 0
+                    ? `${data.cache_hits} (${data.cache_hit_rate}%)`
+                    : '--';
+            document.getElementById('val-tts-gen').textContent =
+                data.avg_generation_s ? data.avg_generation_s.toFixed(2) + 's' : '--';
 
             const pts = data.data_points || [];
-            if (!pts.length) {
-                _emptyChart('chart-tts', 'No TTS data yet');
-                return;
-            }
+            if (!pts.length) { emptyChart('chart-tts', 'No TTS data yet'); return; }
 
             const labels = pts.map(d => fmtTime(d.timestamp));
-            const genTimes = pts.map(d => d.generation_time_s || 0);
-            const rtfs = pts.map(d => d.rtf || 0);
-
-            if (chartTTS) chartTTS.destroy();
-            chartTTS = new Chart(document.getElementById('chart-tts'), {
+            if (charts['chart-tts']) charts['chart-tts'].destroy();
+            charts['chart-tts'] = new Chart(document.getElementById('chart-tts'), {
                 type: 'bar',
                 data: {
                     labels,
                     datasets: [
                         {
                             label: 'Generation Time (s)',
-                            data: genTimes,
+                            data: pts.map(d => d.generation_time_s || 0),
                             backgroundColor: 'rgba(52, 211, 153, 0.7)',
                             yAxisID: 'y',
                         },
                         {
-                            label: 'RTF (x realtime)',
-                            data: rtfs,
+                            label: 'Realtime Factor (x)',
+                            data: pts.map(d => d.rtf || 0),
                             type: 'line',
                             borderColor: '#38bdf8',
                             backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                            fill: true,
-                            tension: 0.3,
+                            fill: true, tension: 0.3,
                             yAxisID: 'y1',
                         },
                     ],
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { position: 'top' } },
                     scales: {
                         y: { beginAtZero: true, title: { display: true, text: 'Seconds' } },
-                        y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false },
+                        y1: { position: 'right', beginAtZero: true,
+                              grid: { drawOnChartArea: false },
                               title: { display: true, text: 'RTF' } },
                     },
                 },
@@ -98,49 +102,33 @@
             const data = await r.json();
 
             document.getElementById('val-spk-match').textContent =
-                data.total > 0 ? data.match_rate + '%' : '--';
+                data.total > 0 ? `${data.match_rate}% (${data.matched}/${data.total})` : '--';
 
             const scores = data.scores || [];
-            if (!scores.length) {
-                _emptyChart('chart-speaker', 'No speaker ID data yet');
-                return;
-            }
+            if (!scores.length) { emptyChart('chart-speaker', 'No speaker ID data yet'); return; }
 
             const labels = scores.map(d => fmtTime(d.timestamp));
-            const vals = scores.map(d => d.best_score || 0);
-            const thresholds = scores.map(d => d.threshold || 0.7);
             const colors = scores.map(d => d.matched
                 ? 'rgba(52, 211, 153, 0.8)' : 'rgba(248, 113, 113, 0.8)');
 
-            if (chartSpeaker) chartSpeaker.destroy();
-            chartSpeaker = new Chart(document.getElementById('chart-speaker'), {
+            if (charts['chart-speaker']) charts['chart-speaker'].destroy();
+            charts['chart-speaker'] = new Chart(document.getElementById('chart-speaker'), {
                 type: 'bar',
                 data: {
                     labels,
                     datasets: [
-                        {
-                            label: 'Confidence Score',
-                            data: vals,
-                            backgroundColor: colors,
-                        },
-                        {
-                            label: 'Threshold',
-                            data: thresholds,
-                            type: 'line',
-                            borderColor: '#fbbf24',
-                            borderDash: [5, 5],
-                            pointRadius: 0,
-                            fill: false,
-                        },
+                        { label: 'Confidence Score', data: scores.map(d => d.best_score || 0),
+                          backgroundColor: colors },
+                        { label: 'Threshold', data: scores.map(d => d.threshold || 0.7),
+                          type: 'line', borderColor: '#fbbf24', borderDash: [5, 5],
+                          pointRadius: 0, fill: false },
                     ],
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { position: 'top' } },
-                    scales: {
-                        y: { beginAtZero: true, max: 1.0, title: { display: true, text: 'Score' } },
-                    },
+                    scales: { y: { beginAtZero: true, max: 1.0,
+                              title: { display: true, text: 'Score' } } },
                 },
             });
         } catch (e) { console.error('fetchSpeakerID:', e); }
@@ -155,42 +143,135 @@
             const data = await r.json();
 
             document.getElementById('val-route-handled').textContent =
-                data.total > 0 ? `${data.handled}/${data.total}` : '--';
+                data.total > 0 ? `${data.handled} / ${data.total}` : '--';
+            document.getElementById('val-route-latency').textContent =
+                data.avg_latency_ms > 0 ? `${data.avg_latency_ms}ms` : '--';
 
+            // Distribution doughnut
             const intents = data.intents || {};
-            const labels = Object.keys(intents);
-            const values = Object.values(intents);
+            const iLabels = Object.keys(intents);
+            const iValues = Object.values(intents);
 
-            if (!labels.length) {
-                _emptyChart('chart-routing', 'No routing data yet');
-                return;
+            if (!iLabels.length) {
+                emptyChart('chart-routing', 'No routing data yet');
+            } else {
+                const palette = [
+                    '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa',
+                    '#fb923c', '#2dd4bf', '#e879f9', '#818cf8', '#94a3b8',
+                ];
+                if (charts['chart-routing']) charts['chart-routing'].destroy();
+                charts['chart-routing'] = new Chart(document.getElementById('chart-routing'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: iLabels.map(l => l.length > 30 ? l.slice(0, 30) + '...' : l),
+                        datasets: [{ data: iValues,
+                            backgroundColor: iLabels.map((_, i) => palette[i % palette.length]) }],
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { position: 'right',
+                            labels: { boxWidth: 12, font: { size: 11 } } } },
+                    },
+                });
             }
 
-            // Color palette
-            const palette = [
-                '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa',
-                '#fb923c', '#2dd4bf', '#e879f9', '#818cf8', '#94a3b8',
-            ];
+            // Routing latency chart
+            const pts = data.data_points || [];
+            if (!pts.length) {
+                emptyChart('chart-route-latency', 'No routing latency data yet');
+            } else {
+                const latLabels = pts.map(d => fmtTime(d.timestamp));
+                const latValues = pts.map(d => d.latency_ms || 0);
+                const latColors = pts.map(d =>
+                    d.status === 'handled' ? 'rgba(52, 211, 153, 0.7)' : 'rgba(56, 189, 248, 0.7)');
 
-            if (chartRouting) chartRouting.destroy();
-            chartRouting = new Chart(document.getElementById('chart-routing'), {
-                type: 'doughnut',
+                if (charts['chart-route-latency']) charts['chart-route-latency'].destroy();
+                charts['chart-route-latency'] = new Chart(document.getElementById('chart-route-latency'), {
+                    type: 'bar',
+                    data: {
+                        labels: latLabels,
+                        datasets: [{
+                            label: 'Routing Latency (ms)',
+                            data: latValues,
+                            backgroundColor: latColors,
+                        }],
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'top' },
+                            tooltip: {
+                                callbacks: {
+                                    afterLabel: function(ctx) {
+                                        const pt = pts[ctx.dataIndex];
+                                        return pt.intent || '';
+                                    }
+                                }
+                            }
+                        },
+                        scales: { y: { beginAtZero: true,
+                                  title: { display: true, text: 'ms' } } },
+                    },
+                });
+            }
+
+        } catch (e) { console.error('fetchRouting:', e); }
+    }
+
+    // ── Routing Latency Chart ───────────────────────────────────────
+    // Populated inside fetchRouting() since we need the same data source
+
+    // ── STT ─────────────────────────────────────────────────────────
+
+    async function fetchSTT() {
+        try {
+            const r = await fetch(authUrl(`/api/events/stt?hours=${currentHours}`));
+            if (!r.ok) return;
+            const data = await r.json();
+
+            document.getElementById('val-stt-count').textContent = data.total || 0;
+            document.getElementById('val-stt-rate').textContent =
+                data.total > 0 ? `${data.success_rate}%` : '--';
+
+            const pts = data.data_points || [];
+            if (!pts.length) { emptyChart('chart-stt', 'No STT data yet'); return; }
+
+            const labels = pts.map(d => fmtTime(d.timestamp));
+            const durations = pts.map(d => d.audio_duration_s || 0);
+            const colors = pts.map(d =>
+                d.status === 'success' ? 'rgba(52, 211, 153, 0.7)'
+                : d.status === 'empty' ? 'rgba(251, 191, 36, 0.7)'
+                : 'rgba(248, 113, 113, 0.7)');
+
+            if (charts['chart-stt']) charts['chart-stt'].destroy();
+            charts['chart-stt'] = new Chart(document.getElementById('chart-stt'), {
+                type: 'bar',
                 data: {
-                    labels: labels.map(l => l.length > 25 ? l.slice(0, 25) + '...' : l),
+                    labels,
                     datasets: [{
-                        data: values,
-                        backgroundColor: labels.map((_, i) => palette[i % palette.length]),
+                        label: 'Audio Duration (s)',
+                        data: durations,
+                        backgroundColor: colors,
                     }],
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    responsive: true, maintainAspectRatio: false,
                     plugins: {
-                        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+                        legend: { position: 'top' },
+                        tooltip: {
+                            callbacks: {
+                                afterLabel: function(ctx) {
+                                    const pt = pts[ctx.dataIndex];
+                                    return pt.text_preview ? `"${pt.text_preview}"` : '';
+                                }
+                            }
+                        }
                     },
+                    scales: { y: { beginAtZero: true,
+                              title: { display: true, text: 'Seconds' } } },
                 },
             });
-        } catch (e) { console.error('fetchRouting:', e); }
+        } catch (e) { console.error('fetchSTT:', e); }
     }
 
     // ── Web Search ──────────────────────────────────────────────────
@@ -201,53 +282,41 @@
             if (!r.ok) return;
             const data = await r.json();
 
-            if (!data.length) {
-                _emptyChart('chart-search', 'No web searches in this window');
-                return;
-            }
+            if (!data.length) { emptyChart('chart-search', 'No web searches in this window'); return; }
 
             const labels = data.map(d => fmtTime(d.timestamp));
-            const pagesOk = data.map(d => d.search_pages_ok || 0);
-            const pagesFailed = data.map(d => (d.search_pages_total || 0) - (d.search_pages_ok || 0));
-            const latency = data.map(d => d.search_latency_ms ? d.search_latency_ms / 1000 : 0);
-
-            if (chartSearch) chartSearch.destroy();
-            chartSearch = new Chart(document.getElementById('chart-search'), {
+            if (charts['chart-search']) charts['chart-search'].destroy();
+            charts['chart-search'] = new Chart(document.getElementById('chart-search'), {
                 type: 'bar',
                 data: {
                     labels,
                     datasets: [
-                        { label: 'Pages OK', data: pagesOk, backgroundColor: 'rgba(52, 211, 153, 0.7)', yAxisID: 'y' },
-                        { label: 'Pages Failed', data: pagesFailed, backgroundColor: 'rgba(148, 163, 184, 0.5)', yAxisID: 'y' },
-                        { label: 'Latency (s)', data: latency, type: 'line', borderColor: '#38bdf8',
-                          backgroundColor: 'rgba(56, 189, 248, 0.1)', fill: true, tension: 0.3, yAxisID: 'y1' },
+                        { label: 'Pages OK', data: data.map(d => d.search_pages_ok || 0),
+                          backgroundColor: 'rgba(52, 211, 153, 0.7)', yAxisID: 'y' },
+                        { label: 'Pages Failed',
+                          data: data.map(d => (d.search_pages_total || 0) - (d.search_pages_ok || 0)),
+                          backgroundColor: 'rgba(148, 163, 184, 0.5)', yAxisID: 'y' },
+                        { label: 'Latency (s)',
+                          data: data.map(d => d.search_latency_ms ? d.search_latency_ms / 1000 : 0),
+                          type: 'line', borderColor: '#38bdf8',
+                          backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                          fill: true, tension: 0.3, yAxisID: 'y1' },
                     ],
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
+                    responsive: true, maintainAspectRatio: false,
                     plugins: { legend: { position: 'top' } },
                     scales: {
-                        y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Pages' } },
-                        y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false },
+                        y: { beginAtZero: true, ticks: { precision: 0 },
+                             title: { display: true, text: 'Pages' } },
+                        y1: { position: 'right', beginAtZero: true,
+                              grid: { drawOnChartArea: false },
                               title: { display: true, text: 'Seconds' } },
                         x: { stacked: true },
                     },
                 },
             });
         } catch (e) { console.error('fetchSearch:', e); }
-    }
-
-    // ── STT (summary card only) ─────────────────────────────────────
-
-    async function fetchSTT() {
-        try {
-            const r = await fetch(authUrl(`/api/events/stt?hours=${currentHours}`));
-            if (!r.ok) return;
-            const data = await r.json();
-            document.getElementById('val-stt-rate').textContent =
-                data.total > 0 ? data.success_rate + '%' : '--';
-        } catch (e) { console.error('fetchSTT:', e); }
     }
 
     // ── Watchdog ────────────────────────────────────────────────────
@@ -262,43 +331,33 @@
             tbody.innerHTML = '';
 
             if (!data.events || !data.events.length) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-dim);">No watchdog interventions</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:24px;">No watchdog interventions — all clear</td></tr>';
                 return;
             }
 
             for (const e of data.events) {
                 const tr = document.createElement('tr');
-                const severityClass = e.severity === 'error' ? 'color:var(--error)'
+                const sColor = e.severity === 'error' ? 'color:var(--error)'
                     : e.severity === 'warn' ? 'color:var(--warning)' : '';
                 tr.innerHTML = `
                     <td>${fmtDate(e.timestamp)}</td>
-                    <td>${e.event.replace('watchdog_', '')}</td>
+                    <td>${e.event.replace('watchdog_', '').replace(/_/g, ' ')}</td>
                     <td>${e.message || ''}</td>
-                    <td style="${severityClass}">${e.severity}</td>
+                    <td style="${sColor}">${e.severity}</td>
                 `;
                 tbody.appendChild(tr);
             }
         } catch (e) { console.error('fetchWatchdog:', e); }
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────
-
-    function _emptyChart(canvasId, message) {
-        const canvas = document.getElementById(canvasId);
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#64748b';
-        ctx.font = '14px system-ui';
-        ctx.textAlign = 'center';
-        ctx.fillText(message, canvas.width / 2, canvas.height / 2);
-    }
+    // ── Refresh all ─────────────────────────────────────────────────
 
     function refreshAll() {
         fetchTTS();
         fetchSpeakerID();
         fetchRouting();
-        fetchSearch();
         fetchSTT();
+        fetchSearch();
         fetchWatchdog();
     }
 
@@ -310,5 +369,5 @@
     });
 
     refreshAll();
-    setInterval(refreshAll, 30000);  // Refresh every 30s
+    setInterval(refreshAll, 30000);
 })();
