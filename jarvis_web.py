@@ -1381,28 +1381,33 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
         response_type="llm" if not skill_handled else "skill",
     )
 
-    # Record LLM metrics
+    # Record metrics for ALL interactions (not just LLM — skills, CAL-L0, memory ops too)
     metrics = components.get('metrics')
-    if metrics and used_llm:
+    if metrics:
         try:
-            info = llm.last_call_info or {}
-            _route_layer = match_info.get('layer') if match_info else None
+            info = llm.last_call_info or {} if used_llm else {}
+            # Route layer: prefer match_info, fall back to result.intent
+            _route_layer = (match_info.get('layer') if match_info
+                            else result.intent or ('llm_fallback' if used_llm else 'unknown'))
             _tools_available = match_info.get('skill_name') if match_info else None
-            _tools_used = ', '.join(conv_state.last_tools_called) if conv_state and conv_state.last_tools_called else None
+            _tools_used = (', '.join(conv_state.last_tools_called)
+                           if conv_state and conv_state.last_tools_called else None)
             _synth_cat = getattr(result, 'synthesis_category', None)
             # Web search stats (if a search was performed this interaction)
             _search_stats = getattr(web_researcher, 'last_search_stats', None) if web_researcher else None
+            # For non-LLM interactions, estimate latency from wall clock
+            _latency = info.get('latency_ms') if used_llm else (t_end - t_start) * 1000
             metrics.record(
-                provider=info.get('provider', 'unknown'),
-                method=info.get('method', 'unknown'),
+                provider=info.get('provider', 'skill' if not used_llm else 'unknown'),
+                method=info.get('method', result.source or 'handled'),
                 prompt_tokens=info.get('input_tokens'),
                 completion_tokens=info.get('output_tokens'),
                 estimated_tokens=info.get('estimated_tokens'),
                 model=info.get('model'),
-                latency_ms=info.get('latency_ms'),
+                latency_ms=_latency,
                 ttft_ms=info.get('ttft_ms'),
                 skill=_tools_available,
-                intent=match_info.get('handler') if match_info else None,
+                intent=result.intent or (match_info.get('handler') if match_info else None),
                 input_method=_client_type or 'web',
                 quality_gate=info.get('quality_gate', False),
                 is_fallback=info.get('is_fallback', False),
@@ -3355,7 +3360,7 @@ async def metrics_interactions_handler(request):
     limit = min(int(request.query.get('limit', 50)), 200)
 
     filters = {}
-    for key in ('provider', 'skill', 'method', 'input_method'):
+    for key in ('provider', 'skill', 'method', 'input_method', 'route_layer'):
         val = request.query.get(key, '')
         if val:
             filters[key] = val

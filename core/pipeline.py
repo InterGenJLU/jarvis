@@ -990,7 +990,7 @@ class Coordinator:
             response_type="llm" if not result.handled else "skill",
         )
 
-        # Record LLM metrics (only when LLM was actually used)
+        # Record metrics for ALL interactions (skills, CAL-L0, LLM, etc.)
         used_llm = not result.handled or result.used_llm
         self._record_metrics(result, used_llm)
 
@@ -2157,31 +2157,37 @@ class Coordinator:
 
     # ----- metrics recording -----
 
-    def _record_metrics(self, result: RouteResult, used_llm: bool):
-        """Record LLM interaction metrics if the LLM was used."""
-        if not self.metrics or not used_llm:
+    def _record_metrics(self, result: RouteResult, used_llm: bool,
+                        elapsed_ms: float = None):
+        """Record interaction metrics for ALL routes, not just LLM."""
+        if not self.metrics:
             return
         try:
-            info = self.llm.last_call_info or {}
+            info = self.llm.last_call_info or {} if used_llm else {}
             match_info = result.match_info or {}
             tools = getattr(self, '_last_tools_called', [])
             tools_str = ", ".join(tools) if tools else None
+            # Route layer: prefer match_info, fall back to result.intent
+            _route_layer = (match_info.get('layer')
+                            or result.intent
+                            or ('llm_fallback' if used_llm else 'unknown'))
+            _latency = info.get('latency_ms') or elapsed_ms
             self.metrics.record(
-                provider=info.get('provider', 'unknown'),
-                method=info.get('method', 'unknown'),
+                provider=info.get('provider', 'skill' if not used_llm else 'unknown'),
+                method=info.get('method', result.source or 'handled'),
                 prompt_tokens=info.get('input_tokens'),
                 completion_tokens=info.get('output_tokens'),
                 estimated_tokens=info.get('estimated_tokens'),
                 model=info.get('model'),
-                latency_ms=info.get('latency_ms'),
+                latency_ms=_latency,
                 ttft_ms=info.get('ttft_ms'),
                 skill=match_info.get('skill_name'),
-                intent=match_info.get('handler'),
+                intent=result.intent or match_info.get('handler'),
                 input_method='voice',
                 quality_gate=info.get('quality_gate', False),
                 is_fallback=info.get('is_fallback', False),
                 error=info.get('error'),
-                route_layer=match_info.get('layer'),
+                route_layer=_route_layer,
                 tools_called=tools_str,
             )
             self._last_tools_called = []

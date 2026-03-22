@@ -1471,25 +1471,31 @@ def run_console(config, mode, user_id="user"):
                 response_type="llm" if not skill_handled else "skill",
             )
 
-            # Record LLM metrics
-            if metrics and used_llm:
+            # Record metrics for ALL interactions
+            if metrics:
                 try:
-                    info = llm.last_call_info or {}
+                    info = llm.last_call_info or {} if used_llm else {}
+                    _route_layer = (match_info.get('layer') if match_info
+                                    else result.intent or ('llm_fallback' if used_llm else 'unknown'))
+                    _tools_used = (', '.join(conv_state.last_tools_called)
+                                   if conv_state and conv_state.last_tools_called else None)
                     metrics.record(
-                        provider=info.get('provider', 'unknown'),
-                        method=info.get('method', 'unknown'),
+                        provider=info.get('provider', 'skill' if not used_llm else 'unknown'),
+                        method=info.get('method', result.source or 'handled'),
                         prompt_tokens=info.get('input_tokens'),
                         completion_tokens=info.get('output_tokens'),
                         estimated_tokens=info.get('estimated_tokens'),
                         model=info.get('model'),
-                        latency_ms=info.get('latency_ms'),
+                        latency_ms=info.get('latency_ms') or ((t_end - t_start) * 1000),
                         ttft_ms=info.get('ttft_ms'),
                         skill=match_info.get('skill_name') if match_info else None,
-                        intent=match_info.get('handler') if match_info else None,
+                        intent=result.intent or (match_info.get('handler') if match_info else None),
                         input_method='console',
                         quality_gate=info.get('quality_gate', False),
                         is_fallback=info.get('is_fallback', False),
                         error=info.get('error'),
+                        route_layer=_route_layer,
+                        tools_called=_tools_used,
                     )
                 except Exception as e:
                     console.print(f"[dim]Metrics recording failed: {e}[/dim]")
