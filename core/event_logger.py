@@ -149,6 +149,20 @@ class EventLogger:
                     ON reflections(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_reflect_cat
                     ON reflections(category);
+
+                CREATE TABLE IF NOT EXISTS health_snapshots (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    metric    TEXT NOT NULL,
+                    value     REAL NOT NULL,
+                    status    TEXT,
+                    detail    TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_health_ts
+                    ON health_snapshots(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_health_metric
+                    ON health_snapshots(metric, timestamp);
             """)
             conn.commit()
         finally:
@@ -715,6 +729,135 @@ class EventLogger:
                 conn.close()
 
     # ------------------------------------------------------------------
+    # Health Snapshots — periodic system metrics history
+    # ------------------------------------------------------------------
+
+    def store_health_snapshot(self, health: dict, timestamp: float = None):
+        """Extract numeric metrics from a get_full_health() result and store them.
+
+        Parses the detail strings from each check to extract numeric values.
+        Stores one row per metric per snapshot.
+        """
+        import re as _re
+        if timestamp is None:
+            timestamp = time.time()
+
+        metrics = []
+
+        # Extract numeric values from check detail strings
+        for layer_name, checks in health.items():
+            for check in checks:
+                name = check.get("name", "unknown").lower().replace(" ", "_")
+                status = check.get("status", "unknown")
+                detail = check.get("detail", "")
+
+                # Parse key=value pairs from detail string
+                for match in _re.finditer(r'(\w+)=([\d.]+)', detail):
+                    key, val = match.group(1), match.group(2)
+                    try:
+                        metric_name = f"{name}.{key}"
+                        metrics.append((timestamp, metric_name, float(val),
+                                       status, detail))
+                    except ValueError:
+                        continue
+
+                # Also extract percentage values like "45%"
+                for match in _re.finditer(r'(\w+)=([\d.]+)%', detail):
+                    key, val = match.group(1), match.group(2)
+                    try:
+                        metric_name = f"{name}.{key}_pct"
+                        metrics.append((timestamp, metric_name, float(val),
+                                       status, detail))
+                    except ValueError:
+                        continue
+
+        if not metrics:
+            return 0
+
+        with self._db_lock:
+            conn = sqlite3.connect(str(self.db_path))
+            try:
+                conn.executemany(
+                    "INSERT INTO health_snapshots (timestamp, metric, value, status, detail) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    metrics,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        return len(metrics)
+
+    def get_health_trend(self, metric: str, hours: float = 168) -> list[dict]:
+        """Time series for a specific health metric.
+
+        Args:
+            metric: Metric name (e.g. "cpu.load", "ram.percent", "gpu.temp")
+            hours: Time window (default 168 = 7 days)
+
+        Returns:
+            List of {timestamp, value, status} dicts ordered by time.
+        """
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT timestamp, value, status FROM health_snapshots "
+                "WHERE metric = ? AND timestamp >= ? ORDER BY timestamp",
+                (metric, cutoff),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_health_stats(self, metric: str, hours: float = 168) -> dict:
+        """Aggregated stats for a health metric: mean, min, max, latest.
+
+        Returns empty dict if no data.
+        """
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT AVG(value) as mean, MIN(value) as min, "
+                "MAX(value) as max, COUNT(*) as count "
+                "FROM health_snapshots "
+                "WHERE metric = ? AND timestamp >= ?",
+                (metric, cutoff),
+            ).fetchone()
+            if not row or row["count"] == 0:
+                return {}
+
+            latest = conn.execute(
+                "SELECT value, timestamp FROM health_snapshots "
+                "WHERE metric = ? ORDER BY timestamp DESC LIMIT 1",
+                (metric,),
+            ).fetchone()
+
+            return {
+                "metric": metric,
+                "mean": round(row["mean"], 1),
+                "min": round(row["min"], 1),
+                "max": round(row["max"], 1),
+                "count": row["count"],
+                "latest": round(latest["value"], 1) if latest else None,
+                "latest_ts": latest["timestamp"] if latest else None,
+            }
+        finally:
+            conn.close()
+
+    def get_health_metrics(self) -> list[str]:
+        """List all unique health metric names stored."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT metric FROM health_snapshots ORDER BY metric"
+            ).fetchall()
+            return [r["metric"] for r in rows]
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Read — DB Stats (for health check)
     # ------------------------------------------------------------------
 
@@ -731,6 +874,9 @@ class EventLogger:
             reflect_count = conn.execute(
                 "SELECT COUNT(*) as cnt FROM reflections"
             ).fetchone()["cnt"]
+            health_count = conn.execute(
+                "SELECT COUNT(*) as cnt FROM health_snapshots"
+            ).fetchone()["cnt"]
 
             size_bytes = self.db_path.stat().st_size if self.db_path.exists() else 0
 
@@ -738,6 +884,7 @@ class EventLogger:
                 "observations": obs_count,
                 "scores": score_count,
                 "reflections": reflect_count,
+                "health_snapshots": health_count,
                 "size_kb": round(size_bytes / 1024, 1),
                 "db_path": str(self.db_path),
             }
@@ -753,7 +900,8 @@ class EventLogger:
         days = retention_days or self.retention_days
         cutoff = time.time() - (days * 86400)
 
-        deleted = {"observations": 0, "scores": 0, "reflections": 0}
+        deleted = {"observations": 0, "scores": 0, "reflections": 0,
+                   "health_snapshots": 0}
 
         with self._db_lock:
             conn = sqlite3.connect(str(self.db_path))
@@ -777,6 +925,12 @@ class EventLogger:
                     (cutoff,),
                 )
                 deleted["reflections"] = cursor.rowcount
+
+                cursor = conn.execute(
+                    "DELETE FROM health_snapshots WHERE timestamp < ?",
+                    (cutoff,),
+                )
+                deleted["health_snapshots"] = cursor.rowcount
 
                 conn.commit()
             finally:
@@ -802,3 +956,41 @@ class EventLogger:
             except (json.JSONDecodeError, TypeError):
                 pass
         return d
+
+
+class HealthSnapshotScheduler(threading.Thread):
+    """Background daemon that takes periodic health snapshots.
+
+    Runs as a daemon thread — dies with the process. Takes a snapshot
+    every `interval_minutes` and stores it via the EventLogger.
+
+    Usage:
+        scheduler = HealthSnapshotScheduler(config, event_logger)
+        scheduler.start()
+    """
+
+    def __init__(self, config, event_logger: EventLogger,
+                 interval_minutes: int = None):
+        super().__init__(daemon=True, name="health-snapshot")
+        self._config = config
+        self._event_logger = event_logger
+        self._interval = (interval_minutes or
+                          config.get("health.snapshot_interval_minutes", 10)) * 60
+        self._stop_event = threading.Event()
+
+    def run(self):
+        logger.info("HealthSnapshotScheduler started (interval=%ds)",
+                     self._interval)
+        while not self._stop_event.is_set():
+            try:
+                from core.health_check import get_full_health
+                health = get_full_health(self._config)
+                count = self._event_logger.store_health_snapshot(health)
+                logger.debug("Health snapshot: %d metrics stored", count)
+            except Exception as e:
+                logger.error("Health snapshot failed: %s", e)
+            self._stop_event.wait(timeout=self._interval)
+        logger.info("HealthSnapshotScheduler stopped")
+
+    def stop(self):
+        self._stop_event.set()

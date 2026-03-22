@@ -165,8 +165,13 @@ class JarvisContinuous:
             self.logger.info("LLM metrics tracking enabled")
 
         # --- Structured event logging ---
-        from core.event_logger import get_event_logger
+        from core.event_logger import get_event_logger, HealthSnapshotScheduler
         self.event_logger = get_event_logger(config)
+
+        # Periodic health snapshots (every 10 min by default)
+        if self.event_logger:
+            self._health_scheduler = HealthSnapshotScheduler(config, self.event_logger)
+            self._health_scheduler.start()
 
         # --- Event pipeline mode (Phase 4) ---
         self.event_mode = config.get("pipeline.event_mode", False)

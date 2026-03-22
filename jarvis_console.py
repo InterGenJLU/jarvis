@@ -1165,8 +1165,13 @@ def run_console(config, mode, user_id="user"):
     metrics = get_metrics_tracker(config)
 
     # Structured event logging (self-observability foundation)
-    from core.event_logger import get_event_logger
+    from core.event_logger import get_event_logger, HealthSnapshotScheduler
     event_logger = get_event_logger(config)
+
+    # Periodic health snapshots (every 10 min by default)
+    if event_logger:
+        _health_scheduler = HealthSnapshotScheduler(config, event_logger)
+        _health_scheduler.start()
 
     # Self-awareness layer (Phase 1 of task planner)
     self_awareness = SelfAwareness(

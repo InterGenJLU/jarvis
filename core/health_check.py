@@ -110,35 +110,71 @@ def check_bare_metal(config=None):
     except Exception as e:
         results.append(_check("CPU", "red", f"Error: {e}"))
 
-    # --- GPU ---
+    # --- GPUs ---
+    # GPU[0] = RX 7600 (display), GPU[1] = RX 7900 XT (compute)
+    _GPU_LABELS = {0: "RX 7600 (Display)", 1: "RX 7900 XT (Compute)"}
     try:
         ok, smi_out = _run("rocm-smi 2>/dev/null")
+
+        # Parse absolute VRAM from --showmeminfo (bytes)
+        vram_data = {}  # gpu_idx -> {used_mb, total_mb}
+        ok2, vram_out = _run("rocm-smi --showmeminfo vram 2>/dev/null")
+        if ok2 and vram_out:
+            for vline in vram_out.splitlines():
+                gpu_match = re.search(r'GPU\[(\d+)\]', vline)
+                if not gpu_match:
+                    continue
+                gpu_idx = int(gpu_match.group(1))
+                if gpu_idx not in vram_data:
+                    vram_data[gpu_idx] = {}
+                bytes_match = re.search(r'(\d+)\s*$', vline.strip())
+                if not bytes_match:
+                    continue
+                val_mb = int(bytes_match.group(1)) // (1024 * 1024)
+                if "Total Used" in vline:
+                    vram_data[gpu_idx]["used_mb"] = val_mb
+                elif "Total Memory" in vline and "Used" not in vline:
+                    vram_data[gpu_idx]["total_mb"] = val_mb
+
         if ok and smi_out:
-            # Parse the data line (line after the header with DID, GUID)
+            gpu_idx = -1
             for line in smi_out.splitlines():
-                if line.strip().startswith("0"):
-                    parts = line.split()
-                    # Format: Device Node DID GUID Temp Power ... VRAM% GPU%
-                    gpu_temp_str = next((p for p in parts if "°C" in p), None)
-                    gpu_temp = float(gpu_temp_str.replace("°C", "")) if gpu_temp_str else None
-                    gpu_vram = next((p for p in parts if p.endswith("%") and parts.index(p) >= len(parts) - 2), None)
-                    gpu_util = parts[-1] if parts[-1].endswith("%") else None
-                    gpu_vram_pct = parts[-2] if len(parts) >= 2 and parts[-2].endswith("%") else None
+                # Data lines start with a device number (0, 1, ...)
+                m = re.match(r'\s*(\d+)\s', line)
+                if not m:
+                    continue
+                gpu_idx = int(m.group(1))
+                parts = line.split()
 
-                    status = "green"
-                    if gpu_temp and gpu_temp > 95:
-                        status = "red"
-                    elif gpu_temp and gpu_temp > 85:
-                        status = "yellow"
+                gpu_temp_str = next((p for p in parts if "°C" in p), None)
+                gpu_temp = float(gpu_temp_str.replace("°C", "")) if gpu_temp_str else None
+                gpu_util = parts[-1] if parts[-1].endswith("%") else None
+                gpu_vram_pct = parts[-2] if len(parts) >= 2 and parts[-2].endswith("%") else None
 
-                    temp_disp = f"{gpu_temp:.0f} C" if gpu_temp else "unknown"
-                    results.append(_check(
-                        "GPU", status,
-                        f"RX 7900 XT — {temp_disp}, {gpu_util or '?'} util, {gpu_vram_pct or '?'} VRAM",
-                        f"temp={temp_disp} util={gpu_util} vram={gpu_vram_pct}",
-                    ))
-                    break
-            else:
+                status = "green"
+                if gpu_temp and gpu_temp > 95:
+                    status = "red"
+                elif gpu_temp and gpu_temp > 85:
+                    status = "yellow"
+
+                label = _GPU_LABELS.get(gpu_idx, f"GPU {gpu_idx}")
+                vd = vram_data.get(gpu_idx, {})
+                vram_used = vd.get("used_mb", 0)
+                vram_total = vd.get("total_mb", 0)
+
+                temp_disp = f"{gpu_temp:.0f} C" if gpu_temp else "unknown"
+                vram_abs = f", {vram_used}/{vram_total}MB" if vram_total else ""
+                check_name = f"GPU{gpu_idx}"
+                results.append(_check(
+                    check_name, status,
+                    f"{label} — {temp_disp}, {gpu_util or '?'} util, "
+                    f"{gpu_vram_pct or '?'} VRAM{vram_abs}",
+                    f"temp={gpu_temp or 0} util={gpu_util or '0%'} "
+                    f"vram={gpu_vram_pct or '0%'} "
+                    f"vram_used_mb={vram_used} vram_total_mb={vram_total}",
+                ))
+
+            if gpu_idx < 0:
                 results.append(_check("GPU", "yellow", "rocm-smi returned no device data"))
         else:
             results.append(_check("GPU", "red", "rocm-smi not available or failed"))
@@ -157,11 +193,17 @@ def check_bare_metal(config=None):
         elif mem.percent > 85:
             status = "yellow"
 
+        # JARVIS process-level memory
+        proc = psutil.Process()
+        proc_rss_mb = proc.memory_info().rss / (1024 * 1024)
+
         swap_str = f", swap {swap.percent:.0f}%" if swap.total > 0 else ""
         results.append(_check(
             "RAM", status,
-            f"{used_gb:.1f} / {total_gb:.1f} GB ({mem.percent:.0f}%){swap_str}",
-            f"used={used_gb:.1f}GB total={total_gb:.1f}GB percent={mem.percent}%",
+            f"{used_gb:.1f} / {total_gb:.1f} GB ({mem.percent:.0f}%){swap_str}"
+            f", JARVIS: {proc_rss_mb:.0f} MB",
+            f"used={used_gb:.1f} total={total_gb:.1f} percent={mem.percent} "
+            f"proc_rss_mb={proc_rss_mb:.0f}",
         ))
     except Exception as e:
         results.append(_check("RAM", "red", f"RAM error: {e}"))
@@ -194,7 +236,13 @@ def check_bare_metal(config=None):
 
     # --- Network ---
     try:
-        ok, _ = _run("ping -c 1 -W 2 8.8.8.8", timeout=5)
+        ok, ping_out = _run("ping -c 1 -W 2 8.8.8.8", timeout=5)
+        ping_ms = None
+        if ok and ping_out:
+            m = re.search(r'time=([\d.]+)\s*ms', ping_out)
+            if m:
+                ping_ms = float(m.group(1))
+
         addrs = psutil.net_if_addrs()
         local_ip = None
         for iface, addr_list in addrs.items():
@@ -208,16 +256,17 @@ def check_bare_metal(config=None):
                 break
 
         if ok:
+            ping_disp = f", {ping_ms:.1f}ms" if ping_ms else ""
             results.append(_check(
                 "Network", "green",
-                f"Connected ({local_ip or 'IP unknown'})",
-                f"ip={local_ip} internet=ok",
+                f"Connected ({local_ip or 'IP unknown'}{ping_disp})",
+                f"ping_ms={ping_ms or 0} internet=1",
             ))
         else:
             results.append(_check(
                 "Network", "yellow",
                 f"No internet ({local_ip or 'no IP'})",
-                f"ip={local_ip} internet=failed",
+                f"ping_ms=0 internet=0",
             ))
     except Exception as e:
         results.append(_check("Network", "red", f"Network error: {e}"))
@@ -298,6 +347,7 @@ def check_services():
         is_active = active_out.strip() == "active"
 
         uptime_str = "unknown"
+        uptime_secs = 0
         if is_active:
             ok2, prop_out = _run(
                 "systemctl --user show jarvis --property=ActiveEnterTimestampMonotonic 2>/dev/null"
@@ -318,6 +368,7 @@ def check_services():
                         now_us = ts.tv_sec * 1_000_000 + ts.tv_nsec // 1_000
                         start_us = int(mono_str)
                         delta_secs = (now_us - start_us) / 1_000_000
+                        uptime_secs = delta_secs
                         hours = int(delta_secs // 3600)
                         minutes = int((delta_secs % 3600) // 60)
                         if hours > 0:
@@ -331,11 +382,13 @@ def check_services():
             results.append(_check(
                 "jarvis.service", "green",
                 f"Active (uptime: {uptime_str})",
+                f"active=1 uptime_s={uptime_secs:.0f}",
             ))
         else:
             results.append(_check(
                 "jarvis.service", "red",
                 f"Not active ({active_out.strip()})",
+                f"active=0 uptime_s=0",
             ))
     except Exception as e:
         results.append(_check("jarvis.service", "red", f"Error: {e}"))
@@ -343,13 +396,16 @@ def check_services():
     # --- llama-server (retry on boot — 16GB model from HDD takes ~15-20s) ---
     llama_ok = False
     llama_detail = ""
+    llama_latency_ms = 0
     max_retries = 8  # up to ~24s total wait
     for attempt in range(max_retries):
         try:
+            _t0 = time.time()
             ok, health_out = _run("curl -s --max-time 3 http://localhost:8080/health")
+            llama_latency_ms = (time.time() - _t0) * 1000
             if ok and "ok" in health_out.lower():
                 llama_ok = True
-                llama_detail = "Responsive (healthy)"
+                llama_detail = f"Responsive ({llama_latency_ms:.0f}ms)"
                 break
             elif "loading" in health_out.lower():
                 llama_detail = "Model still loading..."
@@ -361,7 +417,10 @@ def check_services():
             time.sleep(3)
     if not llama_ok and "loading" in llama_detail.lower():
         llama_detail = "Model failed to load within timeout"
-    results.append(_check("llama-server", "green" if llama_ok else "red", llama_detail))
+    results.append(_check(
+        "llama-server", "green" if llama_ok else "red", llama_detail,
+        f"healthy={1 if llama_ok else 0} latency_ms={llama_latency_ms:.0f}",
+    ))
 
     # --- Recent errors ---
     try:
@@ -370,12 +429,12 @@ def check_services():
             '--priority=err --no-pager -q 2>/dev/null | wc -l'
         )
         err_count = int(err_out.strip()) if ok and err_out.strip().isdigit() else 0
-        if err_count == 0:
-            results.append(_check("Recent Errors", "green", "0 errors (last 15 min)"))
-        elif err_count <= 3:
-            results.append(_check("Recent Errors", "yellow", f"{err_count} error(s) (last 15 min)"))
-        else:
-            results.append(_check("Recent Errors", "red", f"{err_count} errors (last 15 min)"))
+        err_status = "green" if err_count == 0 else ("yellow" if err_count <= 3 else "red")
+        results.append(_check(
+            "Recent Errors", err_status,
+            f"{err_count} error{'s' if err_count != 1 else ''} (last 15 min)",
+            f"count={err_count}",
+        ))
     except Exception as e:
         results.append(_check("Recent Errors", "yellow", f"Could not check: {e}"))
 

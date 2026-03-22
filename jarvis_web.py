@@ -353,8 +353,14 @@ def init_components(config, tts_proxy):
     components['metrics'] = get_metrics_tracker(config)
 
     # Structured event logging (self-observability foundation)
-    from core.event_logger import get_event_logger
+    from core.event_logger import get_event_logger, HealthSnapshotScheduler
     components['event_logger'] = get_event_logger(config)
+
+    # Periodic health snapshots (every 10 min by default)
+    if components['event_logger']:
+        health_scheduler = HealthSnapshotScheduler(config, components['event_logger'])
+        health_scheduler.start()
+        components['health_scheduler'] = health_scheduler
 
     # Self-awareness layer (Phase 1 of task planner)
     components['self_awareness'] = SelfAwareness(
