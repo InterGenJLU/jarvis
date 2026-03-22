@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. — System Health</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-left">
+            <h1>J.A.R.V.I.S. <span class="header-sub">SYSTEM HEALTH</span></h1>
+        </div>
+        <div class="header-right">
+            <div class="time-range-selector">
+                <label for="time-range">Range:</label>
+                <select id="time-range">
+                    <option value="6">6 hours</option>
+                    <option value="24">24 hours</option>
+                    <option value="72">3 days</option>
+                    <option value="168" selected>7 days</option>
+                    <option value="720">30 days</option>
+                </select>
+            </div>
+            <a href="/dashboard" class="back-link">Overview</a>
+            <a href="/dashboard/pipeline" class="back-link">Pipeline</a>
+            <a href="/dashboard/health" class="back-link active-nav">System</a>
+            <a href="/memory" class="back-link">Memory</a>
+            <a href="/" class="back-link">Back to Chat</a>
+        </div>
+    </header>
+
+    <!-- Summary Cards -->
+    <section id="summary-cards">
+        <div class="card">
+            <div class="card-label">CPU Temp</div>
+            <div class="card-value" id="val-cpu-temp">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">GPU Compute Temp</div>
+            <div class="card-value" id="val-gpu-temp">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">GPU VRAM Used</div>
+            <div class="card-value" id="val-vram">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">RAM Used</div>
+            <div class="card-value" id="val-ram">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">JARVIS Process</div>
+            <div class="card-value" id="val-proc">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Network Ping</div>
+            <div class="card-value" id="val-ping">--</div>
+        </div>
+    </section>
+
+    <!-- Charts -->
+    <section id="charts">
+        <div class="chart-box">
+            <h3>Temperature (CPU + GPUs)</h3>
+            <canvas id="chart-temps"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>GPU VRAM (Compute)</h3>
+            <canvas id="chart-vram"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>RAM + Process Memory</h3>
+            <canvas id="chart-ram"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Network Latency</h3>
+            <canvas id="chart-ping"></canvas>
+        </div>
+    </section>
+
+    <script>
+    (function() {
+        var token = new URLSearchParams(location.search).get('token');
+        if (token) {
+            document.querySelectorAll('a.back-link').forEach(function(a) {
+                a.href = a.href.split('?')[0] + '?token=' + encodeURIComponent(token);
+            });
+        }
+    })();
+    </script>
+    <script src="/dashboard_health.js"></script>
+</body>
+</html>

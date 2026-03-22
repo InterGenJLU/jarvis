@@ -128,6 +128,12 @@ header {
     border-color: var(--accent);
 }
 
+.back-link.active-nav {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent-hover);
+}
+
 /* Summary Cards */
 #summary-cards {
     display: grid;

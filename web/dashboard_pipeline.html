@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. — Pipeline Performance</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/dashboard.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-left">
+            <h1>J.A.R.V.I.S. <span class="header-sub">PIPELINE</span></h1>
+        </div>
+        <div class="header-right">
+            <div class="time-range-selector">
+                <label for="time-range">Range:</label>
+                <select id="time-range">
+                    <option value="1">1 hour</option>
+                    <option value="6">6 hours</option>
+                    <option value="24" selected>24 hours</option>
+                    <option value="72">3 days</option>
+                    <option value="168">7 days</option>
+                    <option value="720">30 days</option>
+                </select>
+            </div>
+            <a href="/dashboard" class="back-link">Overview</a>
+            <a href="/dashboard/pipeline" class="back-link active-nav">Pipeline</a>
+            <a href="/dashboard/health" class="back-link">System</a>
+            <a href="/memory" class="back-link">Memory</a>
+            <a href="/" class="back-link">Back to Chat</a>
+        </div>
+    </header>
+
+    <!-- Summary Cards -->
+    <section id="summary-cards">
+        <div class="card">
+            <div class="card-label">TTS Syntheses</div>
+            <div class="card-value" id="val-tts-count">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">TTS Cache Hit Rate</div>
+            <div class="card-value" id="val-tts-cache">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Avg Generation</div>
+            <div class="card-value" id="val-tts-gen">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">STT Success Rate</div>
+            <div class="card-value" id="val-stt-rate">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Speaker ID Match</div>
+            <div class="card-value" id="val-spk-match">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Routing (Handled)</div>
+            <div class="card-value" id="val-route-handled">--</div>
+        </div>
+    </section>
+
+    <!-- Charts -->
+    <section id="charts">
+        <div class="chart-box">
+            <h3>TTS Generation Time</h3>
+            <canvas id="chart-tts"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Speaker ID Scores</h3>
+            <canvas id="chart-speaker"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Routing Distribution</h3>
+            <canvas id="chart-routing"></canvas>
+        </div>
+        <div class="chart-box">
+            <h3>Web Search Performance</h3>
+            <canvas id="chart-search"></canvas>
+        </div>
+    </section>
+
+    <!-- Watchdog Events -->
+    <section id="explorer">
+        <div class="explorer-header">
+            <h3>Watchdog Interventions</h3>
+        </div>
+        <div class="table-wrap">
+            <table id="watchdog-table">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Type</th>
+                        <th>Message</th>
+                        <th>Severity</th>
+                    </tr>
+                </thead>
+                <tbody id="watchdog-body"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <script>
+    (function() {
+        var token = new URLSearchParams(location.search).get('token');
+        if (token) {
+            document.querySelectorAll('a.back-link').forEach(function(a) {
+                a.href = a.href.split('?')[0] + '?token=' + encodeURIComponent(token);
+            });
+        }
+    })();
+    </script>
+    <script src="/dashboard_pipeline.js"></script>
+</body>
+</html>

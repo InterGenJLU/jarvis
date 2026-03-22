@@ -3417,6 +3417,254 @@ async def metrics_export_handler(request):
     )
 
 
+# ---------------------------------------------------------------------------
+# Pipeline & System Health Dashboard — event-based endpoints
+# ---------------------------------------------------------------------------
+
+async def dashboard_pipeline_handler(request):
+    """Serve pipeline performance dashboard page."""
+    return web.FileResponse(Path(__file__).parent / 'web' / 'dashboard_pipeline.html')
+
+
+async def dashboard_health_handler(request):
+    """Serve system health dashboard page."""
+    return web.FileResponse(Path(__file__).parent / 'web' / 'dashboard_health.html')
+
+
+async def events_tts_stats_handler(request):
+    """GET /api/events/tts?hours=24 — TTS performance from event logger."""
+    from core.event_logger import get_event_logger
+    el = get_event_logger()
+    if not el:
+        return web.json_response({'error': 'Event logger not initialized'}, status=503)
+
+    hours = float(request.query.get('hours', 24))
+
+    def _fetch():
+        events = el.query(event="tts_synthesis", hours=hours, limit=500)
+        cache_hits = el.count(event="tts_cache_hit", hours=hours)
+        total_synth = len(events)
+
+        # Extract timing data from metadata
+        data_points = []
+        for e in events:
+            meta = e.get("metadata", {}) or {}
+            data_points.append({
+                "timestamp": e["timestamp"],
+                "generation_time_s": meta.get("generation_time_s"),
+                "audio_duration_s": meta.get("audio_duration_s"),
+                "rtf": meta.get("rtf"),
+                "ttfc_s": meta.get("ttfc_s"),
+                "engine": meta.get("engine", "unknown"),
+                "text_length": meta.get("text_length", 0),
+            })
+
+        # Summary stats
+        gen_times = [d["generation_time_s"] for d in data_points if d["generation_time_s"]]
+        rtfs = [d["rtf"] for d in data_points if d["rtf"]]
+        ttfcs = [d["ttfc_s"] for d in data_points if d["ttfc_s"]]
+
+        return {
+            "total_syntheses": total_synth,
+            "cache_hits": cache_hits,
+            "cache_hit_rate": round(cache_hits / (total_synth + cache_hits) * 100, 1) if (total_synth + cache_hits) > 0 else 0,
+            "avg_generation_s": round(sum(gen_times) / len(gen_times), 3) if gen_times else 0,
+            "avg_rtf": round(sum(rtfs) / len(rtfs), 1) if rtfs else 0,
+            "avg_ttfc_s": round(sum(ttfcs) / len(ttfcs), 3) if ttfcs else 0,
+            "data_points": data_points,
+        }
+
+    data = await asyncio.to_thread(_fetch)
+    return web.json_response(data)
+
+
+async def events_stt_stats_handler(request):
+    """GET /api/events/stt?hours=24 — STT performance from event logger."""
+    from core.event_logger import get_event_logger
+    el = get_event_logger()
+    if not el:
+        return web.json_response({'error': 'Event logger not initialized'}, status=503)
+
+    hours = float(request.query.get('hours', 24))
+
+    def _fetch():
+        events = el.query(event="stt_transcription", hours=hours, limit=500)
+        total = len(events)
+        empty = sum(1 for e in events if e.get("status") == "empty")
+        errors = sum(1 for e in events if e.get("status") == "error")
+
+        data_points = []
+        for e in events:
+            meta = e.get("metadata", {}) or {}
+            data_points.append({
+                "timestamp": e["timestamp"],
+                "audio_duration_s": meta.get("audio_duration_s"),
+                "segments": meta.get("segments"),
+                "language_probability": meta.get("language_probability"),
+                "model_key": meta.get("model_key"),
+                "text_preview": meta.get("text", "")[:50],
+                "status": e.get("status"),
+            })
+
+        return {
+            "total": total,
+            "empty": empty,
+            "errors": errors,
+            "success_rate": round((total - empty - errors) / total * 100, 1) if total > 0 else 0,
+            "data_points": data_points,
+        }
+
+    data = await asyncio.to_thread(_fetch)
+    return web.json_response(data)
+
+
+async def events_speaker_id_handler(request):
+    """GET /api/events/speaker_id?hours=24 — Speaker ID from event logger."""
+    from core.event_logger import get_event_logger
+    el = get_event_logger()
+    if not el:
+        return web.json_response({'error': 'Event logger not initialized'}, status=503)
+
+    hours = float(request.query.get('hours', 24))
+
+    def _fetch():
+        events = el.query(event="speaker_identified", hours=hours, limit=500)
+        total = len(events)
+        matched = sum(1 for e in events if e.get("status") == "matched")
+        unmatched = total - matched
+
+        scores = []
+        for e in events:
+            meta = e.get("metadata", {}) or {}
+            scores.append({
+                "timestamp": e["timestamp"],
+                "best_score": meta.get("best_score"),
+                "threshold": meta.get("threshold"),
+                "best_id": meta.get("best_id"),
+                "matched": e.get("status") == "matched",
+                "audio_duration_s": meta.get("audio_duration_s"),
+            })
+
+        return {
+            "total": total,
+            "matched": matched,
+            "unmatched": unmatched,
+            "match_rate": round(matched / total * 100, 1) if total > 0 else 0,
+            "scores": scores,
+        }
+
+    data = await asyncio.to_thread(_fetch)
+    return web.json_response(data)
+
+
+async def events_routing_handler(request):
+    """GET /api/events/routing?hours=24 — Routing decisions from event logger."""
+    from core.event_logger import get_event_logger
+    el = get_event_logger()
+    if not el:
+        return web.json_response({'error': 'Event logger not initialized'}, status=503)
+
+    hours = float(request.query.get('hours', 24))
+
+    def _fetch():
+        events = el.query(event="route_completed", hours=hours, limit=500)
+        total = len(events)
+
+        # Distribution by intent
+        intents = {}
+        for e in events:
+            meta = e.get("metadata", {}) or {}
+            intent = meta.get("intent") or "unknown"
+            intents[intent] = intents.get(intent, 0) + 1
+
+        # Handled vs fallback
+        handled = sum(1 for e in events if e.get("status") == "handled")
+        fallback = total - handled
+
+        # Latency stats
+        latencies = [e["latency_ms"] for e in events if e.get("latency_ms")]
+        latencies.sort()
+
+        return {
+            "total": total,
+            "handled": handled,
+            "fallback": fallback,
+            "intents": intents,
+            "avg_latency_ms": round(sum(latencies) / len(latencies), 1) if latencies else 0,
+            "p50_latency_ms": round(latencies[len(latencies) // 2], 1) if latencies else 0,
+        }
+
+    data = await asyncio.to_thread(_fetch)
+    return web.json_response(data)
+
+
+async def events_watchdog_handler(request):
+    """GET /api/events/watchdog?hours=168 — Watchdog interventions."""
+    from core.event_logger import get_event_logger
+    el = get_event_logger()
+    if not el:
+        return web.json_response({'error': 'Event logger not initialized'}, status=503)
+
+    hours = float(request.query.get('hours', 168))
+
+    def _fetch():
+        events = el.query(category="error_recovery", hours=hours, limit=200)
+        by_type = {}
+        for e in events:
+            event_name = e.get("event", "unknown")
+            by_type[event_name] = by_type.get(event_name, 0) + 1
+
+        return {
+            "total": len(events),
+            "by_type": by_type,
+            "events": [{
+                "timestamp": e["timestamp"],
+                "event": e["event"],
+                "message": e.get("message", ""),
+                "severity": e["severity"],
+            } for e in events[:50]],
+        }
+
+    data = await asyncio.to_thread(_fetch)
+    return web.json_response(data)
+
+
+async def events_health_trends_handler(request):
+    """GET /api/events/health?hours=168&metrics=cpu.temp,gpu1.vram — Health trends."""
+    from core.event_logger import get_event_logger
+    el = get_event_logger()
+    if not el:
+        return web.json_response({'error': 'Event logger not initialized'}, status=503)
+
+    hours = float(request.query.get('hours', 168))
+    requested_metrics = request.query.get('metrics', '').split(',')
+
+    def _fetch():
+        available = el.get_health_metrics()
+        if not requested_metrics or requested_metrics == ['']:
+            # Return summary stats for key metrics
+            key_metrics = [m for m in available if m in (
+                'cpu.temp', 'cpu.load', 'gpu0.temp', 'gpu1.temp',
+                'gpu1.vram', 'gpu1.vram_used_mb', 'ram.percent',
+                'ram.proc_rss_mb', 'network.ping_ms',
+            )]
+        else:
+            key_metrics = [m for m in requested_metrics if m in available]
+
+        result = {"available_metrics": available, "trends": {}}
+        for metric in key_metrics:
+            trend = el.get_health_trend(metric, hours=hours)
+            stats = el.get_health_stats(metric, hours=hours)
+            result["trends"][metric] = {
+                "stats": stats,
+                "data": trend,
+            }
+        return result
+
+    data = await asyncio.to_thread(_fetch)
+    return web.json_response(data)
+
+
 async def memory_page_handler(request):
     """Serve memory.html for /memory."""
     return web.FileResponse(Path(__file__).parent / 'web' / 'memory.html')
@@ -4176,6 +4424,14 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/metrics/interactions', metrics_interactions_handler)
     app.router.add_get('/api/metrics/filters', metrics_filters_handler)
     app.router.add_get('/api/metrics/export', metrics_export_handler)
+    app.router.add_get('/dashboard/pipeline', dashboard_pipeline_handler)
+    app.router.add_get('/dashboard/health', dashboard_health_handler)
+    app.router.add_get('/api/events/tts', events_tts_stats_handler)
+    app.router.add_get('/api/events/stt', events_stt_stats_handler)
+    app.router.add_get('/api/events/speaker_id', events_speaker_id_handler)
+    app.router.add_get('/api/events/routing', events_routing_handler)
+    app.router.add_get('/api/events/watchdog', events_watchdog_handler)
+    app.router.add_get('/api/events/health', events_health_trends_handler)
     app.router.add_get('/memory', memory_page_handler)
     app.router.add_get('/api/memory/summary', memory_summary_handler)
     app.router.add_get('/api/memory/facts', memory_facts_handler)
