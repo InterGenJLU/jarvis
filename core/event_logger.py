@@ -450,6 +450,95 @@ class EventLogger:
             conn.close()
 
     # ------------------------------------------------------------------
+    # Read — Percentile Latency
+    # ------------------------------------------------------------------
+
+    def get_percentile_latency(self, percentile: float = 0.5,
+                                event: str = None, category: str = None,
+                                stage: str = None,
+                                hours: float = 24) -> float:
+        """Percentile latency (ms) from observations.
+
+        Args:
+            percentile: 0.0-1.0 (e.g. 0.5=P50, 0.95=P95)
+            event/category/stage: Optional filters
+            hours: Time window
+
+        Returns:
+            Latency in ms at the given percentile, or 0.0 if no data.
+        """
+        cutoff = time.time() - (hours * 3600)
+        clauses = ["timestamp >= ?", "latency_ms IS NOT NULL"]
+        params: list[Any] = [cutoff]
+        if event:
+            clauses.append("event = ?")
+            params.append(event)
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        if stage:
+            clauses.append("stage = ?")
+            params.append(stage)
+
+        where = " AND ".join(clauses)
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                f"SELECT latency_ms FROM observations "
+                f"WHERE {where} ORDER BY latency_ms",
+                params,
+            ).fetchall()
+            if not rows:
+                return 0.0
+            values = [r["latency_ms"] for r in rows]
+            idx = min(int(len(values) * percentile), len(values) - 1)
+            return round(values[idx], 1)
+        finally:
+            conn.close()
+
+    def get_latency_stats(self, event: str = None, category: str = None,
+                           stage: str = None,
+                           hours: float = 24) -> dict:
+        """Full latency stats: P50, P95, P99, mean, min, max, count."""
+        cutoff = time.time() - (hours * 3600)
+        clauses = ["timestamp >= ?", "latency_ms IS NOT NULL"]
+        params: list[Any] = [cutoff]
+        if event:
+            clauses.append("event = ?")
+            params.append(event)
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        if stage:
+            clauses.append("stage = ?")
+            params.append(stage)
+
+        where = " AND ".join(clauses)
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                f"SELECT latency_ms FROM observations "
+                f"WHERE {where} ORDER BY latency_ms",
+                params,
+            ).fetchall()
+            if not rows:
+                return {"p50": 0, "p95": 0, "p99": 0,
+                        "mean": 0, "min": 0, "max": 0, "count": 0}
+            values = [r["latency_ms"] for r in rows]
+            n = len(values)
+            return {
+                "p50": round(values[min(int(n * 0.50), n - 1)], 1),
+                "p95": round(values[min(int(n * 0.95), n - 1)], 1),
+                "p99": round(values[min(int(n * 0.99), n - 1)], 1),
+                "mean": round(sum(values) / n, 1),
+                "min": round(values[0], 1),
+                "max": round(values[-1], 1),
+                "count": n,
+            }
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Read — Recent (last N of a category)
     # ------------------------------------------------------------------
 

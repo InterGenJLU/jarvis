@@ -516,6 +516,249 @@ class MetricsTracker:
             conn.close()
 
     # ------------------------------------------------------------------
+    # Read — Trend Queries (Governance Prep)
+    # ------------------------------------------------------------------
+
+    def get_percentile_latency(self, percentile: float = 0.5,
+                                model: str = None, provider: str = None,
+                                hours: float = 24) -> float:
+        """P50/P95/P99 latency (ms) over a time window.
+
+        Args:
+            percentile: 0.0-1.0 (e.g. 0.5 for P50, 0.95 for P95)
+            model: Filter by model name (optional)
+            provider: Filter by provider (optional)
+            hours: Time window in hours
+
+        Returns:
+            Latency in ms at the given percentile, or 0.0 if no data.
+        """
+        cutoff = time.time() - (hours * 3600)
+        clauses = ["timestamp >= ?", "latency_ms IS NOT NULL"]
+        params: list = [cutoff]
+        if model:
+            clauses.append("model = ?")
+            params.append(model)
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        where = " AND ".join(clauses)
+
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                f"SELECT latency_ms FROM llm_interactions "
+                f"WHERE {where} ORDER BY latency_ms",
+                params,
+            ).fetchall()
+            if not rows:
+                return 0.0
+            values = [r["latency_ms"] for r in rows]
+            idx = min(int(len(values) * percentile), len(values) - 1)
+            return round(values[idx], 1)
+        finally:
+            conn.close()
+
+    def get_latency_stats(self, model: str = None, provider: str = None,
+                           hours: float = 24) -> dict:
+        """Full latency stats: P50, P95, P99, mean, min, max.
+
+        Returns dict with keys: p50, p95, p99, mean, min, max, count.
+        """
+        cutoff = time.time() - (hours * 3600)
+        clauses = ["timestamp >= ?", "latency_ms IS NOT NULL"]
+        params: list = [cutoff]
+        if model:
+            clauses.append("model = ?")
+            params.append(model)
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        where = " AND ".join(clauses)
+
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                f"SELECT latency_ms FROM llm_interactions "
+                f"WHERE {where} ORDER BY latency_ms",
+                params,
+            ).fetchall()
+            if not rows:
+                return {"p50": 0, "p95": 0, "p99": 0,
+                        "mean": 0, "min": 0, "max": 0, "count": 0}
+            values = [r["latency_ms"] for r in rows]
+            n = len(values)
+            return {
+                "p50": round(values[min(int(n * 0.50), n - 1)], 1),
+                "p95": round(values[min(int(n * 0.95), n - 1)], 1),
+                "p99": round(values[min(int(n * 0.99), n - 1)], 1),
+                "mean": round(sum(values) / n, 1),
+                "min": round(values[0], 1),
+                "max": round(values[-1], 1),
+                "count": n,
+            }
+        finally:
+            conn.close()
+
+    def get_tool_error_rate(self, tool_name: str = None,
+                             hours: float = 168) -> dict:
+        """Error rate for tool-calling interactions.
+
+        Args:
+            tool_name: Specific tool name, or None for all tools.
+            hours: Time window (default 168 = 7 days).
+
+        Returns:
+            Dict with total, errors, error_rate, and per-tool breakdown
+            if tool_name is None.
+        """
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            if tool_name:
+                # Match tool name in the JSON tools_called field
+                row = conn.execute("""
+                    SELECT COUNT(*) as total,
+                           SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as errors
+                    FROM llm_interactions
+                    WHERE timestamp >= ? AND tools_called LIKE ?
+                """, (cutoff, f"%{tool_name}%")).fetchone()
+                total = row["total"] or 0
+                errors = row["errors"] or 0
+                return {
+                    "tool": tool_name,
+                    "total": total,
+                    "errors": errors,
+                    "error_rate": round(errors / total, 3) if total > 0 else 0.0,
+                }
+            else:
+                # Aggregate across all tool-calling interactions
+                row = conn.execute("""
+                    SELECT COUNT(*) as total,
+                           SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as errors
+                    FROM llm_interactions
+                    WHERE timestamp >= ? AND tools_called IS NOT NULL
+                """, (cutoff,)).fetchone()
+                total = row["total"] or 0
+                errors = row["errors"] or 0
+                return {
+                    "total": total,
+                    "errors": errors,
+                    "error_rate": round(errors / total, 3) if total > 0 else 0.0,
+                }
+        finally:
+            conn.close()
+
+    def get_routing_distribution(self, hours: float = 24) -> dict:
+        """Route layer distribution as percentages.
+
+        Returns dict mapping route_layer -> {count, percentage}.
+        """
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            total_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM llm_interactions WHERE timestamp >= ?",
+                (cutoff,),
+            ).fetchone()
+            total = total_row["cnt"] or 0
+            if total == 0:
+                return {"total": 0, "distribution": {}}
+
+            rows = conn.execute("""
+                SELECT COALESCE(route_layer, 'unknown') as layer, COUNT(*) as cnt
+                FROM llm_interactions
+                WHERE timestamp >= ?
+                GROUP BY route_layer
+                ORDER BY cnt DESC
+            """, (cutoff,)).fetchall()
+
+            distribution = {}
+            for r in rows:
+                distribution[r["layer"]] = {
+                    "count": r["cnt"],
+                    "percentage": round(r["cnt"] / total * 100, 1),
+                }
+            return {"total": total, "distribution": distribution}
+        finally:
+            conn.close()
+
+    def get_model_dispatch(self, hours: float = 24) -> dict:
+        """Model dispatch distribution (4B vs 35B vs Claude).
+
+        Returns dict mapping model -> {count, percentage, avg_latency_ms}.
+        """
+        cutoff = time.time() - (hours * 3600)
+        conn = self._get_conn()
+        try:
+            total_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM llm_interactions WHERE timestamp >= ?",
+                (cutoff,),
+            ).fetchone()
+            total = total_row["cnt"] or 0
+            if total == 0:
+                return {"total": 0, "models": {}}
+
+            rows = conn.execute("""
+                SELECT COALESCE(model, 'unknown') as model,
+                       COUNT(*) as cnt,
+                       AVG(latency_ms) as avg_lat,
+                       AVG(CASE WHEN ttft_ms IS NOT NULL THEN ttft_ms END) as avg_ttft
+                FROM llm_interactions
+                WHERE timestamp >= ?
+                GROUP BY model
+                ORDER BY cnt DESC
+            """, (cutoff,)).fetchall()
+
+            models = {}
+            for r in rows:
+                models[r["model"]] = {
+                    "count": r["cnt"],
+                    "percentage": round(r["cnt"] / total * 100, 1),
+                    "avg_latency_ms": round(r["avg_lat"] or 0, 1),
+                    "avg_ttft_ms": round(r["avg_ttft"] or 0, 1),
+                }
+            return {"total": total, "models": models}
+        finally:
+            conn.close()
+
+    def get_fallback_trend(self, hours: float = 168,
+                            bucket: str = "day") -> list:
+        """Fallback rate over time (for detecting degradation).
+
+        Returns list of dicts with bucket_start, total, fallbacks, rate.
+        """
+        cutoff = time.time() - (hours * 3600)
+        bucket_seconds = 3600 if bucket == "hour" else 86400
+        conn = self._get_conn()
+        try:
+            rows = conn.execute("""
+                SELECT
+                    CAST(timestamp / ? AS INTEGER) * ? as bucket_start,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN is_fallback = 1 THEN 1 ELSE 0 END) as fallbacks,
+                    SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as errors
+                FROM llm_interactions
+                WHERE timestamp >= ?
+                GROUP BY bucket_start
+                ORDER BY bucket_start
+            """, (bucket_seconds, bucket_seconds, cutoff)).fetchall()
+            result = []
+            for r in rows:
+                total = r["total"] or 0
+                fallbacks = r["fallbacks"] or 0
+                result.append({
+                    "bucket_start": r["bucket_start"],
+                    "total": total,
+                    "fallbacks": fallbacks,
+                    "fallback_rate": round(fallbacks / total * 100, 1) if total else 0,
+                    "errors": r["errors"] or 0,
+                })
+            return result
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------
 
