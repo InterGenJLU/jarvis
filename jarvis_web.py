@@ -352,6 +352,10 @@ def init_components(config, tts_proxy):
     # LLM metrics tracking
     components['metrics'] = get_metrics_tracker(config)
 
+    # Structured event logging (self-observability foundation)
+    from core.event_logger import get_event_logger
+    components['event_logger'] = get_event_logger(config)
+
     # Self-awareness layer (Phase 1 of task planner)
     components['self_awareness'] = SelfAwareness(
         skill_manager=components['skill_manager'],

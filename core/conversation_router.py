@@ -242,11 +242,43 @@ class ConversationRouter:
         _router_thread_ctx.ctx = route_ctx
         if route_ctx and route_ctx.user_id:
             set_thread_user(route_ctx.user_id)
+
+        _route_start = __import__('time').monotonic()
         try:
-            return self._route_inner(command,
-                                     in_conversation=in_conversation,
-                                     doc_buffer=doc_buffer,
-                                     image_data=image_data)
+            result = self._route_inner(command,
+                                       in_conversation=in_conversation,
+                                       doc_buffer=doc_buffer,
+                                       image_data=image_data)
+            # Structured event: routing decision
+            try:
+                from core.event_logger import get_event_logger
+                el = get_event_logger()
+                if el:
+                    _elapsed = (__import__('time').monotonic() - _route_start) * 1000
+                    el.emit(
+                        category="decision",
+                        event="route_completed",
+                        message=f"{result.intent or 'llm_fallback'}: {command[:80]}",
+                        severity="info",
+                        source="conversation_router",
+                        stage="routing",
+                        status="handled" if result.handled else "llm_fallback",
+                        speaker_id=self._user_id,
+                        latency_ms=round(_elapsed, 1),
+                        metadata={
+                            "command": command[:200],
+                            "intent": result.intent,
+                            "source": result.source,
+                            "handled": result.handled,
+                            "used_llm": result.used_llm,
+                            "in_conversation": in_conversation,
+                            "is_guest": self._is_guest,
+                            "has_tools": bool(result.use_tools),
+                        },
+                    )
+            except Exception:
+                pass  # Event logging must never break routing
+            return result
         finally:
             _router_thread_ctx.ctx = None
             clear_thread_user()

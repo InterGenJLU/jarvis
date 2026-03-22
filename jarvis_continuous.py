@@ -164,6 +164,10 @@ class JarvisContinuous:
         if self.metrics:
             self.logger.info("LLM metrics tracking enabled")
 
+        # --- Structured event logging ---
+        from core.event_logger import get_event_logger
+        self.event_logger = get_event_logger(config)
+
         # --- Event pipeline mode (Phase 4) ---
         self.event_mode = config.get("pipeline.event_mode", False)
 

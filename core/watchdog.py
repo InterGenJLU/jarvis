@@ -124,6 +124,7 @@ class Watchdog(threading.Thread):
     def _recover_streaming_orphan(self):
         self._coordinator._streaming_active = False
         self.logger.warning("Cleared orphaned _streaming_active flag")
+        self._emit_recovery("streaming_orphan", "Cleared orphaned _streaming_active flag")
 
     # ------------------------------------------------------------------
     # Check 2: Speaking flags stuck — listener paused but TTS idle
@@ -151,6 +152,7 @@ class Watchdog(threading.Thread):
         self._listener.resume_listening()
         self._record_recovery("speaking_stuck")
         self.logger.warning("Cleared stuck speaking flags, resumed listening")
+        self._emit_recovery("speaking_stuck", "Cleared stuck speaking flags, resumed listening")
 
     # ------------------------------------------------------------------
     # Check 3: Listener stuck — no transcription while IDLE for too long
@@ -198,6 +200,9 @@ class Watchdog(threading.Thread):
         self._coordinator._last_transcription_ts = time.monotonic()
         self._record_recovery("listener_stuck")
         self.logger.info("Listener soft reset complete")
+        self._emit_recovery("listener_stuck", "Listener soft reset — no transcription for too long", metadata={
+            "idle_duration_s": round(time.monotonic() - self._coordinator._last_transcription_ts, 1),
+        })
 
     # ------------------------------------------------------------------
     # Check 4: Command processing hung
@@ -226,6 +231,9 @@ class Watchdog(threading.Thread):
         self._listener._speaking_event.clear()
         self._listener.resume_listening()
         self._record_recovery("command_hung")
+        self._emit_recovery("command_hung", f"Command processing hung for {elapsed:.0f}s — forced IDLE", metadata={
+            "elapsed_s": round(elapsed, 1),
+        })
         self._announce(
             "I'm sorry, I got stuck processing your last request. I'm back and listening."
         )
@@ -249,6 +257,9 @@ class Watchdog(threading.Thread):
                 break
         self._record_recovery("stt_backlog")
         self.logger.warning("Drained %d stale audio frames from queue", drained)
+        self._emit_recovery("stt_backlog", f"Drained {drained} stale audio frames", metadata={
+            "frames_drained": drained,
+        })
 
     # ------------------------------------------------------------------
     # Check 6: llama-server health (periodic, not every cycle)
@@ -327,6 +338,12 @@ class Watchdog(threading.Thread):
         # Track consecutive unhealthy checks
         if new_status != self._llm_status:
             self.logger.warning("LLM status changed: %s → %s", self._llm_status, new_status)
+            self._emit_event(
+                "error_recovery", "llm_status_changed",
+                f"LLM status: {self._llm_status} → {new_status}",
+                severity="warn",
+                metadata={"old_status": self._llm_status, "new_status": new_status},
+            )
         self._llm_status = new_status
         self._llm_unhealthy_count += 1
 
@@ -377,3 +394,33 @@ class Watchdog(threading.Thread):
             data={"text": message},
             source="watchdog",
         ))
+
+    # ------------------------------------------------------------------
+    # Structured event logging
+    # ------------------------------------------------------------------
+
+    def _emit_recovery(self, check_name: str, message: str,
+                       metadata: dict = None):
+        """Emit a structured error_recovery event for a watchdog intervention."""
+        self._emit_event(
+            "error_recovery", f"watchdog_{check_name}",
+            message, severity="warn", metadata=metadata,
+        )
+
+    def _emit_event(self, category: str, event: str, message: str,
+                    severity: str = "info", metadata: dict = None):
+        """Emit a structured event (best-effort, never raises)."""
+        try:
+            from core.event_logger import get_event_logger
+            el = get_event_logger()
+            if el:
+                el.emit(
+                    category=category,
+                    event=event,
+                    message=message,
+                    severity=severity,
+                    source="watchdog",
+                    metadata=metadata,
+                )
+        except Exception:
+            pass  # Event logging must never break the watchdog

@@ -1164,6 +1164,10 @@ def run_console(config, mode, user_id="user"):
     # LLM metrics tracking
     metrics = get_metrics_tracker(config)
 
+    # Structured event logging (self-observability foundation)
+    from core.event_logger import get_event_logger
+    event_logger = get_event_logger(config)
+
     # Self-awareness layer (Phase 1 of task planner)
     self_awareness = SelfAwareness(
         skill_manager=skill_manager,

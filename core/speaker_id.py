@@ -304,6 +304,33 @@ class SpeakerIdentifier:
             f"threshold={self.similarity_threshold}"
         )
 
+        # Structured event: speaker identification result
+        try:
+            from core.event_logger import get_event_logger
+            el = get_event_logger()
+            if el:
+                matched = best_score >= self.similarity_threshold
+                el.emit(
+                    category="user_interaction",
+                    event="speaker_identified",
+                    message=f"{'Matched' if matched else 'No match'}: best={best_id} score={best_score:.3f}",
+                    severity="info" if matched else "debug",
+                    source="speaker_id",
+                    speaker_id=best_id if matched else "__guest__",
+                    status="matched" if matched else "unmatched",
+                    metadata={
+                        "best_id": best_id,
+                        "best_score": round(best_score, 4),
+                        "threshold": self.similarity_threshold,
+                        "all_scores": {uid: round(s, 4) for uid, s in all_scores.items()},
+                        "audio_duration_s": round(audio_duration, 2),
+                        "audio_rms": round(audio_rms, 4),
+                        "emb_norm": round(emb_norm, 3),
+                    },
+                )
+        except Exception:
+            pass  # Event logging must never break speaker ID
+
         if best_score >= self.similarity_threshold:
             return best_id, best_score
 
