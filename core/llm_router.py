@@ -121,6 +121,36 @@ class LLMRouter:
         self.last_call_info = info
         self.last_call_chain.append(info)
 
+        # Structured event: LLM inference
+        try:
+            from core.event_logger import get_event_logger
+            el = get_event_logger()
+            if el:
+                el.emit(
+                    category="inference",
+                    event="llm_call",
+                    message=f"{info.get('provider', '?')}/{info.get('method', '?')}",
+                    severity="error" if info.get("error") else "info",
+                    source="llm_router",
+                    stage="llm",
+                    model=info.get("model"),
+                    status="error" if info.get("error") else "success",
+                    latency_ms=info.get("latency_ms"),
+                    metadata={
+                        "provider": info.get("provider"),
+                        "method": info.get("method"),
+                        "input_tokens": info.get("input_tokens"),
+                        "output_tokens": info.get("output_tokens"),
+                        "estimated_tokens": info.get("estimated_tokens"),
+                        "ttft_ms": info.get("ttft_ms"),
+                        "quality_gate": info.get("quality_gate"),
+                        "is_fallback": info.get("is_fallback"),
+                        "error": info.get("error"),
+                    },
+                )
+        except Exception:
+            pass  # Event logging must never break LLM routing
+
     def reset_call_chain(self):
         """Reset the call chain — call at the start of a new pipeline run."""
         self.last_call_chain = []

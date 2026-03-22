@@ -281,9 +281,55 @@ def execute_tool(tool_name: str, arguments: dict) -> str | dict:
         _rsize = len(str(result)) if result else 0
         logger.debug("execute_tool: %s returned %s (%d chars) in %.0fms",
                       tool_name, _rtype, _rsize, _elapsed)
+        # Structured event: tool execution
+        try:
+            from core.event_logger import get_event_logger
+            el = get_event_logger()
+            if el:
+                el.emit(
+                    category="tool_execution",
+                    event="tool_completed",
+                    message=f"{tool_name} → {_rsize} chars in {_elapsed:.0f}ms",
+                    severity="info",
+                    source="tool_registry",
+                    stage="tool",
+                    status="success",
+                    latency_ms=round(_elapsed, 1),
+                    metadata={
+                        "tool_name": tool_name,
+                        "arguments": _trunc_args,
+                        "result_type": _rtype,
+                        "result_size": _rsize,
+                    },
+                )
+        except Exception:
+            pass
         return result
     except Exception as e:
         logger.error(f"Tool execution error ({tool_name}): {e}")
+        # Structured event: tool failure
+        try:
+            from core.event_logger import get_event_logger
+            el = get_event_logger()
+            if el:
+                _elapsed = (time.time() - _t0) * 1000
+                el.emit(
+                    category="tool_execution",
+                    event="tool_completed",
+                    message=f"{tool_name} FAILED: {e}",
+                    severity="error",
+                    source="tool_registry",
+                    stage="tool",
+                    status="error",
+                    latency_ms=round(_elapsed, 1),
+                    metadata={
+                        "tool_name": tool_name,
+                        "arguments": _trunc_args,
+                        "error": str(e),
+                    },
+                )
+        except Exception:
+            pass
         return f"Error executing {tool_name}: {e}"
 
 

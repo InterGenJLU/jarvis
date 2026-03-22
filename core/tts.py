@@ -286,6 +286,23 @@ class TextToSpeech:
                         aplay.wait(timeout=10)
                         self._untrack_proc(aplay)
                         self.logger.info(f"CAL-L0 cached playback: '{text[:50]}'")
+                        # Structured event: TTS cache hit
+                        try:
+                            from core.event_logger import get_event_logger
+                            el = get_event_logger()
+                            if el:
+                                el.emit(
+                                    category="performance",
+                                    event="tts_cache_hit",
+                                    message=f"Cache hit: '{text[:50]}'",
+                                    severity="debug",
+                                    source="tts",
+                                    stage="tts",
+                                    status="success",
+                                    metadata={"text_length": len(text), "cache_type": "cal_l0"},
+                                )
+                        except Exception:
+                            pass
                         return aplay.returncode == 0
                 except Exception as e:
                     self.logger.warning(f"CAL-L0 cache playback failed, falling through: {e}")
@@ -947,6 +964,32 @@ class TextToSpeech:
             return False
 
         self.logger.info("TTS playback completed successfully")
+        # Structured event: TTS synthesis completed
+        try:
+            from core.event_logger import get_event_logger
+            el = get_event_logger()
+            if el:
+                el.emit(
+                    category="inference",
+                    event="tts_synthesis",
+                    message=f"Kokoro: {duration:.1f}s audio in {gen_time:.3f}s (RTF {duration/gen_time:.1f}x)",
+                    severity="info",
+                    source="tts",
+                    stage="tts",
+                    status="success",
+                    latency_ms=round(gen_time * 1000, 1),
+                    metadata={
+                        "engine": "kokoro",
+                        "audio_duration_s": round(duration, 2),
+                        "generation_time_s": round(gen_time, 3),
+                        "rtf": round(duration / gen_time, 2) if gen_time > 0 else 0,
+                        "ttfc_s": round(first_chunk_time, 3) if first_chunk_time else None,
+                        "total_samples": total_samples,
+                        "text_length": len(text),
+                    },
+                )
+        except Exception:
+            pass
         return True
 
     # ── Piper speak ───────────────────────────────────────────────────

@@ -1005,6 +1005,21 @@ class ContinuousListener:
             self.logger.debug("Window open: duration=%.1fs turn_count=%d",
                               duration, getattr(self, '_turn_count', 0))
             print(f"🔓 Conversation window open ({duration:.0f}s)")
+            # Structured event: conversation opened
+            try:
+                from core.event_logger import get_event_logger
+                el = get_event_logger()
+                if el:
+                    el.emit(
+                        category="user_interaction",
+                        event="conversation_opened",
+                        message=f"Conversation window opened ({duration:.0f}s)",
+                        severity="info",
+                        source="continuous_listener",
+                        metadata={"duration_s": duration},
+                    )
+            except Exception:
+                pass
         else:
             self.logger.debug(f"🔓 Conversation window extended ({duration:.0f}s)")
         self._play_tone("tone_path", "tone")
@@ -1017,6 +1032,20 @@ class ContinuousListener:
                 self.conversation_window_active = False
                 self.logger.info("🔒 Conversation window closed")
                 print("🔒 Conversation window closed")
+                # Structured event: conversation closed
+                try:
+                    from core.event_logger import get_event_logger
+                    el = get_event_logger()
+                    if el:
+                        el.emit(
+                            category="user_interaction",
+                            event="conversation_closed",
+                            message="Conversation window closed",
+                            severity="info",
+                            source="continuous_listener",
+                        )
+                except Exception:
+                    pass
                 self._play_tone("close_tone_path", "close tone")
 
     def _cancel_conversation_timer(self):

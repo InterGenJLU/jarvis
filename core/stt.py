@@ -250,8 +250,53 @@ class SpeechToText:
             self.logger.debug("STT result: %d segments, text_len=%d, lang_prob=%.2f",
                               len(seg_list), len(text), info.language_probability)
 
+            # Structured event: STT transcription
+            try:
+                import time as _time
+                from core.event_logger import get_event_logger
+                el = get_event_logger()
+                if el:
+                    _audio_dur = len(audio_data) / 16000
+                    el.emit(
+                        category="inference",
+                        event="stt_transcription",
+                        message=f"STT: {len(seg_list)} segments, {len(text.strip())} chars",
+                        severity="info" if text.strip() else "debug",
+                        source="stt",
+                        stage="stt",
+                        status="success" if text.strip() else "empty",
+                        speaker_id=speaker_user_id,
+                        model=used_key,
+                        metadata={
+                            "text": text.strip()[:200],
+                            "segments": len(seg_list),
+                            "language_probability": round(info.language_probability, 3),
+                            "audio_duration_s": round(_audio_dur, 2),
+                            "model_key": used_key,
+                        },
+                    )
+            except Exception:
+                pass  # Event logging must never break STT
+
             return text.strip()
-            
+
         except Exception as e:
             self.logger.error(f"Transcription failed: {e}")
+            # Structured event: STT failure
+            try:
+                from core.event_logger import get_event_logger
+                el = get_event_logger()
+                if el:
+                    el.emit(
+                        category="inference",
+                        event="stt_transcription",
+                        message=f"STT FAILED: {e}",
+                        severity="error",
+                        source="stt",
+                        stage="stt",
+                        status="error",
+                        metadata={"error": str(e)},
+                    )
+            except Exception:
+                pass
             return ""
