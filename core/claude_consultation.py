@@ -119,7 +119,7 @@ class ClaudeConsultation:
         self.api_key_env = config.get("llm.api.api_key_env")
         self.model = config.get(
             "consultation.model",
-            config.get("llm.api.model", "claude-sonnet-4-20250514"),
+            "claude-opus-4-20250514",
         )
         self.max_tokens = config.get("consultation.max_tokens", 4096)
         self._history: list[dict] = []
