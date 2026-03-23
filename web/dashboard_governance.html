@@ -25,6 +25,19 @@
         </div>
     </header>
 
+    <!-- Circuit Breaker Reset Banner (hidden by default) -->
+    <div id="circuit-reset-banner" style="display:none; margin: 12px 24px; padding: 16px 20px; background: rgba(239,68,68,0.1); border: 1px solid #ef4444; border-radius: 8px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+            <span style="font-size:1.5rem;">⚠</span>
+            <div>
+                <div style="color:#f87171; font-weight:700; font-size:1.1rem;">Circuit Breaker Tripped</div>
+                <div style="color:#94a3b8; font-size:0.85rem;">All autonomous actions are halted. Investigate the cause, then reset via terminal.</div>
+            </div>
+        </div>
+        <div style="background:#0a0e1a; border-radius:6px; padding:12px 16px; font-family:monospace; font-size:0.9rem; color:#38bdf8; user-select:all; cursor:pointer;" title="Click to select" onclick="this.ownerDocument.defaultView.getSelection().selectAllChildren(this)">jarvis-circuit-reset</div>
+        <div style="color:#64748b; font-size:0.75rem; margin-top:8px;">Requires sudo + governance password. Copy and paste the command above into your terminal.</div>
+    </div>
+
     <!-- Status Cards -->
     <section id="summary-cards">
         <div class="card">

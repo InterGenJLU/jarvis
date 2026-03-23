@@ -1,0 +1,89 @@
+#!/bin/bash
+# JARVIS Governance — Circuit Breaker Reset
+# Usage: jarvis-circuit-reset (will prompt for sudo)
+
+# Colors
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+DIM='\033[0;90m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Ensure sudo
+if [ "$EUID" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
+
+echo ""
+echo -e "${RED}╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${RED}║${NC}  ${BOLD}J.A.R.V.I.S.${NC}  ${DIM}Circuit Breaker Reset${NC}             ${RED}║${NC}"
+echo -e "${RED}╠══════════════════════════════════════════════════╣${NC}"
+echo -e "${RED}║${NC}                                                  ${RED}║${NC}"
+echo -e "${RED}║${NC}  ${YELLOW}⚠  The circuit breaker tripped because JARVIS${NC}   ${RED}║${NC}"
+echo -e "${RED}║${NC}  ${YELLOW}   made too many denied attempts in a short${NC}    ${RED}║${NC}"
+echo -e "${RED}║${NC}  ${YELLOW}   window. All autonomous actions are halted.${NC}  ${RED}║${NC}"
+echo -e "${RED}║${NC}                                                  ${RED}║${NC}"
+echo -e "${RED}║${NC}  ${DIM}Before resetting, investigate WHY it tripped.${NC}   ${RED}║${NC}"
+echo -e "${RED}║${NC}  ${DIM}Check the governance dashboard for details.${NC}     ${RED}║${NC}"
+echo -e "${RED}║${NC}                                                  ${RED}║${NC}"
+echo -e "${RED}╚══════════════════════════════════════════════════╝${NC}"
+echo ""
+
+read -p "$(echo -e "  ${YELLOW}Are you sure you want to reset? (yes/no)${NC} ► ")" CONFIRM
+echo ""
+
+if [ "$CONFIRM" != "yes" ]; then
+    echo -e "  ${DIM}Reset cancelled.${NC}"
+    exit 0
+fi
+
+echo -e "${CYAN}──────────────────────────────────────────────────${NC}"
+echo ""
+
+# Read and verify governance password
+PW_HASH_PATH="/etc/jarvis/.governance_pw"
+if [ ! -f "$PW_HASH_PATH" ]; then
+    echo -e "  ${RED}✗${NC} Governance password not configured."
+    echo -e "  ${DIM}Run: sudo ./scripts/jarvis-governance-setup${NC}"
+    exit 1
+fi
+
+read -sp "$(echo -e "  ${CYAN}Governance password${NC} ► ")" GOV_PASSWORD
+echo ""
+echo ""
+
+# Verify password locally (we have sudo, we can read the hash)
+STORED_HASH=$(cat "$PW_HASH_PATH" 2>/dev/null)
+COMPUTED_HASH=$(echo -n "$GOV_PASSWORD" | /home/user/jarvis/.venv/bin/python3 -c "import sys,hashlib;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())")
+
+if [ "$STORED_HASH" != "$COMPUTED_HASH" ]; then
+    echo -e "  ${RED}╔══════════════════════════════════════╗${NC}"
+    echo -e "  ${RED}║   INCORRECT GOVERNANCE PASSWORD      ║${NC}"
+    echo -e "  ${RED}╚══════════════════════════════════════╝${NC}"
+    exit 1
+fi
+
+# Call the web service API to reset
+RESPONSE=$(curl -s -o /tmp/jarvis_reset_response.json -w "%{http_code}" \
+    -X POST "http://127.0.0.1:8088/api/governance/circuit-breaker/reset" \
+    -H "Content-Type: application/json" \
+    -d "{\"password_hash\": \"$COMPUTED_HASH\"}")
+
+if [ "$RESPONSE" = "200" ]; then
+    echo -e "  ${GREEN} ██████╗██╗     ███████╗ █████╗ ██████╗ ${NC}"
+    echo -e "  ${GREEN}██╔════╝██║     ██╔════╝██╔══██╗██╔══██╗${NC}"
+    echo -e "  ${GREEN}██║     ██║     █████╗  ███████║██████╔╝${NC}"
+    echo -e "  ${GREEN}██║     ██║     ██╔══╝  ██╔══██║██╔══██╗${NC}"
+    echo -e "  ${GREEN}╚██████╗███████╗███████╗██║  ██║██║  ██║${NC}"
+    echo -e "  ${GREEN} ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝${NC}"
+    echo ""
+    echo -e "  ${GREEN}Circuit breaker reset. Autonomous operations resumed.${NC}"
+else
+    BODY=$(cat /tmp/jarvis_reset_response.json 2>/dev/null)
+    echo -e "  ${RED}✗${NC} Reset failed (HTTP $RESPONSE)"
+    echo -e "  ${DIM}$BODY${NC}"
+fi
+echo ""
+rm -f /tmp/jarvis_reset_response.json

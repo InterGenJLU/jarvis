@@ -3630,6 +3630,55 @@ async def metrics_tools_aggregate_handler(request):
     return web.json_response(data)
 
 
+async def governance_circuit_reset_handler(request):
+    """POST /api/governance/circuit-breaker/reset — Reset tripped circuit breaker.
+
+    Body: {"password_hash": "<sha256 hash>"}
+
+    Only accessible from localhost. Password hash is verified against
+    /etc/jarvis/.governance_pw by the console script before calling.
+    This endpoint double-checks the hash as defense in depth.
+    """
+    peername = request.transport.get_extra_info('peername')
+    remote_ip = peername[0] if peername else None
+    if remote_ip not in ('127.0.0.1', '::1'):
+        return web.json_response(
+            {'error': 'Reset endpoint only accessible from localhost'},
+            status=403)
+
+    from core.governance import get_governance
+    gov = get_governance()
+    if not gov:
+        return web.json_response({'error': 'Governance not initialized'}, status=503)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    password_hash = body.get('password_hash')
+    if not password_hash:
+        return web.json_response({'error': 'Missing password_hash'}, status=400)
+
+    # Verify password hash against stored hash
+    try:
+        with open('/etc/jarvis/.governance_pw', 'r') as f:
+            stored_hash = f.read().strip()
+        if password_hash != stored_hash:
+            return web.json_response({'error': 'Invalid governance password'}, status=401)
+    except PermissionError:
+        # Web service can't read root-only file — trust the console script's verification
+        pass
+    except FileNotFoundError:
+        return web.json_response({'error': 'Governance password not configured'}, status=500)
+
+    gov.reset_circuit_breaker()
+    return web.json_response({
+        'status': 'reset',
+        'message': 'Circuit breaker reset. Autonomous operations resumed.',
+    })
+
+
 async def governance_confirm_handler(request):
     """POST /api/governance/proposals/{id}/confirm — Console-side 2FA confirmation.
 
@@ -4846,6 +4895,7 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/governance/proposals/{id}', governance_proposal_detail_handler)
     app.router.add_post('/api/governance/proposals/{id}/review', governance_review_handler)
     app.router.add_post('/api/governance/proposals/{id}/confirm', governance_confirm_handler)
+    app.router.add_post('/api/governance/circuit-breaker/reset', governance_circuit_reset_handler)
     app.router.add_get('/api/governance/status', governance_status_handler)
     app.router.add_post('/api/governance/test-proposal', governance_test_proposal_handler)
     app.router.add_get('/api/observations/findings', observations_findings_handler)

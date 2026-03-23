@@ -38,8 +38,19 @@
             document.getElementById('val-integrity').textContent = s.integrity_verified ? 'Verified' : 'FAILED';
             document.getElementById('val-integrity').style.color = s.integrity_verified ? '#34d399' : '#f87171';
 
-            document.getElementById('val-circuit').textContent = s.circuit_breaker_open ? 'OPEN' : 'Closed';
-            document.getElementById('val-circuit').style.color = s.circuit_breaker_open ? '#f87171' : '#34d399';
+            const circuitEl = document.getElementById('val-circuit');
+            circuitEl.textContent = s.circuit_breaker_open ? 'TRIPPED' : 'Closed';
+            circuitEl.style.color = s.circuit_breaker_open ? '#f87171' : '#34d399';
+
+            // Show/hide reset instructions
+            const resetBanner = document.getElementById('circuit-reset-banner');
+            if (resetBanner) {
+                if (s.circuit_breaker_open) {
+                    resetBanner.style.display = 'block';
+                } else {
+                    resetBanner.style.display = 'none';
+                }
+            }
 
             const tierVal = typeof s.max_autonomous_tier === 'number' ? s.max_autonomous_tier : s.max_autonomous_tier;
             document.getElementById('val-tier').textContent = `Tier ${tierVal} (${TIER_NAMES[tierVal] || '?'})`;
