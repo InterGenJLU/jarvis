@@ -335,23 +335,12 @@
 
     async function fetchSkillsChart() {
         try {
-            // Aggregate tools_called from recent interactions
-            const r = await fetch(authUrl(`/api/metrics/interactions?limit=200`));
+            const r = await fetch(authUrl(`/api/metrics/tools?hours=${currentHours}`));
             if (!r.ok) return;
             const data = await r.json();
 
-            const toolCounts = {};
-            for (const row of data.rows) {
-                if (row.tools_called) {
-                    for (const tool of row.tools_called.split(', ')) {
-                        const t = tool.trim();
-                        if (t) toolCounts[t] = (toolCounts[t] || 0) + 1;
-                    }
-                }
-            }
-
             // Sort by count descending, take top 10
-            const sorted = Object.entries(toolCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            const sorted = Object.entries(data.tools || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
             const labels = sorted.map(d => d[0]);
             const values = sorted.map(d => d[1]);
 

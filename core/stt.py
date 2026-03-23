@@ -226,6 +226,8 @@ class SpeechToText:
                 self._debug_save_audio(audio_data)
 
             # Transcribe with optimizations
+            import time as _time
+            _stt_t0 = _time.monotonic()
             segments, info = model.transcribe(
                 audio_data,
                 language=self.language,
@@ -247,12 +249,12 @@ class SpeechToText:
             # Collect all segments
             seg_list = list(segments)
             text = " ".join([segment.text for segment in seg_list])
-            self.logger.debug("STT result: %d segments, text_len=%d, lang_prob=%.2f",
-                              len(seg_list), len(text), info.language_probability)
+            _stt_elapsed = (_time.monotonic() - _stt_t0) * 1000
+            self.logger.debug("STT result: %d segments, text_len=%d, lang_prob=%.2f, %.0fms",
+                              len(seg_list), len(text), info.language_probability, _stt_elapsed)
 
             # Structured event: STT transcription
             try:
-                import time as _time
                 from core.event_logger import get_event_logger
                 el = get_event_logger()
                 if el:
@@ -260,19 +262,22 @@ class SpeechToText:
                     el.emit(
                         category="inference",
                         event="stt_transcription",
-                        message=f"STT: {len(seg_list)} segments, {len(text.strip())} chars",
+                        message=f"STT: {len(seg_list)} segments, {len(text.strip())} chars in {_stt_elapsed:.0f}ms",
                         severity="info" if text.strip() else "debug",
                         source="stt",
                         stage="stt",
                         status="success" if text.strip() else "empty",
                         speaker_id=speaker_user_id,
                         model=used_key,
+                        latency_ms=round(_stt_elapsed, 1),
+                        duration_ms=round(_stt_elapsed, 1),
                         metadata={
                             "text": text.strip()[:200],
                             "segments": len(seg_list),
                             "language_probability": round(info.language_probability, 3),
                             "audio_duration_s": round(_audio_dur, 2),
                             "model_key": used_key,
+                            "stt_latency_ms": round(_stt_elapsed, 1),
                         },
                     )
             except Exception:

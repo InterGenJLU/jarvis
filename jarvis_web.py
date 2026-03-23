@@ -3547,6 +3547,43 @@ async def governance_review_handler(request):
     return web.json_response(result)
 
 
+async def metrics_tools_aggregate_handler(request):
+    """GET /api/metrics/tools?hours=24 — Aggregated tool usage respecting time range."""
+    components = request.app.get('components')
+    if not components:
+        return web.json_response({'error': 'Not initialized'}, status=503)
+
+    metrics = components.get('metrics')
+    if not metrics:
+        return web.json_response({'error': 'Metrics not enabled'}, status=503)
+
+    hours = int(request.query.get('hours', 24))
+
+    def _fetch():
+        import sqlite3, time
+        cutoff = time.time() - (hours * 3600)
+        conn = sqlite3.connect(str(metrics.db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT tools_called FROM llm_interactions "
+                "WHERE timestamp >= ? AND tools_called IS NOT NULL",
+                (cutoff,),
+            ).fetchall()
+            counts = {}
+            for r in rows:
+                for tool in r['tools_called'].split(', '):
+                    tool = tool.strip()
+                    if tool:
+                        counts[tool] = counts.get(tool, 0) + 1
+            return {"tools": counts, "hours": hours}
+        finally:
+            conn.close()
+
+    data = await asyncio.to_thread(_fetch)
+    return web.json_response(data)
+
+
 async def governance_confirm_handler(request):
     """POST /api/governance/proposals/{id}/confirm — Console-side 2FA confirmation.
 
@@ -4635,6 +4672,7 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/metrics/interactions', metrics_interactions_handler)
     app.router.add_get('/api/metrics/filters', metrics_filters_handler)
     app.router.add_get('/api/metrics/export', metrics_export_handler)
+    app.router.add_get('/api/metrics/tools', metrics_tools_aggregate_handler)
     app.router.add_get('/dashboard/pipeline', dashboard_pipeline_handler)
     app.router.add_get('/dashboard/health', dashboard_health_handler)
     app.router.add_get('/dashboard/governance', dashboard_governance_handler)
