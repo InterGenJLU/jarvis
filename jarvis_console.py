@@ -1496,6 +1496,8 @@ def run_console(config, mode, user_id="user"):
                         error=info.get('error'),
                         route_layer=_route_layer,
                         tools_called=_tools_used,
+                        session_id=getattr(result, 'trace_id', None),
+                        synthesis_category=getattr(result, 'synthesis_category', None),
                     )
                 except Exception as e:
                     console.print(f"[dim]Metrics recording failed: {e}[/dim]")

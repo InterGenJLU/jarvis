@@ -257,8 +257,8 @@ class ConversationRouter:
                 session_id=_session,
                 speaker_id=self._user_id if hasattr(self, '_user_id') else None,
             )
-        except Exception:
-            pass
+        except Exception as _trace_err:
+            logger.debug("trace_ctx.start failed: %s", _trace_err)
 
         try:
             result = self._route_inner(command,
@@ -510,6 +510,7 @@ class ConversationRouter:
                     "Tool skip: best_score=%.2f < %.2f — no tools for: %.80s",
                     best_score, self._TOOL_SKIP_THRESHOLD, command,
                 )
+                result.intent = "llm_fallback"
             else:
                 always_on = list(ALWAYS_INCLUDED_TOOLS.values())
                 # Re-include domain tools stashed by the non-migrated guard
@@ -550,6 +551,18 @@ class ConversationRouter:
                         logger.debug("Fallback: force_web_search=True (entertainment listing)")
                     result.intent = "tool_calling"
         result.image_data = image_data
+        # Ensure intent is always set
+        if not result.intent:
+            result.intent = "llm_fallback" if not result.handled else "handled"
+        # Classify domain for all LLM-bound paths that don't have a category yet
+        if not result.synthesis_category and not result.handled and command:
+            try:
+                category = self._classify_query_domain(command)
+                if category:
+                    result.synthesis_category = category
+                    result.synthesis_temperature = self._DOMAIN_TEMPERATURES.get(category)
+            except Exception:
+                pass
         return result
 
     # -------------------------------------------------------------------

@@ -1173,6 +1173,17 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
         image_data=image_data, route_ctx=_route_ctx,
     )
     router._target_history = None
+    # Re-establish trace context on the async thread for downstream emit() calls
+    try:
+        from core.trace_context import trace_ctx
+        if result.trace_id:
+            trace_ctx.start(
+                trace_id=result.trace_id,
+                session_id=getattr(_route_ctx, 'client_id', None) if _route_ctx else None,
+                speaker_id=getattr(_route_ctx, 'user_id', None) if _route_ctx else None,
+            )
+    except Exception:
+        pass
     t_match = time.perf_counter()
     logger.debug("route result: handled=%s intent=%s skip=%s has_tools=%s match=%s",
                  result.handled, getattr(result, 'intent', None), result.skip,
@@ -1454,6 +1465,12 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 web_researcher.last_search_stats = None
         except Exception as e:
             logger.error("Metrics recording failed: %s", e)
+        # Clean up trace context to avoid leaking between requests
+        try:
+            from core.trace_context import trace_ctx
+            trace_ctx.clear()
+        except Exception:
+            pass
 
     # Build stats
     stats = _build_stats(match_info, llm, used_llm, t_start, t_match, t_end,
@@ -2081,6 +2098,18 @@ async def _llm_fallback(llm, command, history, web_researcher,
                     page_content = "\n\nFull article content:\n\n" + \
                         "\n\n---\n\n".join(page_sections)
                 tool_result = format_search_results(results) + page_content
+                # Emit tool_completed for fallback web_search path
+                try:
+                    from core.event_logger import get_event_logger
+                    _el = get_event_logger()
+                    if _el:
+                        _el.emit(event="tool_completed", category="tool_execution",
+                                 stage="web_search", status="success",
+                                 message=f"web_search: {query[:80]}",
+                                 metadata={"tool": "web_search", "query": query,
+                                           "results_count": len(results) if results else 0})
+                except Exception:
+                    pass
             else:
                 # Skill tool — dispatch via tool_executor
                 from core.tool_executor import execute_tool

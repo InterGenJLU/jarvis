@@ -182,7 +182,7 @@ class MetricsTracker:
                 SELECT
                     COUNT(*) as total,
                     SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)
-                        + COALESCE(estimated_tokens, 0)) as total_tokens,
+                        ) as total_tokens,
                     AVG(latency_ms) as avg_latency,
                     AVG(CASE WHEN ttft_ms IS NOT NULL THEN ttft_ms END) as avg_ttft,
                     SUM(CASE WHEN is_fallback = 1 THEN 1 ELSE 0 END) as fallback_count,
@@ -264,7 +264,7 @@ class MetricsTracker:
                     COUNT(*) as interactions,
                     SUM(COALESCE(prompt_tokens, 0)) as prompt_tok,
                     SUM(COALESCE(completion_tokens, 0)) as completion_tok,
-                    SUM(COALESCE(estimated_tokens, 0)) as estimated_tok,
+                    0 as estimated_tok,  -- column dead; real data in prompt/completion_tokens
                     AVG(latency_ms) as avg_latency,
                     SUM(CASE WHEN provider = 'qwen' THEN 1 ELSE 0 END) as qwen_count,
                     SUM(CASE WHEN provider = 'claude' THEN 1 ELSE 0 END) as claude_count
@@ -337,7 +337,7 @@ class MetricsTracker:
                     COALESCE(skill, 'LLM Fallback') as skill,
                     COUNT(*) as interactions,
                     SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)
-                        + COALESCE(estimated_tokens, 0)) as total_tokens,
+                        ) as total_tokens,
                     AVG(latency_ms) as avg_latency
                 FROM llm_interactions
                 WHERE timestamp >= ?
@@ -358,7 +358,7 @@ class MetricsTracker:
                     route_layer,
                     COUNT(*) as interactions,
                     SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)
-                        + COALESCE(estimated_tokens, 0)) as total_tokens,
+                        ) as total_tokens,
                     AVG(latency_ms) as avg_latency
                 FROM llm_interactions
                 WHERE timestamp >= ? AND route_layer IS NOT NULL

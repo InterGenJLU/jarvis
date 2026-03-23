@@ -1300,6 +1300,20 @@ class Coordinator:
                     self.logger.info(f"Web search ({_backend}): {len(results)} results for {query!r}")
                     print(f"📋 Found {len(results)} results ({_backend})")
 
+                    # Emit tool_completed for voice pipeline web_search
+                    try:
+                        from core.event_logger import get_event_logger
+                        _el = get_event_logger()
+                        if _el:
+                            _el.emit(event="tool_completed", category="tool_execution",
+                                     stage="web_search", status="success",
+                                     message=f"web_search: {query[:80]}",
+                                     metadata={"tool": "web_search", "query": query,
+                                               "results_count": len(results) if results else 0,
+                                               "backend": _backend})
+                    except Exception:
+                        pass
+
                     # Artifact cache (dual-write alongside conv_state)
                     if self.interaction_cache:
                         from core.interaction_cache import Artifact
@@ -2199,6 +2213,8 @@ class Coordinator:
                 error=info.get('error'),
                 route_layer=_route_layer,
                 tools_called=tools_str,
+                session_id=getattr(result, 'trace_id', None),
+                synthesis_category=getattr(result, 'synthesis_category', None),
             )
             self._last_tools_called = []
         except Exception as e:
