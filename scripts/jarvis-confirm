@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""JARVIS Governance Confirmation — console-side 2FA for proposal approval.
+
+Usage (must be run with sudo):
+    sudo jarvis-confirm <proposal-id> <confirmation-code>
+
+This is the out-of-band second factor. The proposal was reviewed on the
+web dashboard, which displayed a confirmation code. The owner enters
+that code plus their governance password here in the console.
+
+The sudo requirement ensures only someone with system-level access
+can complete the approval — a compromised web session alone is
+insufficient.
+"""
+
+import getpass
+import os
+import sys
+
+# Ensure we're running as root (sudo)
+if os.geteuid() != 0:
+    print("ERROR: This command must be run with sudo.")
+    print("Usage: sudo jarvis-confirm <proposal-id> <confirmation-code>")
+    sys.exit(1)
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: sudo jarvis-confirm <proposal-id> <confirmation-code>")
+        print("")
+        print("The proposal ID and confirmation code are displayed on the")
+        print("governance dashboard after you approve a proposal.")
+        sys.exit(1)
+
+    proposal_id = sys.argv[1]
+    confirmation_code = sys.argv[2].upper()
+
+    # Prompt for governance password (hidden input)
+    print("")
+    print("=" * 50)
+    print("  JARVIS Governance Confirmation")
+    print("=" * 50)
+    print(f"  Proposal:  {proposal_id}")
+    print(f"  Code:      {confirmation_code}")
+    print("=" * 50)
+    print("")
+
+    password = getpass.getpass("Governance password: ")
+
+    if not password:
+        print("ERROR: Password required.")
+        sys.exit(1)
+
+    # Initialize config and governance
+    try:
+        from core.config import Config
+        from core.governance import Governance
+
+        config = Config()
+        gov = Governance(config)
+
+        result = gov.confirm_proposal(proposal_id, confirmation_code, password)
+
+        print("")
+        if result.approved:
+            print("  ✓ CONFIRMED — Proposal approved and ready for execution.")
+            print(f"    Action: {result.action}")
+            print(f"    Tier:   {result.tier}")
+        else:
+            print(f"  ✗ DENIED — {result.reason}")
+            if result.reason == "invalid_confirmation_code":
+                print("    The confirmation code does not match. Check the dashboard.")
+            elif result.reason == "invalid_password":
+                print("    Incorrect governance password.")
+            elif result.reason == "confirmation_expired":
+                print("    The confirmation window expired. Re-approve on the dashboard.")
+            elif result.reason == "proposal_not_found":
+                print("    No proposal found with that ID.")
+
+        print("")
+        gov.stop()
+        sys.exit(0 if result.approved else 1)
+
+    except Exception as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

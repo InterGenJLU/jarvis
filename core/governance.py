@@ -10,11 +10,13 @@ Singleton access via get_governance(config).
 """
 
 import hashlib
+import hmac
 import json
 import os
+import secrets
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 from typing import Optional
@@ -141,6 +143,8 @@ class Governance:
         self._failure_log: list[float] = []  # timestamps of recent check failures
         self._circuit_open = False
         self._lock = threading.Lock()
+        self._proposals: dict[str, dict] = {}  # proposal_id -> proposal
+        self._denial_log: dict[str, list[float]] = {}  # action -> denial timestamps
         self._stop_event = threading.Event()
 
         # Verify integrity at startup
@@ -496,6 +500,298 @@ class Governance:
                 )
         except Exception:
             pass  # Event logging must never break governance
+
+    # ------------------------------------------------------------------
+    # Approval Queue — proposals requiring owner authorization
+    # ------------------------------------------------------------------
+
+    def propose(self, action: str, *, description: str,
+                diff: str = None, justification: str = None,
+                risk_tier: int = None, rollback_plan: str = None,
+                context: dict = None, requestor: str = "jarvis") -> str:
+        """Submit a proposal for owner approval.
+
+        Creates a structured proposal in the queue. The owner reviews it
+        via the web dashboard, then completes approval via console password.
+
+        Returns the proposal ID.
+        """
+        tier = risk_tier if risk_tier is not None else ACTION_TIERS.get(action, Tier.LOGIC)
+
+        proposal_id = secrets.token_hex(8)
+        confirmation_code = self._generate_confirmation_code()
+
+        proposal = {
+            "id": proposal_id,
+            "action": action,
+            "tier": int(tier),
+            "description": description,
+            "diff": diff,
+            "justification": justification,
+            "rollback_plan": rollback_plan,
+            "context": context,
+            "requestor": requestor,
+            "status": "pending",
+            "confirmation_code": confirmation_code,
+            "created_at": time.time(),
+            "expires_at": time.time() + self._proposal_ttl(tier),
+            "reviewed_at": None,
+            "review_decision": None,
+            "review_comment": None,
+            "confirmed_at": None,
+        }
+
+        with self._lock:
+            self._proposals[proposal_id] = proposal
+
+        logger.info("Proposal queued: %s — %s (tier %d)", proposal_id, action, tier)
+
+        self._emit_proposal_event(proposal, "proposal_queued")
+        return proposal_id
+
+    def get_proposals(self, status: str = None) -> list[dict]:
+        """Get proposals, optionally filtered by status.
+
+        Returns proposals with confirmation codes REDACTED (those only
+        appear after web review, displayed on screen for console entry).
+        """
+        now = time.time()
+        with self._lock:
+            # Expire old proposals
+            for pid, p in list(self._proposals.items()):
+                if p["status"] == "pending" and now > p["expires_at"]:
+                    p["status"] = "expired"
+                    self._emit_proposal_event(p, "proposal_expired")
+
+            results = []
+            for p in self._proposals.values():
+                if status and p["status"] != status:
+                    continue
+                # Redact confirmation code — only shown after web review
+                safe = dict(p)
+                safe.pop("confirmation_code", None)
+                results.append(safe)
+
+        return sorted(results, key=lambda x: x["created_at"], reverse=True)
+
+    def get_proposal(self, proposal_id: str) -> dict | None:
+        """Get a single proposal by ID (code redacted)."""
+        with self._lock:
+            p = self._proposals.get(proposal_id)
+            if not p:
+                return None
+            safe = dict(p)
+            safe.pop("confirmation_code", None)
+            return safe
+
+    def review_proposal(self, proposal_id: str, decision: str,
+                         comment: str = None) -> dict | None:
+        """Owner reviews a proposal via web UI.
+
+        decision: 'approve', 'reject', 'defer', 'edit'
+        Returns the proposal with confirmation code VISIBLE (for console entry)
+        if approved, or None if not found.
+        """
+        valid_decisions = {"approve", "reject", "defer", "edit"}
+        if decision not in valid_decisions:
+            return None
+
+        with self._lock:
+            p = self._proposals.get(proposal_id)
+            if not p or p["status"] != "pending":
+                return None
+
+            p["reviewed_at"] = time.time()
+            p["review_decision"] = decision
+            p["review_comment"] = comment
+
+            if decision == "reject":
+                p["status"] = "rejected"
+                self._emit_proposal_event(p, "proposal_rejected")
+                self._record_denial(p["action"])
+                safe = dict(p)
+                safe.pop("confirmation_code", None)
+                return safe
+
+            if decision == "defer":
+                p["status"] = "deferred"
+                self._emit_proposal_event(p, "proposal_deferred")
+                safe = dict(p)
+                safe.pop("confirmation_code", None)
+                return safe
+
+            if decision == "edit":
+                p["status"] = "editing"
+                self._emit_proposal_event(p, "proposal_editing")
+                safe = dict(p)
+                safe.pop("confirmation_code", None)
+                return safe
+
+            # Approved — return WITH confirmation code for console entry
+            p["status"] = "awaiting_confirmation"
+            self._emit_proposal_event(p, "proposal_approved_awaiting_confirmation")
+
+            # Regenerate code and set a short expiry for the confirmation step
+            p["confirmation_code"] = self._generate_confirmation_code()
+            p["confirmation_expires"] = time.time() + 300  # 5 minutes to enter code
+
+            return dict(p)  # Includes confirmation_code
+
+    def confirm_proposal(self, proposal_id: str, confirmation_code: str,
+                          password: str) -> GovernanceResult:
+        """Owner confirms a proposal via console with code + password.
+
+        This is the out-of-band second factor. The confirmation code was
+        displayed on the web UI after review. The password is entered in
+        the console. Both must match.
+
+        Returns GovernanceResult with approved=True if confirmed.
+        """
+        with self._lock:
+            p = self._proposals.get(proposal_id)
+            if not p:
+                return GovernanceResult(
+                    approved=False, reason="proposal_not_found",
+                    tier=0, action="confirm_proposal")
+
+            if p["status"] != "awaiting_confirmation":
+                return GovernanceResult(
+                    approved=False, reason=f"proposal_status_{p['status']}",
+                    tier=p["tier"], action=p["action"])
+
+            # Check confirmation code expiry
+            if time.time() > p.get("confirmation_expires", 0):
+                p["status"] = "confirmation_expired"
+                self._emit_proposal_event(p, "proposal_confirmation_expired")
+                return GovernanceResult(
+                    approved=False, reason="confirmation_expired",
+                    tier=p["tier"], action=p["action"])
+
+            # Verify confirmation code (constant-time comparison)
+            if not hmac.compare_digest(confirmation_code, p["confirmation_code"]):
+                self._emit_proposal_event(p, "proposal_bad_confirmation_code")
+                return GovernanceResult(
+                    approved=False, reason="invalid_confirmation_code",
+                    tier=p["tier"], action=p["action"])
+
+            # Verify governance password
+            if not self._verify_password(password):
+                self._emit_proposal_event(p, "proposal_bad_password")
+                return GovernanceResult(
+                    approved=False, reason="invalid_password",
+                    tier=p["tier"], action=p["action"])
+
+            # Both factors verified — approve
+            p["status"] = "confirmed"
+            p["confirmed_at"] = time.time()
+            self._emit_proposal_event(p, "proposal_confirmed")
+
+            logger.info("Proposal CONFIRMED: %s — %s", proposal_id, p["action"])
+
+            return GovernanceResult(
+                approved=True,
+                reason="owner_confirmed",
+                tier=p["tier"],
+                action=p["action"],
+            )
+
+    # ------------------------------------------------------------------
+    # Approval helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _generate_confirmation_code() -> str:
+        """Generate a short, human-typeable confirmation code."""
+        # 6 alphanumeric characters, uppercase for readability
+        return secrets.token_hex(3).upper()
+
+    def _proposal_ttl(self, tier: int) -> float:
+        """Time-to-live for a proposal based on tier (seconds)."""
+        ttls = {
+            Tier.CONFIG: 86400,       # 24 hours
+            Tier.PROMPT: 86400,       # 24 hours
+            Tier.LOGIC: 43200,        # 12 hours
+            Tier.ARCHITECTURE: 21600, # 6 hours
+        }
+        return ttls.get(tier, 43200)
+
+    def _record_denial(self, action: str):
+        """Record a denial for escalating cooldown tracking."""
+        with self._lock:
+            if not hasattr(self, '_denial_log'):
+                self._denial_log = {}
+            now = time.time()
+            if action not in self._denial_log:
+                self._denial_log[action] = []
+            self._denial_log[action].append(now)
+            # Prune old denials (keep last 7 days)
+            cutoff = now - 604800
+            self._denial_log[action] = [
+                t for t in self._denial_log[action] if t > cutoff]
+
+    def get_denial_count(self, action: str, hours: float = 24) -> int:
+        """How many times an action has been denied recently."""
+        cutoff = time.time() - (hours * 3600)
+        with self._lock:
+            denials = getattr(self, '_denial_log', {}).get(action, [])
+            return sum(1 for t in denials if t > cutoff)
+
+    def _verify_password(self, password: str) -> bool:
+        """Verify the governance password.
+
+        The password hash is stored in the governance directory.
+        If no password is set, this returns False (fail-closed).
+        """
+        pw_hash_path = self._hash_path.parent / ".governance_pw"
+        if not pw_hash_path.exists():
+            logger.warning("No governance password set — confirm_proposal will fail")
+            return False
+
+        try:
+            stored_hash = pw_hash_path.read_text().strip()
+            computed = hashlib.sha256(password.encode("utf-8")).hexdigest()
+            return hmac.compare_digest(computed, stored_hash)
+        except Exception as e:
+            logger.error("Password verification error: %s", e)
+            return False
+
+    def set_password(self, password: str) -> bool:
+        """Set the governance password. Called once during initial setup.
+
+        Stores SHA-256 hash in the governance directory.
+        """
+        try:
+            pw_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+            pw_path = self._hash_path.parent / ".governance_pw"
+            pw_path.write_text(pw_hash)
+            logger.info("Governance password set")
+            return True
+        except Exception as e:
+            logger.error("Failed to set governance password: %s", e)
+            return False
+
+    def _emit_proposal_event(self, proposal: dict, event_name: str):
+        """Log proposal lifecycle events."""
+        try:
+            from core.event_logger import get_event_logger
+            el = get_event_logger()
+            if el:
+                el.emit(
+                    category="decision",
+                    event=event_name,
+                    message=f"{proposal['action']} (tier {proposal['tier']}): "
+                            f"{proposal.get('description', '')[:100]}",
+                    severity="info",
+                    source="governance",
+                    metadata={
+                        "proposal_id": proposal["id"],
+                        "action": proposal["action"],
+                        "tier": proposal["tier"],
+                        "status": proposal["status"],
+                    },
+                )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Cleanup

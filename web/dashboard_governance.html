@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>J.A.R.V.I.S. — Governance</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/dashboard.css">
+    <link rel="stylesheet" href="/governance.css">
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="header-left">
+            <h1>J.A.R.V.I.S. <span class="header-sub">GOVERNANCE</span></h1>
+        </div>
+        <div class="header-right">
+            <span id="gov-health" class="gov-health-badge">--</span>
+            <a href="/dashboard" class="back-link">Overview</a>
+            <a href="/dashboard/pipeline" class="back-link">Pipeline</a>
+            <a href="/dashboard/health" class="back-link">System</a>
+            <a href="/dashboard/governance" class="back-link active-nav">Governance</a>
+            <a href="/memory" class="back-link">Memory</a>
+            <a href="/" class="back-link">Back to Chat</a>
+        </div>
+    </header>
+
+    <!-- Status Cards -->
+    <section id="summary-cards">
+        <div class="card">
+            <div class="card-label">Governance Status</div>
+            <div class="card-value" id="val-status">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Integrity</div>
+            <div class="card-value" id="val-integrity">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Circuit Breaker</div>
+            <div class="card-value" id="val-circuit">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Max Autonomous Tier</div>
+            <div class="card-value" id="val-tier">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Pending Proposals</div>
+            <div class="card-value" id="val-pending">--</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Commandments</div>
+            <div class="card-value" id="val-commandments">--</div>
+        </div>
+    </section>
+
+    <!-- Proposals -->
+    <section id="proposals-section">
+        <div class="proposals-header">
+            <h3>Proposals</h3>
+            <div class="proposal-filters">
+                <select id="filter-status">
+                    <option value="">All</option>
+                    <option value="pending" selected>Pending</option>
+                    <option value="awaiting_confirmation">Awaiting Confirmation</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="deferred">Deferred</option>
+                    <option value="expired">Expired</option>
+                </select>
+            </div>
+        </div>
+        <div id="proposals-list" class="proposals-list">
+            <div class="empty-state">No proposals yet</div>
+        </div>
+    </section>
+
+    <!-- Review Modal -->
+    <div id="review-modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <h2 id="modal-title">Review Proposal</h2>
+            <div id="modal-body"></div>
+            <div class="modal-actions">
+                <button class="btn-action btn-approve" data-decision="approve">Approve</button>
+                <button class="btn-action btn-reject" data-decision="reject">Reject</button>
+                <button class="btn-action btn-defer" data-decision="defer">Defer</button>
+                <button class="btn-action btn-edit" data-decision="edit">Request Edit</button>
+            </div>
+            <div class="modal-comment">
+                <input type="text" id="review-comment" placeholder="Comment (optional)">
+            </div>
+            <div id="confirmation-display" class="confirmation-display hidden">
+                <div class="confirmation-label">CONFIRMATION CODE</div>
+                <div class="confirmation-code" id="confirmation-code">------</div>
+                <div class="confirmation-hint">Enter this code with your governance password in the console:<br>
+                    <code>sudo jarvis-confirm &lt;proposal-id&gt; &lt;code&gt;</code>
+                </div>
+            </div>
+            <button class="btn-close" id="modal-close">Close</button>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        var token = new URLSearchParams(location.search).get('token');
+        if (token) {
+            document.querySelectorAll('a.back-link').forEach(function(a) {
+                a.href = a.href.split('?')[0] + '?token=' + encodeURIComponent(token);
+            });
+        }
+    })();
+    </script>
+    <script src="/dashboard_governance.js"></script>
+</body>
+</html>

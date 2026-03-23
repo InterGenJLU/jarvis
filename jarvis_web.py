@@ -3431,6 +3431,78 @@ async def dashboard_health_handler(request):
     return web.FileResponse(Path(__file__).parent / 'web' / 'dashboard_health.html')
 
 
+async def dashboard_governance_handler(request):
+    """Serve governance approval dashboard page."""
+    return web.FileResponse(Path(__file__).parent / 'web' / 'dashboard_governance.html')
+
+
+async def governance_proposals_handler(request):
+    """GET /api/governance/proposals?status=pending — List proposals."""
+    from core.governance import get_governance
+    gov = get_governance()
+    if not gov:
+        return web.json_response({'error': 'Governance not initialized'}, status=503)
+
+    status_filter = request.query.get('status')
+    proposals = gov.get_proposals(status=status_filter or None)
+    return web.json_response({"proposals": proposals})
+
+
+async def governance_proposal_detail_handler(request):
+    """GET /api/governance/proposals/{id} — Single proposal detail."""
+    from core.governance import get_governance
+    gov = get_governance()
+    if not gov:
+        return web.json_response({'error': 'Governance not initialized'}, status=503)
+
+    proposal_id = request.match_info['id']
+    proposal = gov.get_proposal(proposal_id)
+    if not proposal:
+        return web.json_response({'error': 'Not found'}, status=404)
+    return web.json_response(proposal)
+
+
+async def governance_review_handler(request):
+    """POST /api/governance/proposals/{id}/review — Owner reviews a proposal.
+
+    Body: {"decision": "approve|reject|defer|edit", "comment": "optional"}
+    Returns proposal with confirmation code if approved.
+    """
+    from core.governance import get_governance
+    gov = get_governance()
+    if not gov:
+        return web.json_response({'error': 'Governance not initialized'}, status=503)
+
+    proposal_id = request.match_info['id']
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    decision = body.get('decision')
+    comment = body.get('comment')
+
+    if decision not in ('approve', 'reject', 'defer', 'edit'):
+        return web.json_response({'error': 'Invalid decision'}, status=400)
+
+    result = await asyncio.to_thread(
+        gov.review_proposal, proposal_id, decision, comment)
+
+    if result is None:
+        return web.json_response({'error': 'Proposal not found or not pending'}, status=404)
+
+    return web.json_response(result)
+
+
+async def governance_status_handler(request):
+    """GET /api/governance/status — Governance system health."""
+    from core.governance import get_governance
+    gov = get_governance()
+    if not gov:
+        return web.json_response({'error': 'Governance not initialized'}, status=503)
+    return web.json_response(gov.get_status())
+
+
 async def events_tts_stats_handler(request):
     """GET /api/events/tts?hours=24 — TTS performance from event logger."""
     from core.event_logger import get_event_logger
@@ -4442,6 +4514,11 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/metrics/export', metrics_export_handler)
     app.router.add_get('/dashboard/pipeline', dashboard_pipeline_handler)
     app.router.add_get('/dashboard/health', dashboard_health_handler)
+    app.router.add_get('/dashboard/governance', dashboard_governance_handler)
+    app.router.add_get('/api/governance/proposals', governance_proposals_handler)
+    app.router.add_get('/api/governance/proposals/{id}', governance_proposal_detail_handler)
+    app.router.add_post('/api/governance/proposals/{id}/review', governance_review_handler)
+    app.router.add_get('/api/governance/status', governance_status_handler)
     app.router.add_get('/api/events/tts', events_tts_stats_handler)
     app.router.add_get('/api/events/stt', events_stt_stats_handler)
     app.router.add_get('/api/events/speaker_id', events_speaker_id_handler)
