@@ -222,10 +222,38 @@ header h1 {
     font-size: 0.75rem;
 }
 
+.restart-btn {
+    position: relative;
+}
+
 .restart-btn:hover {
     color: var(--accent);
     border-color: var(--accent);
     background: rgba(56, 189, 248, 0.08);
+}
+
+.governance-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    line-height: 1;
+    animation: badge-pulse 2s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
 }
 
 #btn-restart:hover {

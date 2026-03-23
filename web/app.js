@@ -991,6 +991,26 @@
         window.open(authUrl('/dashboard/governance'), '_blank');
     });
 
+    // Governance badge — poll for pending proposals
+    function updateGovernanceBadge() {
+        var badge = document.getElementById('governance-badge');
+        if (!badge) return;
+        fetch(authUrl('/api/governance/proposals?status=pending'))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var count = (data.proposals || []).length;
+                if (count > 0) {
+                    badge.textContent = count;
+                    badge.style.display = 'flex';
+                } else {
+                    badge.style.display = 'none';
+                }
+            })
+            .catch(function () { badge.style.display = 'none'; });
+    }
+    updateGovernanceBadge();
+    setInterval(updateGovernanceBadge, 30000); // Check every 30s
+
     // Sidebar nav links — apply auth token
     document.querySelectorAll('.sidebar-nav-link').forEach(function (a) {
         a.addEventListener('click', function (e) {

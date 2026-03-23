@@ -1064,8 +1064,28 @@ class ConversationRouter:
                         "CAL-L0: absorbing greeting response (no items to surface)"
                     )
 
+                # Append governance notification if proposals are pending
+                try:
+                    from core.governance import get_governance
+                    _gov = get_governance()
+                    if _gov:
+                        _pending = _gov.get_proposals(status="pending")
+                        if _pending:
+                            _count = len(_pending)
+                            _note = (
+                                f" Also sir, I have {_count} proposal{'s' if _count > 1 else ''} "
+                                f"awaiting your review."
+                            )
+                            if briefing_text:
+                                briefing_text += _note
+                            else:
+                                briefing_text = f"Good to see you, sir.{_note}"
+                            logger.info("Governance: %d pending proposals noted in greeting", _count)
+                except Exception:
+                    pass
+
                 return RouteResult(
-                    text=briefing_text,  # Empty = silence, non-empty = briefing
+                    text=briefing_text,
                     source="cal_l0",
                     intent="cal_l0:presence_briefing" if briefing_text else "cal_l0:presence_greeting_ack",
                     handled=True,
