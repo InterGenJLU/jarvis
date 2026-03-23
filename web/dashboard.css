@@ -212,6 +212,7 @@ header {
     max-height: 190px;
 }
 
+
 /* Data Explorer */
 #explorer {
     padding: 0 24px 24px;
@@ -334,6 +335,10 @@ header {
 
 #interactions-table td.provider-qwen {
     color: var(--success);
+}
+
+#interactions-table td.provider-skill {
+    color: #a78bfa;
 }
 
 #interactions-table td.has-error {

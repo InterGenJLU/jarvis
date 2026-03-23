@@ -302,8 +302,8 @@ def execute_tool(tool_name: str, arguments: dict) -> str | dict:
                         "result_size": _rsize,
                     },
                 )
-        except Exception:
-            pass
+        except Exception as _evt_err:
+            logger.warning("tool_completed event emit failed: %s", _evt_err)
         return result
     except Exception as e:
         logger.error(f"Tool execution error ({tool_name}): {e}")

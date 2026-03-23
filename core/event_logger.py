@@ -232,6 +232,21 @@ class EventLogger:
             severity = "info"
 
         obs_id = observation_id or self.new_id()
+
+        # Auto-inherit from trace context if not explicitly provided
+        try:
+            from core.trace_context import trace_ctx
+            if trace_id is None and trace_ctx.active:
+                trace_id = trace_ctx.trace_id
+            if parent_id is None and trace_ctx.parent_id:
+                parent_id = trace_ctx.parent_id
+            if session_id is None and trace_ctx.session_id:
+                session_id = trace_ctx.session_id
+            if speaker_id is None and trace_ctx.speaker_id:
+                speaker_id = trace_ctx.speaker_id
+        except Exception:
+            pass
+
         if trace_id is None:
             trace_id = self.new_trace_id()
         if timestamp is None:
@@ -1175,6 +1190,7 @@ class HealthSnapshotScheduler(threading.Thread):
         logger.info("HealthSnapshotScheduler started (interval=%ds)",
                      self._interval)
         while not self._stop_event.is_set():
+            _snap_start = time.monotonic()
             try:
                 from core.health_check import get_full_health
                 health = get_full_health(self._config)
@@ -1182,7 +1198,10 @@ class HealthSnapshotScheduler(threading.Thread):
                 logger.debug("Health snapshot: %d metrics stored", count)
             except Exception as e:
                 logger.error("Health snapshot failed: %s", e)
-            self._stop_event.wait(timeout=self._interval)
+            # Subtract snapshot duration to maintain consistent intervals
+            _snap_elapsed = time.monotonic() - _snap_start
+            _wait = max(1, self._interval - _snap_elapsed)
+            self._stop_event.wait(timeout=_wait)
         logger.info("HealthSnapshotScheduler stopped")
 
     def stop(self):

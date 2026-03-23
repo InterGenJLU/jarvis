@@ -3,6 +3,11 @@
 (function () {
     'use strict';
 
+    // Chart.js global font sizing — readable on 4K
+    Chart.defaults.font.size = 14;
+    Chart.defaults.plugins.legend.labels.font = { size: 13 };
+    Chart.defaults.plugins.title.font = { size: 15 };
+
     let currentHours = 168;
     const charts = {};
 

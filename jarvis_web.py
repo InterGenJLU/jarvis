@@ -1400,14 +1400,30 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
             # Route layer: prefer match_info, fall back to result.intent
             _route_layer = (match_info.get('layer') if match_info
                             else result.intent or ('llm_fallback' if used_llm else 'unknown'))
-            _tools_available = match_info.get('skill_name') if match_info else None
             _tools_used = (', '.join(conv_state.last_tools_called)
                            if conv_state and conv_state.last_tools_called else None)
+            # Skill = the actual handling skill (from match_info layer),
+            # NOT the available tools list
+            _skill = None
+            if match_info:
+                _layer = match_info.get('layer', '')
+                if _layer.startswith('CAL-L0') or _layer.startswith('cal_l0'):
+                    _skill = 'conversation'
+                elif _layer.startswith('P4'):
+                    _skill = _tools_used  # the tool that was actually called
+                else:
+                    _skill = match_info.get('skill_name')  # non-LLM skill match
             _synth_cat = getattr(result, 'synthesis_category', None)
             # Web search stats (if a search was performed this interaction)
             _search_stats = getattr(web_researcher, 'last_search_stats', None) if web_researcher else None
             # For non-LLM interactions, estimate latency from wall clock
             _latency = info.get('latency_ms') if used_llm else (t_end - t_start) * 1000
+            # Cross-DB linking: use trace_id as session_id in metrics.db
+            try:
+                from core.trace_context import trace_ctx as _tc2
+                _trace_id = _tc2.trace_id
+            except Exception:
+                _trace_id = None
             metrics.record(
                 provider=info.get('provider', 'skill' if not used_llm else 'unknown'),
                 method=info.get('method', result.source or 'handled'),
@@ -1417,7 +1433,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 model=info.get('model'),
                 latency_ms=_latency,
                 ttft_ms=info.get('ttft_ms'),
-                skill=_tools_available,
+                skill=_skill,
                 intent=result.intent or (match_info.get('handler') if match_info else None),
                 input_method=_client_type or 'web',
                 quality_gate=info.get('quality_gate', False),
@@ -1429,6 +1445,7 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 search_pages_ok=_search_stats.get('pages_ok') if _search_stats else None,
                 search_pages_total=_search_stats.get('pages_total') if _search_stats else None,
                 search_latency_ms=_search_stats.get('fetch_latency_ms') if _search_stats else None,
+                session_id=_trace_id,
             )
             # Clear search stats so they don't bleed into non-search interactions
             if web_researcher:
@@ -1646,6 +1663,7 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                 _is_followup = _tool_call_counts.get("web_search", 0) > 1
                 _max_res = 3 if _is_followup else 5
                 _max_chars = 2000 if _is_followup else 4000
+                _ws_t0 = time.perf_counter()
                 results = await asyncio.to_thread(
                     web_researcher.search, query, max_results=_max_res,
                 )
@@ -1653,6 +1671,30 @@ async def _stream_llm_ws(ws, llm, command, history, web_researcher,
                     web_researcher.fetch_pages_parallel, results,
                     max_results=_max_res, max_chars=_max_chars,
                 )
+                _ws_elapsed = (time.perf_counter() - _ws_t0) * 1000
+                # Structured event: web_search tool execution
+                try:
+                    from core.event_logger import get_event_logger as _gel
+                    _el = _gel()
+                    if _el:
+                        _el.emit(
+                            category="tool_execution",
+                            event="tool_completed",
+                            message=f"web_search: {query[:80]} → {len(results)} results in {_ws_elapsed:.0f}ms",
+                            severity="info",
+                            source="tool_registry",
+                            stage="tool",
+                            status="success",
+                            latency_ms=round(_ws_elapsed, 1),
+                            metadata={
+                                "tool_name": "web_search",
+                                "query": query[:200],
+                                "result_count": len(results),
+                                "pages_fetched": len(page_sections) if page_sections else 0,
+                            },
+                        )
+                except Exception:
+                    pass
                 page_content = ""
                 if page_sections:
                     page_content = ("\n\nFull article content:\n\n"
@@ -3727,7 +3769,7 @@ async def events_routing_handler(request):
         intents = {}
         for e in events:
             meta = e.get("metadata", {}) or {}
-            intent = meta.get("intent") or "unknown"
+            intent = meta.get("intent") or "llm_fallback"
             intents[intent] = intents.get(intent, 0) + 1
 
         # Handled vs fallback

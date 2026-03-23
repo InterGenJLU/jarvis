@@ -244,6 +244,21 @@ class ConversationRouter:
             set_thread_user(route_ctx.user_id)
 
         _route_start = __import__('time').monotonic()
+
+        # Start trace context for this request — all emit() calls within
+        # this thread will inherit the trace_id and session_id.
+        try:
+            from core.trace_context import trace_ctx
+            _session = None
+            if route_ctx and route_ctx.client_id:
+                _session = route_ctx.client_id
+            trace_ctx.start(
+                session_id=_session,
+                speaker_id=self._user_id if hasattr(self, '_user_id') else None,
+            )
+        except Exception:
+            pass
+
         try:
             result = self._route_inner(command,
                                        in_conversation=in_conversation,
@@ -252,10 +267,11 @@ class ConversationRouter:
             # Structured event: routing decision
             try:
                 from core.event_logger import get_event_logger
+                from core.trace_context import trace_ctx as _tc
                 el = get_event_logger()
                 if el:
                     _elapsed = (__import__('time').monotonic() - _route_start) * 1000
-                    el.emit(
+                    _obs_id = el.emit(
                         category="decision",
                         event="route_completed",
                         message=f"{result.intent or 'llm_fallback'}: {command[:80]}",
@@ -265,9 +281,11 @@ class ConversationRouter:
                         status="handled" if result.handled else "llm_fallback",
                         speaker_id=self._user_id,
                         latency_ms=round(_elapsed, 1),
+                        trace_id=_tc.trace_id,
+                        session_id=_tc.session_id,
                         metadata={
                             "command": command[:200],
-                            "intent": result.intent,
+                            "intent": result.intent or ("llm_fallback" if not result.handled else "handled"),
                             "source": result.source,
                             "handled": result.handled,
                             "used_llm": result.used_llm,
@@ -276,6 +294,8 @@ class ConversationRouter:
                             "has_tools": bool(result.use_tools),
                         },
                     )
+                    # Set as parent for child events (LLM, tools, TTS)
+                    _tc.parent_id = _obs_id
             except Exception:
                 pass  # Event logging must never break routing
             return result

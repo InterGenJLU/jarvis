@@ -3,6 +3,12 @@
 (function () {
     'use strict';
 
+    // Chart.js global font sizing — readable on 4K
+    Chart.defaults.font.size = 14;
+    Chart.defaults.plugins.legend.labels.font = { size: 13 };
+    Chart.defaults.plugins.title.font = { size: 15 };
+    Chart.defaults.scales.linear = Chart.defaults.scales.linear || {};
+
     let currentHours = 24;
     const charts = {};
 
@@ -52,7 +58,7 @@
             document.getElementById('val-tts-gen').textContent =
                 data.avg_generation_s ? data.avg_generation_s.toFixed(2) + 's' : '--';
 
-            const pts = data.data_points || [];
+            const pts = (data.data_points || []).reverse();  // chronological: oldest first
             if (!pts.length) { emptyChart('chart-tts', 'No TTS data yet'); return; }
 
             const labels = pts.map(d => fmtTime(d.timestamp));
@@ -104,7 +110,7 @@
             document.getElementById('val-spk-match').textContent =
                 data.total > 0 ? `${data.match_rate}% (${data.matched}/${data.total})` : '--';
 
-            const scores = data.scores || [];
+            const scores = (data.scores || []).reverse();  // chronological
             if (!scores.length) { emptyChart('chart-speaker', 'No speaker ID data yet'); return; }
 
             const labels = scores.map(d => fmtTime(d.timestamp));
@@ -176,7 +182,7 @@
             }
 
             // Routing latency chart
-            const pts = data.data_points || [];
+            const pts = (data.data_points || []).reverse();  // chronological
             if (!pts.length) {
                 emptyChart('chart-route-latency', 'No routing latency data yet');
             } else {
@@ -233,7 +239,7 @@
             document.getElementById('val-stt-rate').textContent =
                 data.total > 0 ? `${data.success_rate}%` : '--';
 
-            const pts = data.data_points || [];
+            const pts = (data.data_points || []).reverse();  // chronological
             if (!pts.length) { emptyChart('chart-stt', 'No STT data yet'); return; }
 
             const labels = pts.map(d => fmtTime(d.timestamp));

@@ -15,6 +15,11 @@
         return url + sep + 'token=' + encodeURIComponent(_urlToken);
     }
 
+    // Chart.js global font sizing — readable on 4K
+    Chart.defaults.font.size = 14;
+    Chart.defaults.plugins.legend.labels.font = { size: 13 };
+    Chart.defaults.plugins.title.font = { size: 15 };
+
     // --- State ---
     let currentHours = 24;
     let explorerOffset = 0;
@@ -151,6 +156,7 @@
             const estimatedTok = data.map(d => d.estimated_tok || 0);
             const qwenCounts = data.map(d => d.qwen_count || 0);
             const claudeCounts = data.map(d => d.claude_count || 0);
+            const skillCounts = data.map((d, i) => Math.max(0, (d.interactions || 0) - (d.qwen_count || 0) - (d.claude_count || 0)));
 
             // Interactions chart
             if (chartInteractions) chartInteractions.destroy();
@@ -160,7 +166,15 @@
                     labels,
                     datasets: [
                         {
-                            label: 'Qwen',
+                            label: 'Total',
+                            data: interactions,
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56, 189, 248, 0.05)',
+                            fill: true,
+                            tension: 0.3,
+                        },
+                        {
+                            label: 'Qwen (LLM)',
                             data: qwenCounts,
                             borderColor: '#34d399',
                             backgroundColor: 'rgba(52, 211, 153, 0.1)',
@@ -168,7 +182,15 @@
                             tension: 0.3,
                         },
                         {
-                            label: 'Claude',
+                            label: 'Skill/CAL',
+                            data: skillCounts,
+                            borderColor: '#a78bfa',
+                            backgroundColor: 'rgba(167, 139, 250, 0.1)',
+                            fill: true,
+                            tension: 0.3,
+                        },
+                        {
+                            label: 'Claude (API)',
                             data: claudeCounts,
                             borderColor: '#fbbf24',
                             backgroundColor: 'rgba(251, 191, 36, 0.1)',
@@ -419,7 +441,8 @@
                 : row.estimated_tokens ? `~${row.estimated_tokens}` : '--';
 
             const providerClass = row.provider === 'claude' ? 'provider-claude'
-                : row.provider === 'qwen' ? 'provider-qwen' : '';
+                : row.provider === 'qwen' ? 'provider-qwen'
+                : row.provider === 'skill' ? 'provider-skill' : '';
             const errorClass = row.error ? 'has-error' : '';
             const methodLabel = METHOD_LABELS[row.method] || row.method || '--';
 

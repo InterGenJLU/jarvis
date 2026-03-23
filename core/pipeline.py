@@ -2172,6 +2172,16 @@ class Coordinator:
                             or result.intent
                             or ('llm_fallback' if used_llm else 'unknown'))
             _latency = info.get('latency_ms') or elapsed_ms
+            # Skill = actual handling skill, not available tools list
+            _skill = None
+            if match_info:
+                _layer = match_info.get('layer', '')
+                if 'CAL-L0' in _layer or 'cal_l0' in _layer:
+                    _skill = 'conversation'
+                elif 'P4' in _layer:
+                    _skill = tools_str
+                else:
+                    _skill = match_info.get('skill_name')
             self.metrics.record(
                 provider=info.get('provider', 'skill' if not used_llm else 'unknown'),
                 method=info.get('method', result.source or 'handled'),
@@ -2181,7 +2191,7 @@ class Coordinator:
                 model=info.get('model'),
                 latency_ms=_latency,
                 ttft_ms=info.get('ttft_ms'),
-                skill=match_info.get('skill_name'),
+                skill=_skill,
                 intent=result.intent or match_info.get('handler'),
                 input_method='voice',
                 quality_gate=info.get('quality_gate', False),

@@ -1069,6 +1069,21 @@ class ContinuousListener:
                 timed_out = True
                 self.logger.info("🔒 Conversation window timed out (silence)")
                 print("🔒 Conversation ended (silence)")
+                # Structured event: conversation closed (timeout)
+                try:
+                    from core.event_logger import get_event_logger
+                    el = get_event_logger()
+                    if el:
+                        el.emit(
+                            category="user_interaction",
+                            event="conversation_closed",
+                            message="Conversation window timed out (silence)",
+                            severity="info",
+                            source="continuous_listener",
+                            metadata={"reason": "timeout"},
+                        )
+                except Exception:
+                    pass
                 self._play_tone("close_tone_path", "close tone")
         # Invoke cleanup callback AFTER releasing the lock
         if timed_out and self.on_window_close:
