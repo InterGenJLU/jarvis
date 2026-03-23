@@ -1,16 +1,30 @@
 #!/usr/bin/env python3
 """JARVIS Governance Setup — set the governance password.
 
-Usage:
-    python3 scripts/jarvis-governance-setup
+Usage (must be run with sudo):
+    sudo jarvis-governance-setup
 
 Run once to set the password used for confirming governance proposals.
-The password hash is stored in governance/.governance_pw.
+The password hash is stored in /etc/jarvis/.governance_pw (root-only).
+JARVIS cannot read this file — only sudo-elevated scripts can.
 """
 
 import getpass
 import os
 import sys
+
+# Ensure we're running as root (sudo)
+if os.geteuid() != 0:
+    print("ERROR: This command must be run with sudo.")
+    print("Usage: sudo jarvis-governance-setup")
+    sys.exit(1)
+
+# Ensure /etc/jarvis exists with correct permissions
+etc_dir = "/etc/jarvis"
+if not os.path.isdir(etc_dir):
+    os.makedirs(etc_dir, mode=0o700)
+    os.chown(etc_dir, 0, 0)  # root:root
+    print(f"  Created {etc_dir} (root:root, 700)")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,7 +37,10 @@ def main():
     print("")
     print("This password is used to confirm governance proposals.")
     print("It is required alongside the web-displayed confirmation")
-    print("code when approving changes via the console.")
+    print("code when approving changes via sudo jarvis-confirm.")
+    print("")
+    print("The password hash is stored in /etc/jarvis/.governance_pw")
+    print("(root:root, 0600). JARVIS cannot read this file.")
     print("")
 
     pw1 = getpass.getpass("Set governance password: ")
@@ -31,28 +48,30 @@ def main():
         print("ERROR: Password cannot be empty.")
         sys.exit(1)
 
+    if len(pw1) < 8:
+        print("ERROR: Password must be at least 8 characters.")
+        sys.exit(1)
+
     pw2 = getpass.getpass("Confirm password: ")
     if pw1 != pw2:
         print("ERROR: Passwords do not match.")
         sys.exit(1)
 
-    from core.config import Config
     from core.governance import Governance
 
-    config = Config()
-    gov = Governance(config)
-
-    if gov.set_password(pw1):
+    if Governance.set_password(pw1):
         print("")
         print("  ✓ Governance password set successfully.")
-        print("    Hash stored in governance/.governance_pw")
+        print("    Hash stored in /etc/jarvis/.governance_pw")
+        print("    Permissions: root:root 0600")
+        print("")
+        print("  To confirm proposals:")
+        print("    sudo jarvis-confirm <proposal-id> <confirmation-code>")
         print("")
     else:
         print("")
         print("  ✗ Failed to set password.")
         sys.exit(1)
-
-    gov.stop()
 
 
 if __name__ == "__main__":

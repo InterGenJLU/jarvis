@@ -739,10 +739,11 @@ class Governance:
     def _verify_password(self, password: str) -> bool:
         """Verify the governance password.
 
-        The password hash is stored in the governance directory.
-        If no password is set, this returns False (fail-closed).
+        The password hash is stored in /etc/jarvis/.governance_pw (root-only).
+        JARVIS cannot read this file — only sudo-elevated scripts can.
+        If called from non-root context, this always returns False (fail-closed).
         """
-        pw_hash_path = self._hash_path.parent / ".governance_pw"
+        pw_hash_path = Path("/etc/jarvis/.governance_pw")
         if not pw_hash_path.exists():
             logger.warning("No governance password set — confirm_proposal will fail")
             return False
@@ -751,21 +752,33 @@ class Governance:
             stored_hash = pw_hash_path.read_text().strip()
             computed = hashlib.sha256(password.encode("utf-8")).hexdigest()
             return hmac.compare_digest(computed, stored_hash)
+        except PermissionError:
+            # Expected when called from JARVIS process (non-root).
+            # Password verification should only happen in jarvis-confirm (sudo).
+            logger.debug("Cannot read governance password (not root) — fail-closed")
+            return False
         except Exception as e:
             logger.error("Password verification error: %s", e)
             return False
 
-    def set_password(self, password: str) -> bool:
-        """Set the governance password. Called once during initial setup.
+    @staticmethod
+    def set_password(password: str) -> bool:
+        """Set the governance password. Must be run as root (sudo).
 
-        Stores SHA-256 hash in the governance directory.
+        Stores SHA-256 hash in /etc/jarvis/.governance_pw.
+        File permissions: root:root 0600.
         """
+        pw_path = Path("/etc/jarvis/.governance_pw")
         try:
             pw_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-            pw_path = self._hash_path.parent / ".governance_pw"
             pw_path.write_text(pw_hash)
-            logger.info("Governance password set")
+            # Ensure root-only permissions
+            os.chmod(str(pw_path), 0o600)
+            logger.info("Governance password set in %s", pw_path)
             return True
+        except PermissionError:
+            logger.error("Cannot write governance password — run with sudo")
+            return False
         except Exception as e:
             logger.error("Failed to set governance password: %s", e)
             return False
