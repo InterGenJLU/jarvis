@@ -20,7 +20,7 @@
             <a href="/dashboard" class="back-link">Overview</a>
             <a href="/dashboard/pipeline" class="back-link">Pipeline</a>
             <a href="/dashboard/health" class="back-link">System</a>
-            <a href="/dashboard/governance" class="back-link">Governance</a>
+            <a href="/dashboard/governance" class="back-link gov-nav-link">Governance<span class="gov-nav-badge" style="display:none">0</span></a>
             <a href="/memory" class="back-link active-nav">Memory</a>
             <a href="/" class="back-link">Back to Chat</a>
         </div>
@@ -192,6 +192,18 @@
                 a.href = a.href.split('?')[0] + '?token=' + encodeURIComponent(token);
             });
         }
+        function pollGovBadge() {
+            var url = '/api/governance/proposals?status=pending';
+            if (token) url += '?token=' + encodeURIComponent(token);
+            fetch(url).then(function(r){return r.json()}).then(function(d){
+                var n = (d.proposals||[]).length;
+                document.querySelectorAll('.gov-nav-badge').forEach(function(b){
+                    if(n>0){b.textContent=n;b.style.display='flex';}
+                    else{b.style.display='none';}
+                });
+            }).catch(function(){});
+        }
+        pollGovBadge(); setInterval(pollGovBadge, 30000);
     })();
     </script>
     <script src="/memory.js"></script>

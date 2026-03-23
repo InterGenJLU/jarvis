@@ -134,6 +134,34 @@ header {
     color: var(--accent-hover);
 }
 
+.gov-nav-link {
+    position: relative;
+}
+
+.gov-nav-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 0.55rem;
+    font-weight: 700;
+    min-width: 14px;
+    height: 14px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 3px;
+    line-height: 1;
+    animation: gov-pulse 2s ease-in-out infinite;
+}
+
+@keyframes gov-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
 /* Summary Cards */
 #summary-cards {
     display: grid;
