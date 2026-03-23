@@ -695,6 +695,52 @@ class Governance:
                 action=p["action"],
             )
 
+    def confirm_proposal_code_only(self, proposal_id: str,
+                                     confirmation_code: str) -> GovernanceResult:
+        """Confirm a proposal with code only (password pre-verified by console).
+
+        Called by the web API after the jarvis-confirm script has already
+        verified the governance password locally via sudo.
+        """
+        with self._lock:
+            p = self._proposals.get(proposal_id)
+            if not p:
+                return GovernanceResult(
+                    approved=False, reason="proposal_not_found",
+                    tier=0, action="confirm_proposal")
+
+            if p["status"] != "awaiting_confirmation":
+                return GovernanceResult(
+                    approved=False, reason=f"proposal_status_{p['status']}",
+                    tier=p["tier"], action=p["action"])
+
+            if time.time() > p.get("confirmation_expires", 0):
+                p["status"] = "confirmation_expired"
+                self._emit_proposal_event(p, "proposal_confirmation_expired")
+                return GovernanceResult(
+                    approved=False, reason="confirmation_expired",
+                    tier=p["tier"], action=p["action"])
+
+            if not hmac.compare_digest(confirmation_code, p["confirmation_code"]):
+                self._emit_proposal_event(p, "proposal_bad_confirmation_code")
+                return GovernanceResult(
+                    approved=False, reason="invalid_confirmation_code",
+                    tier=p["tier"], action=p["action"])
+
+            # Code verified, password pre-verified — approve
+            p["status"] = "confirmed"
+            p["confirmed_at"] = time.time()
+            self._emit_proposal_event(p, "proposal_confirmed")
+
+            logger.info("Proposal CONFIRMED: %s — %s", proposal_id, p["action"])
+
+            return GovernanceResult(
+                approved=True,
+                reason="owner_confirmed",
+                tier=p["tier"],
+                action=p["action"],
+            )
+
     # ------------------------------------------------------------------
     # Approval helpers
     # ------------------------------------------------------------------

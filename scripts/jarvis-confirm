@@ -1,21 +1,20 @@
-#!/usr/bin/env python3
+#!/home/user/jarvis/.venv/bin/python3
 """JARVIS Governance Confirmation — console-side 2FA for proposal approval.
 
 Usage (must be run with sudo):
     sudo jarvis-confirm <proposal-id> <confirmation-code>
 
-This is the out-of-band second factor. The proposal was reviewed on the
-web dashboard, which displayed a confirmation code. The owner enters
-that code plus their governance password here in the console.
-
-The sudo requirement ensures only someone with system-level access
-can complete the approval — a compromised web session alone is
-insufficient.
+Calls the web service API to confirm a proposal. The password is read
+here (in the sudo context where /etc/jarvis/.governance_pw is accessible)
+and sent to the API for verification.
 """
 
 import getpass
+import json
 import os
 import sys
+import urllib.request
+import urllib.error
 
 # Ensure we're running as root (sudo)
 if os.geteuid() != 0:
@@ -23,8 +22,6 @@ if os.geteuid() != 0:
     print("Usage: sudo jarvis-confirm <proposal-id> <confirmation-code>")
     sys.exit(1)
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     if len(sys.argv) != 3:
@@ -37,55 +34,121 @@ def main():
     proposal_id = sys.argv[1]
     confirmation_code = sys.argv[2].upper()
 
-    # Prompt for governance password (hidden input)
+    # Themed confirmation display
+    CYAN = '\033[0;36m'
+    DIM = '\033[0;90m'
+    BOLD = '\033[1m'
+    NC = '\033[0m'
+
+    print(f"\n  {CYAN}──────────────────────────────────────────────{NC}")
+    print(f"  {DIM}Proposal:{NC}  {BOLD}{proposal_id}{NC}")
+    print(f"  {DIM}Code:{NC}      {BOLD}{confirmation_code}{NC}")
+    print(f"  {CYAN}──────────────────────────────────────────────{NC}")
     print("")
-    print("=" * 50)
-    print("  JARVIS Governance Confirmation")
-    print("=" * 50)
-    print(f"  Proposal:  {proposal_id}")
-    print(f"  Code:      {confirmation_code}")
-    print("=" * 50)
     print("")
 
-    password = getpass.getpass("Governance password: ")
+    CYAN = '\033[0;36m'
+    RED = '\033[0;31m'
+    DIM = '\033[0;90m'
+    NC = '\033[0m'
+
+    password = getpass.getpass(f"  {CYAN}Password{NC}    ► ")
 
     if not password:
-        print("ERROR: Password required.")
+        print(f"\n  {RED}✗{NC} Password required.")
         sys.exit(1)
 
-    # Initialize config and governance
+    # Verify password locally (we have root access to /etc/jarvis/.governance_pw)
+    import hashlib
+    pw_hash_path = "/etc/jarvis/.governance_pw"
     try:
-        from core.config import Config
-        from core.governance import Governance
-
-        config = Config()
-        gov = Governance(config)
-
-        result = gov.confirm_proposal(proposal_id, confirmation_code, password)
-
-        print("")
-        if result.approved:
-            print("  ✓ CONFIRMED — Proposal approved and ready for execution.")
-            print(f"    Action: {result.action}")
-            print(f"    Tier:   {result.tier}")
-        else:
-            print(f"  ✗ DENIED — {result.reason}")
-            if result.reason == "invalid_confirmation_code":
-                print("    The confirmation code does not match. Check the dashboard.")
-            elif result.reason == "invalid_password":
-                print("    Incorrect governance password.")
-            elif result.reason == "confirmation_expired":
-                print("    The confirmation window expired. Re-approve on the dashboard.")
-            elif result.reason == "proposal_not_found":
-                print("    No proposal found with that ID.")
-
-        print("")
-        gov.stop()
-        sys.exit(0 if result.approved else 1)
-
-    except Exception as e:
-        print(f"ERROR: {e}")
+        with open(pw_hash_path, "r") as f:
+            stored_hash = f.read().strip()
+    except FileNotFoundError:
+        print(f"\n  {RED}✗{NC} No governance password set. Run: sudo jarvis-governance-setup")
         sys.exit(1)
+    except PermissionError:
+        print(f"\n  {RED}✗{NC} Cannot read governance password. Are you running with sudo?")
+        sys.exit(1)
+
+    computed_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    if computed_hash != stored_hash:
+        print(f"\n  {RED}✗{NC} Incorrect governance password.")
+        sys.exit(1)
+
+    print(f"\n  {DIM}Password verified. Confirming with JARVIS...{NC}")
+    print("")
+
+    # Password verified locally — send pre-verified confirmation to web service
+    url = f"http://127.0.0.1:8088/api/governance/proposals/{proposal_id}/confirm"
+    payload = json.dumps({
+        "confirmation_code": confirmation_code,
+        "password_verified": True,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"\n  ERROR: HTTP {e.code} — {body}")
+        sys.exit(1)
+    except urllib.error.URLError as e:
+        print(f"\n  ERROR: Cannot reach JARVIS web service — {e.reason}")
+        print("  Is jarvis-web.service running?")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n  ERROR: {e}")
+        sys.exit(1)
+
+    # Colors
+    CYAN = '\033[0;36m'
+    GREEN = '\033[0;32m'
+    RED = '\033[0;31m'
+    DIM = '\033[0;90m'
+    BOLD = '\033[1m'
+    NC = '\033[0m'
+
+    print("")
+    if result.get("approved"):
+        print(f"  {DIM}Action:{NC} {result.get('action', '?')}")
+        print(f"  {DIM}Tier:{NC}   {result.get('tier', '?')}")
+        print(f"  {GREEN}")
+        print(f"    ___  ___  _  _ ___ ___ ___ __  __ ___ ___  ")
+        print(f"   / __|/ _ \\| \\| | __|_ _| _ \\  \\/  | __|   \\ ")
+        print(f"  | (__| (_) | .` | _| | ||   / |\\/| | _|| |) |")
+        print(f"   \\___|\\___/|_|\\_|_| |___|_|_\\_|  |_|___|___/ ")
+        print(f"  {NC}")
+        print(f"  {DIM}Proposal approved for execution.{NC}")
+    else:
+        reason = result.get("reason", "unknown")
+        if reason == "invalid_confirmation_code":
+            msg = "Code does not match. Check dashboard."
+        elif reason == "invalid_password":
+            msg = "Incorrect governance password."
+        elif reason == "confirmation_expired":
+            msg = "Confirmation window expired. Re-approve."
+        elif reason == "proposal_not_found":
+            msg = "No proposal found with that ID."
+        else:
+            msg = reason
+        print(f"  {RED}")
+        print(f"   ____  _____ _   _ ___ _____ ____  ")
+        print(f"  |  _ \\| ____| \\ | |_ _| ____|  _ \\ ")
+        print(f"  | | | |  _| |  \\| || ||  _| | | | |")
+        print(f"  | |_| | |___| |\\  || || |___| |_| |")
+        print(f"  |____/|_____|_| \\_|___|_____|____/ ")
+        print(f"  {NC}")
+        print(f"  {DIM}{msg}{NC}")
+
+    print("")
+    sys.exit(0 if result.get("approved") else 1)
 
 
 if __name__ == "__main__":

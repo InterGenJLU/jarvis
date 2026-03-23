@@ -1,0 +1,49 @@
+#!/bin/bash
+# JARVIS Governance Approval — interactive wrapper
+# Usage: jarvis-approve (will prompt for sudo)
+
+# Colors
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+DIM='\033[0;90m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Ensure sudo
+if [ "$EUID" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
+
+echo ""
+echo -e "${CYAN}╔══════════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║${NC}  ${BOLD}J.A.R.V.I.S.${NC}  ${DIM}Governance Confirmation${NC}           ${CYAN}║${NC}"
+echo -e "${CYAN}╠══════════════════════════════════════════════════╣${NC}"
+echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${DIM}Enter the proposal ID and confirmation code${NC}     ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}  ${DIM}displayed on the governance dashboard.${NC}          ${CYAN}║${NC}"
+echo -e "${CYAN}║${NC}                                                  ${CYAN}║${NC}"
+echo -e "${CYAN}╚══════════════════════════════════════════════════╝${NC}"
+echo ""
+
+read -p "$(echo -e "  ${CYAN}Proposal ID${NC} ► ")" PROPOSAL_ID
+echo ""
+read -p "$(echo -e "  ${CYAN}Auth Code${NC}   ► ")" AUTH_CODE
+echo ""
+
+if [ -z "$PROPOSAL_ID" ] || [ -z "$AUTH_CODE" ]; then
+    echo -e "  ${RED}✗${NC} Both proposal ID and authentication code are required."
+    exit 1
+fi
+
+echo -e "${CYAN}──────────────────────────────────────────────────${NC}"
+echo -e "  ${DIM}Proposal:${NC}  ${BOLD}${PROPOSAL_ID}${NC}"
+echo -e "  ${DIM}Code:${NC}      ${BOLD}${AUTH_CODE}${NC}"
+echo -e "${CYAN}──────────────────────────────────────────────────${NC}"
+echo ""
+
+# Hand off to the Python confirmation script using the project venv
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd /home/user/jarvis
+exec /home/user/jarvis/.venv/bin/python3 "$SCRIPT_DIR/jarvis-confirm" "$PROPOSAL_ID" "$AUTH_CODE"

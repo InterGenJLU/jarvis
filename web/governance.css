@@ -32,13 +32,39 @@
     text-transform: uppercase;
 }
 
-.proposal-filters select {
+.proposal-filters {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.gov-btn-test {
+    background: none;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.gov-btn-test:hover {
+    background: rgba(56, 189, 248, 0.12);
+}
+
+.gov-select {
     background: var(--bg-input);
     color: var(--text-primary);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 5px 10px;
-    font-size: 0.82rem;
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.gov-select:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 /* Proposal cards */
@@ -251,13 +277,20 @@
     margin-bottom: 8px;
 }
 
+.confirmation-codes {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    margin-bottom: 12px;
+}
+
 .confirmation-code {
     font-family: monospace;
-    font-size: 2rem;
+    font-size: 1.6rem;
     font-weight: 700;
     color: var(--text-primary);
-    letter-spacing: 6px;
-    margin-bottom: 12px;
+    letter-spacing: 3px;
 }
 
 .confirmation-hint {

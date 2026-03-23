@@ -58,7 +58,8 @@
         <div class="proposals-header">
             <h3>Proposals</h3>
             <div class="proposal-filters">
-                <select id="filter-status">
+                <button id="btn-test-proposal" class="gov-btn-test">Submit Test Proposal</button>
+                <select id="filter-status" class="gov-select">
                     <option value="">All</option>
                     <option value="pending" selected>Pending</option>
                     <option value="awaiting_confirmation">Awaiting Confirmation</option>
@@ -90,11 +91,12 @@
                 <input type="text" id="review-comment" placeholder="Comment (optional)">
             </div>
             <div id="confirmation-display" class="confirmation-display hidden">
-                <div class="confirmation-label">CONFIRMATION CODE</div>
-                <div class="confirmation-code" id="confirmation-code">------</div>
-                <div class="confirmation-hint">Enter this code with your governance password in the console:<br>
-                    <code>sudo jarvis-confirm &lt;proposal-id&gt; &lt;code&gt;</code>
+                <div class="confirmation-label">PROPOSAL ID &amp; CONFIRMATION CODE</div>
+                <div class="confirmation-codes">
+                    <span class="confirmation-code" id="confirmation-id">----------------</span>
+                    <span class="confirmation-code" id="confirmation-code">------</span>
                 </div>
+                <div class="confirmation-hint">Enter these in the console with: <code>jarvis-approve</code></div>
             </div>
             <button class="btn-close" id="modal-close">Close</button>
         </div>

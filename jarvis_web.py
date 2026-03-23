@@ -123,10 +123,17 @@ def _check_auth_token(request) -> bool:
 _PUBLIC_EXTENSIONS = {'.css', '.js', '.svg', '.png', '.ico', '.woff', '.woff2'}
 
 
+# Paths that use their own authentication (not web auth token)
+_SELF_AUTHED_PATHS = {'/api/governance/proposals'}  # confirm endpoint has sudo+password
+
+
 @web.middleware
 async def auth_middleware(request, handler):
     """Reject requests without a valid auth token."""
     if Path(request.path).suffix in _PUBLIC_EXTENSIONS:
+        return await handler(request)
+    # Governance confirm endpoint uses its own auth (sudo + governance password)
+    if request.path.endswith('/confirm') and request.path.startswith('/api/governance/'):
         return await handler(request)
     if not _check_auth_token(request):
         raise web.HTTPUnauthorized(text='Invalid or missing auth token')
@@ -361,6 +368,10 @@ def init_components(config, tts_proxy):
         health_scheduler = HealthSnapshotScheduler(config, components['event_logger'])
         health_scheduler.start()
         components['health_scheduler'] = health_scheduler
+
+    # Governance module (constitutional enforcement)
+    from core.governance import get_governance
+    components['governance'] = get_governance(config)
 
     # Self-awareness layer (Phase 1 of task planner)
     components['self_awareness'] = SelfAwareness(
@@ -3494,6 +3505,57 @@ async def governance_review_handler(request):
     return web.json_response(result)
 
 
+async def governance_confirm_handler(request):
+    """POST /api/governance/proposals/{id}/confirm — Console-side 2FA confirmation.
+
+    Body: {"confirmation_code": "ABC123", "password_verified": true}
+
+    The password is verified by the jarvis-confirm script (running as root,
+    reads /etc/jarvis/.governance_pw directly). This endpoint only accepts
+    pre-verified requests from localhost — remote requests are rejected.
+    """
+    # Only accept from localhost (the console script)
+    peername = request.transport.get_extra_info('peername')
+    remote_ip = peername[0] if peername else None
+    if remote_ip not in ('127.0.0.1', '::1'):
+        return web.json_response(
+            {'error': 'Confirm endpoint only accessible from localhost'},
+            status=403)
+
+    from core.governance import get_governance
+    gov = get_governance()
+    if not gov:
+        return web.json_response({'error': 'Governance not initialized'}, status=503)
+
+    proposal_id = request.match_info['id']
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({'error': 'Invalid JSON'}, status=400)
+
+    code = body.get('confirmation_code', '')
+    password_verified = body.get('password_verified', False)
+
+    if not code:
+        return web.json_response({'error': 'confirmation_code required'}, status=400)
+
+    if not password_verified:
+        return web.json_response(
+            {'error': 'Password must be verified by console script'},
+            status=403)
+
+    # Password already verified by the sudo console script — just check the code
+    result = await asyncio.to_thread(
+        gov.confirm_proposal_code_only, proposal_id, code)
+
+    return web.json_response({
+        'approved': result.approved,
+        'reason': result.reason,
+        'action': result.action,
+        'tier': result.tier,
+    })
+
+
 async def governance_status_handler(request):
     """GET /api/governance/status — Governance system health."""
     from core.governance import get_governance
@@ -3501,6 +3563,25 @@ async def governance_status_handler(request):
     if not gov:
         return web.json_response({'error': 'Governance not initialized'}, status=503)
     return web.json_response(gov.get_status())
+
+
+async def governance_test_proposal_handler(request):
+    """POST /api/governance/test-proposal — Submit a test proposal for flow validation."""
+    from core.governance import get_governance
+    gov = get_governance()
+    if not gov:
+        return web.json_response({'error': 'Governance not initialized'}, status=503)
+
+    pid = gov.propose(
+        'adjust_threshold',
+        description='[TEST] Lower CAL-L0 greeting threshold from 0.78 to 0.75',
+        diff='--- core/conversation_router.py\n+++ core/conversation_router.py\n@@ -891,1 +891,1 @@\n-        if best_score < 0.78:\n+        if best_score < 0.75:',
+        justification='Test proposal to validate the governance approval flow. '
+                       'No actual changes will be made.',
+        rollback_plan='No changes to roll back — this is a test.',
+        risk_tier=2,
+    )
+    return web.json_response({'proposal_id': pid, 'status': 'queued'})
 
 
 async def events_tts_stats_handler(request):
@@ -4518,7 +4599,9 @@ def create_app(config) -> web.Application:
     app.router.add_get('/api/governance/proposals', governance_proposals_handler)
     app.router.add_get('/api/governance/proposals/{id}', governance_proposal_detail_handler)
     app.router.add_post('/api/governance/proposals/{id}/review', governance_review_handler)
+    app.router.add_post('/api/governance/proposals/{id}/confirm', governance_confirm_handler)
     app.router.add_get('/api/governance/status', governance_status_handler)
+    app.router.add_post('/api/governance/test-proposal', governance_test_proposal_handler)
     app.router.add_get('/api/events/tts', events_tts_stats_handler)
     app.router.add_get('/api/events/stt', events_stt_stats_handler)
     app.router.add_get('/api/events/speaker_id', events_speaker_id_handler)

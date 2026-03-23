@@ -986,6 +986,10 @@
     if (btnHealth) btnHealth.addEventListener('click', function () {
         window.open(authUrl('/dashboard/health'), '_blank');
     });
+    var btnGovernance = document.getElementById('btn-governance');
+    if (btnGovernance) btnGovernance.addEventListener('click', function () {
+        window.open(authUrl('/dashboard/governance'), '_blank');
+    });
 
     // Sidebar nav links — apply auth token
     document.querySelectorAll('.sidebar-nav-link').forEach(function (a) {

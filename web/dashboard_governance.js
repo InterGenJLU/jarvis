@@ -209,12 +209,12 @@
                 const result = await r.json();
 
                 if (decision === 'approve' && result.confirmation_code) {
-                    // Show confirmation code
+                    // Show proposal ID + confirmation code
                     const confDisplay = document.getElementById('confirmation-display');
+                    document.getElementById('confirmation-id').textContent = currentProposalId;
                     document.getElementById('confirmation-code').textContent = result.confirmation_code;
                     document.querySelector('.confirmation-hint').innerHTML =
-                        `Enter this code with your governance password in the console:<br>` +
-                        `<code>sudo jarvis-confirm ${currentProposalId} ${result.confirmation_code}</code>`;
+                        `Enter these in the console with: <code>jarvis-approve</code>`;
                     confDisplay.classList.remove('hidden');
 
                     // Hide action buttons
@@ -243,6 +243,21 @@
 
     document.querySelector('.modal-backdrop').addEventListener('click', () => {
         document.getElementById('modal-close').click();
+    });
+
+    // ── Test proposal ─────────────────────────────────────────────
+
+    document.getElementById('btn-test-proposal').addEventListener('click', async () => {
+        try {
+            const r = await fetch(authUrl('/api/governance/test-proposal'), { method: 'POST' });
+            if (r.ok) {
+                loadProposals();
+            } else {
+                alert('Failed to submit test proposal');
+            }
+        } catch (e) {
+            console.error('Test proposal:', e);
+        }
     });
 
     // ── Filter ──────────────────────────────────────────────────────
