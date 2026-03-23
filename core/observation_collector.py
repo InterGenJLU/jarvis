@@ -352,7 +352,7 @@ DETECTORS = [
 class ObservationCollector:
     """Background service that periodically analyzes operational data."""
 
-    def __init__(self, config, interval_hours: float = 6):
+    def __init__(self, config, interval_hours: float = 2):
         self.config = config
         self.interval = interval_hours * 3600
         self.lookback_hours = interval_hours * 2  # overlap to catch patterns
