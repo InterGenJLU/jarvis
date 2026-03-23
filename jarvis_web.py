@@ -1414,16 +1414,18 @@ async def process_command(command: str, components: dict, tts_proxy: WebTTSProxy
                 else:
                     _skill = match_info.get('skill_name')  # non-LLM skill match
             _synth_cat = getattr(result, 'synthesis_category', None)
+            # If no category from router, classify from command text
+            if not _synth_cat and command:
+                try:
+                    _synth_cat = router._classify_query_domain(command)
+                except Exception:
+                    pass
             # Web search stats (if a search was performed this interaction)
             _search_stats = getattr(web_researcher, 'last_search_stats', None) if web_researcher else None
             # For non-LLM interactions, estimate latency from wall clock
             _latency = info.get('latency_ms') if used_llm else (t_end - t_start) * 1000
-            # Cross-DB linking: use trace_id as session_id in metrics.db
-            try:
-                from core.trace_context import trace_ctx as _tc2
-                _trace_id = _tc2.trace_id
-            except Exception:
-                _trace_id = None
+            # Cross-DB linking: trace_id from RouteResult (set by router thread)
+            _trace_id = getattr(result, 'trace_id', None)
             metrics.record(
                 provider=info.get('provider', 'skill' if not used_llm else 'unknown'),
                 method=info.get('method', result.source or 'handled'),
@@ -3790,32 +3792,66 @@ async def events_speaker_id_handler(request):
 
 
 async def events_routing_handler(request):
-    """GET /api/events/routing?hours=24 — Routing decisions from event logger."""
-    from core.event_logger import get_event_logger
-    el = get_event_logger()
-    if not el:
-        return web.json_response({'error': 'Event logger not initialized'}, status=503)
+    """GET /api/events/routing?hours=24 — Routing decisions from metrics DB.
+
+    Uses metrics.db instead of events.db because metrics are recorded AFTER
+    tools execute, so route_layer and tools_called are populated.
+    """
+    components = request.app.get('components')
+    metrics = components.get('metrics') if components else None
 
     hours = float(request.query.get('hours', 24))
 
     def _fetch():
-        events = el.query(event="route_completed", hours=hours, limit=500)
-        total = len(events)
+        import sqlite3, time as _time
+        if not metrics:
+            return {"total": 0, "handled": 0, "fallback": 0, "intents": {},
+                    "avg_latency_ms": 0, "p50_latency_ms": 0, "data_points": []}
 
-        # Distribution by intent
+        cutoff = _time.time() - (hours * 3600)
+        conn = sqlite3.connect(str(metrics.db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                "SELECT route_layer, tools_called, latency_ms, intent, timestamp, skill "
+                "FROM llm_interactions WHERE timestamp >= ? ORDER BY timestamp ASC",
+                (cutoff,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+        total = len(rows)
+
+        # Build descriptive labels — no generic "unknown" or "skill"
         intents = {}
-        for e in events:
-            meta = e.get("metadata", {}) or {}
-            intent = meta.get("intent") or "llm_fallback"
-            intents[intent] = intents.get(intent, 0) + 1
+        for r in rows:
+            route = r['route_layer'] or 'llm_direct'
+            tools = r['tools_called']
+            intent = r['intent']
+            # Build a descriptive label
+            if route.startswith('cal_l0') or route.startswith('CAL-L0'):
+                label = route
+            elif route == 'P4-LLM' and tools:
+                label = f"tool:{tools}"
+            elif tools:
+                label = f"llm+{tools}"
+            elif route in ('llm_fallback', 'unknown', 'llm_direct'):
+                label = 'llm_direct'
+            elif route == 'keyword_direct' or (intent == 'skill' and r['skill']):
+                label = f"skill:{r['skill'] or route}"
+            elif intent and intent not in ('skill', 'tool_calling'):
+                label = intent
+            else:
+                label = route
+            intents[label] = intents.get(label, 0) + 1
 
         # Handled vs fallback
-        handled = sum(1 for e in events if e.get("status") == "handled")
+        handled = sum(1 for r in rows if r['route_layer'] and
+                       not r['route_layer'].startswith('llm_fallback'))
         fallback = total - handled
 
         # Latency stats
-        latencies = [e["latency_ms"] for e in events if e.get("latency_ms")]
-        latencies.sort()
+        latencies = sorted([r['latency_ms'] for r in rows if r['latency_ms']])
 
         return {
             "total": total,
@@ -3825,11 +3861,12 @@ async def events_routing_handler(request):
             "avg_latency_ms": round(sum(latencies) / len(latencies), 1) if latencies else 0,
             "p50_latency_ms": round(latencies[len(latencies) // 2], 1) if latencies else 0,
             "data_points": [{
-                "timestamp": e["timestamp"],
-                "latency_ms": e.get("latency_ms"),
-                "intent": (e.get("metadata") or {}).get("intent", "unknown"),
-                "status": e.get("status"),
-            } for e in events if e.get("latency_ms")],
+                "timestamp": r["timestamp"],
+                "latency_ms": r["latency_ms"],
+                "intent": r["route_layer"] or "unknown",
+                "status": "handled" if r['route_layer'] and
+                          not r['route_layer'].startswith('llm_fallback') else "fallback",
+            } for r in rows if r["latency_ms"]],
         }
 
     data = await asyncio.to_thread(_fetch)

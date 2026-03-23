@@ -76,6 +76,7 @@ class RouteResult:
     skip: bool = False          # Drop silently (bare ack noise)
     match_info: dict | None = None     # Skill routing metadata
     used_llm: bool = False      # Whether the LLM was called (for stats)
+    trace_id: str | None = None  # Trace ID for cross-DB event linking
 
     # LLM fallback context (populated when handled=False)
     llm_command: str = ""
@@ -298,6 +299,12 @@ class ConversationRouter:
                     _tc.parent_id = _obs_id
             except Exception:
                 pass  # Event logging must never break routing
+            # Attach trace_id to result so it crosses the thread boundary
+            try:
+                from core.trace_context import trace_ctx as _tc2
+                result.trace_id = _tc2.trace_id
+            except Exception:
+                pass
             return result
         finally:
             _router_thread_ctx.ctx = None
@@ -2280,7 +2287,7 @@ class ConversationRouter:
                 if response:
                     return RouteResult(
                         text=response,
-                        intent="skill",
+                        intent=f"skill:{skill_name}",
                         source="pending_confirmation",
                         handled=True,
                         match_info={"skill": skill_name},
@@ -3362,9 +3369,10 @@ class ConversationRouter:
                 return None
 
         if response:
-            logger.info("Handled by skill")
+            _skill_name = match_info.get('skill_name', 'unknown') if match_info else 'unknown'
+            logger.info("Handled by skill: %s", _skill_name)
             return RouteResult(
-                text=response, intent="skill", source="skill",
+                text=response, intent=f"skill:{_skill_name}", source="skill",
                 handled=True, match_info=match_info,
             )
         return None
