@@ -376,6 +376,14 @@ def init_components(config, tts_proxy):
         obs_collector.start()
         components['observation_collector'] = obs_collector
 
+    # Claude consultation (self-evolution Phase 2) — initialized but not auto-triggered
+    # Auto-consult is OFF by default; owner enables it when ready
+    try:
+        from core.claude_consultation import get_claude_consultation
+        components['claude_consultation'] = get_claude_consultation(config)
+    except Exception as e:
+        logger.warning("Claude consultation init failed: %s", e)
+
     # Governance module (constitutional enforcement)
     from core.governance import get_governance
     components['governance'] = get_governance(config)
@@ -3713,6 +3721,51 @@ async def observations_collect_handler(request):
     })
 
 
+async def observations_consult_handler(request):
+    """POST /api/observations/consult — Collect findings and consult Claude.
+
+    Full cycle: collect → consult → propose to governance.
+    """
+    from core.observation_collector import get_observation_collector
+    from core.claude_consultation import get_claude_consultation
+    oc = get_observation_collector()
+    cc = get_claude_consultation()
+    if not oc:
+        return web.json_response({'error': 'Observation collector not initialized'}, status=503)
+    if not cc:
+        return web.json_response({'error': 'Claude consultation not initialized'}, status=503)
+
+    # Collect findings
+    findings = await asyncio.to_thread(oc.run_now)
+    if not findings:
+        return web.json_response({'message': 'No findings to consult on', 'proposals': []})
+
+    # Filter to significant findings
+    significant = [f for f in findings if f.severity in ("critical", "high", "medium")]
+    if not significant:
+        return web.json_response({
+            'message': f'{len(findings)} findings, none significant enough for consultation',
+            'findings_count': len(findings),
+            'proposals': [],
+        })
+
+    # Consult Claude
+    result = await asyncio.to_thread(cc.consult_and_propose, significant)
+
+    return web.json_response({
+        'findings_count': len(findings),
+        'significant_count': len(significant),
+        'consultation': {
+            'summary': result.get('summary', ''),
+            'proposals_count': len(result.get('proposals', [])),
+            'proposals': result.get('proposals', []),
+            'submitted_ids': result.get('submitted_proposal_ids', []),
+            'confidence': result.get('confidence'),
+            'deferred': result.get('deferred', []),
+        },
+    })
+
+
 async def governance_status_handler(request):
     """GET /api/governance/status — Governance system health."""
     from core.governance import get_governance
@@ -4797,6 +4850,7 @@ def create_app(config) -> web.Application:
     app.router.add_post('/api/governance/test-proposal', governance_test_proposal_handler)
     app.router.add_get('/api/observations/findings', observations_findings_handler)
     app.router.add_post('/api/observations/collect', observations_collect_handler)
+    app.router.add_post('/api/observations/consult', observations_consult_handler)
     app.router.add_get('/api/events/tts', events_tts_stats_handler)
     app.router.add_get('/api/events/stt', events_stt_stats_handler)
     app.router.add_get('/api/events/speaker_id', events_speaker_id_handler)

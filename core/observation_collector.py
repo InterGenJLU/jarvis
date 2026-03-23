@@ -352,17 +352,20 @@ DETECTORS = [
 class ObservationCollector:
     """Background service that periodically analyzes operational data."""
 
-    def __init__(self, config, interval_hours: float = 2):
+    def __init__(self, config, interval_hours: float = 2,
+                 auto_consult: bool = False):
         self.config = config
         self.interval = interval_hours * 3600
         self.lookback_hours = interval_hours * 2  # overlap to catch patterns
+        self.auto_consult = auto_consult  # if True, send findings to Claude
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._last_run: float = 0
         self._findings_history: list[dict] = []
         logger.info(
-            "ObservationCollector initialized: interval=%sh, lookback=%sh, detectors=%d",
-            interval_hours, self.lookback_hours, len(DETECTORS),
+            "ObservationCollector initialized: interval=%sh, lookback=%sh, "
+            "detectors=%d, auto_consult=%s",
+            interval_hours, self.lookback_hours, len(DETECTORS), auto_consult,
         )
 
     def start(self):
@@ -396,6 +399,12 @@ class ObservationCollector:
                         len(findings), len(DETECTORS),
                     )
                     self._store_findings(findings)
+                    # Auto-consult: send high/medium findings to Claude
+                    if self.auto_consult:
+                        significant = [f for f in findings
+                                       if f.severity in ("critical", "high", "medium")]
+                        if significant:
+                            self._consult_claude(significant)
                 else:
                     logger.info("ObservationCollector: no findings this cycle")
             except Exception as e:
@@ -476,6 +485,24 @@ class ObservationCollector:
         # Keep last 50 cycles in memory
         if len(self._findings_history) > 50:
             self._findings_history = self._findings_history[-50:]
+
+    def _consult_claude(self, findings: list):
+        """Send significant findings to Claude for analysis."""
+        try:
+            from core.claude_consultation import get_claude_consultation
+            cc = get_claude_consultation(self.config)
+            if not cc:
+                logger.warning("Claude consultation not available")
+                return
+            result = cc.consult_and_propose(findings)
+            proposals = result.get("proposals", [])
+            submitted = result.get("submitted_proposal_ids", [])
+            logger.info(
+                "Auto-consultation: %d findings → %d proposals → %d submitted",
+                len(findings), len(proposals), len(submitted),
+            )
+        except Exception as e:
+            logger.error("Auto-consultation failed: %s", e)
 
     def get_latest_findings(self) -> dict:
         """Return the most recent collection results."""
