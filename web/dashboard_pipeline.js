@@ -187,20 +187,27 @@
                 emptyChart('chart-route-latency', 'No routing latency data yet');
             } else {
                 const latLabels = pts.map(d => fmtTime(d.timestamp));
-                const latValues = pts.map(d => d.latency_ms || 0);
-                const latColors = pts.map(d =>
-                    d.status === 'handled' ? 'rgba(52, 211, 153, 0.7)' : 'rgba(56, 189, 248, 0.7)');
+                // Split into two datasets for proper legend
+                const handledData = pts.map(d => d.status === 'handled' ? (d.latency_ms || 0) : null);
+                const fallbackData = pts.map(d => d.status !== 'handled' ? (d.latency_ms || 0) : null);
 
                 if (charts['chart-route-latency']) charts['chart-route-latency'].destroy();
                 charts['chart-route-latency'] = new Chart(document.getElementById('chart-route-latency'), {
                     type: 'bar',
                     data: {
                         labels: latLabels,
-                        datasets: [{
-                            label: 'Routing Latency (ms)',
-                            data: latValues,
-                            backgroundColor: latColors,
-                        }],
+                        datasets: [
+                            {
+                                label: 'Skill / CAL-L0 (handled)',
+                                data: handledData,
+                                backgroundColor: 'rgba(52, 211, 153, 0.7)',
+                            },
+                            {
+                                label: 'LLM Fallback',
+                                data: fallbackData,
+                                backgroundColor: 'rgba(56, 189, 248, 0.7)',
+                            },
+                        ],
                     },
                     options: {
                         responsive: true, maintainAspectRatio: false,
