@@ -369,6 +369,13 @@ def init_components(config, tts_proxy):
         health_scheduler.start()
         components['health_scheduler'] = health_scheduler
 
+    # Observation collector (self-evolution Phase 1)
+    if components['event_logger']:
+        from core.observation_collector import get_observation_collector
+        obs_collector = get_observation_collector(config)
+        obs_collector.start()
+        components['observation_collector'] = obs_collector
+
     # Governance module (constitutional enforcement)
     from core.governance import get_governance
     components['governance'] = get_governance(config)
@@ -3666,6 +3673,46 @@ async def governance_confirm_handler(request):
     })
 
 
+async def observations_findings_handler(request):
+    """GET /api/observations/findings — Latest observation collector findings."""
+    from core.observation_collector import get_observation_collector
+    oc = get_observation_collector()
+    if not oc:
+        return web.json_response({'error': 'Observation collector not initialized'}, status=503)
+    latest = oc.get_latest_findings()
+    history = oc.get_history(limit=10)
+    return web.json_response({
+        'latest': latest,
+        'history': history,
+        'detectors': len(oc.collect.__code__.co_consts),  # rough count
+    })
+
+
+async def observations_collect_handler(request):
+    """POST /api/observations/collect — Trigger immediate collection."""
+    from core.observation_collector import get_observation_collector
+    oc = get_observation_collector()
+    if not oc:
+        return web.json_response({'error': 'Observation collector not initialized'}, status=503)
+    findings = await asyncio.to_thread(oc.run_now)
+    return web.json_response({
+        'findings': [
+            {
+                'detector': f.detector,
+                'severity': f.severity,
+                'title': f.title,
+                'detail': f.detail,
+                'count': f.count,
+                'category': f.category,
+                'suggested_action': f.suggested_action,
+                'evidence_ids': f.evidence_ids[:5],
+            }
+            for f in findings
+        ],
+        'count': len(findings),
+    })
+
+
 async def governance_status_handler(request):
     """GET /api/governance/status — Governance system health."""
     from core.governance import get_governance
@@ -4748,6 +4795,8 @@ def create_app(config) -> web.Application:
     app.router.add_post('/api/governance/proposals/{id}/confirm', governance_confirm_handler)
     app.router.add_get('/api/governance/status', governance_status_handler)
     app.router.add_post('/api/governance/test-proposal', governance_test_proposal_handler)
+    app.router.add_get('/api/observations/findings', observations_findings_handler)
+    app.router.add_post('/api/observations/collect', observations_collect_handler)
     app.router.add_get('/api/events/tts', events_tts_stats_handler)
     app.router.add_get('/api/events/stt', events_stt_stats_handler)
     app.router.add_get('/api/events/speaker_id', events_speaker_id_handler)
