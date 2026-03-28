@@ -19,6 +19,7 @@ logs/
 
 # Virtual environments
 venv/
+.venv/
 venv-tts/
 env/
 ENV/
@@ -57,6 +58,10 @@ generated_images/
 
 # Don't commit user data
 /mnt/storage/jarvis/chat_history/
+*.db
+
+# Runtime artifacts
+reports/
 
 # Google Calendar OAuth (NEVER commit)
 credentials.json
@@ -80,7 +85,7 @@ reviews/
 # Local backups & archives
 .backup/
 .archive/
-share/archive/
+share/
 
 # Console history
 .console_history
