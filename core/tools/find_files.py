@@ -342,10 +342,14 @@ def _find_list_files(directory: str, limit: int = None,
     total = len(visible)
     display = visible[:cap]
 
-    # Get directory sizes via du -sh for all subdirs in one call
+    # Get directory sizes — only run expensive du -sh when sorting by name
+    # (browsing context where sizes are useful). For modified/size sorts with
+    # limits, skip du entirely (~4.7s → ~50ms) since the user wants a quick
+    # listing, not recursive size calculations.
     visible_dirs = [e for e in display if e.is_dir()]
     dir_sizes = {}
-    if visible_dirs:
+    skip_du = sort_by in ("modified", "size") and limit is not None
+    if visible_dirs and not skip_du:
         du_args = ["du", "-sh", "--"] + [str(d) for d in visible_dirs[:50]]
         du_output = _run(du_args, timeout=5)
         if du_output and not du_output.startswith("Error"):

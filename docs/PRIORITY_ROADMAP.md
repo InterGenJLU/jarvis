@@ -97,7 +97,7 @@
 | H7 | **find_files: skip `du -sh` for list queries** — `_find_list_files` calls `du -sh` on all visible subdirectories (4.7s). Skip when `sort_by='modified'` + limit set. Use `stat().st_size` for files only. | 15 min | Measured: 4,754ms -> ~50ms for "show me recent files" queries. |
 | H8 | **Presence greeting latency + prosody review** — greeting-to-briefing pipeline takes ~11s total. Kokoro prosody issue with certain phrases (wrong pitch). | 1-2 hours | Review latency budget for presence->briefing pipeline. Kokoro prosody issue may need pronunciation override or phrase replacement. |
 | H9 | **Observation collector not initializing** — code wired into jarvis-web (line 376), service running, but zero ObservationCollector log lines since boot. Needs investigation. | 1-2 hours | Noted Mar 24 check-in, still silent as of Mar 28. Self-evolution step 2 is functionally dead until this is fixed. |
-| H10 | **Deprecate `docs/TODO_NEXT_SESSION.md`** — stale since session 256 (Mar 12). Roadmap is the single source of truth. | 5 min | Remove or archive. Causes confusion about which file to trust. |
+| H10 | ~~**Deprecate `docs/TODO_NEXT_SESSION.md`**~~ | 5 min | **DONE** (session 314). Archived to `.archive/docs/`. |
 
 ---
 
