@@ -307,7 +307,7 @@ class ClaudeConsultation:
         for p in result.get("proposals", []):
             try:
                 pid = gov.propose(
-                    action_type=p.get("category", "investigation"),
+                    p.get("category", "investigation"),
                     description=p.get("description", p.get("title", "Untitled")),
                     diff=p.get("change", {}).get("diff", ""),
                     justification=p.get("evidence", ""),
