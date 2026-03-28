@@ -96,7 +96,8 @@
 | H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command. Needs investigation into pause timing around ack TTS. |
 | H7 | ~~**find_files: skip `du -sh` for list queries**~~ | 15 min | **DONE** (session 314). Skips du when `sort_by` is modified/size with limit set. |
 | H8 | **Presence greeting latency + prosody review** — greeting-to-briefing pipeline takes ~11s total. Kokoro prosody issue with certain phrases (wrong pitch). | 1-2 hours | Review latency budget for presence->briefing pipeline. Kokoro prosody issue may need pronunciation override or phrase replacement. |
-| H9 | **Observation collector not initializing** — code wired into jarvis-web (line 376), service running, but zero ObservationCollector log lines since boot. Needs investigation. | 1-2 hours | Noted Mar 24 check-in, still silent as of Mar 28. Self-evolution step 2 is functionally dead until this is fixed. |
+| H9 | ~~**Observation collector not initializing**~~ | — | **NOT A BUG** (session 314). Collector was running the whole time — logs go to `logs/web.log`, not journald. 60+ cycles since Mar 23, 1-6 findings each run. |
+| H11 | **Filesystem index service** — background poller that crawls the filesystem on a timer, stores path/size/mtime/type to SQLite. `find_files` queries the index instead of live disk calls (eliminates `du -sh` latency entirely). Research needed: evaluate existing tools (mlocate, plocate, fswatch, inotifywait, Tracker/tracker-miner-fs, recoll) before building custom. | Research + 4-8 hours | Discussed pre-session 312 but never captured. Aligns with PRIME DIRECTIVE — JARVIS should know his own filesystem instantly. |
 | H10 | ~~**Deprecate `docs/TODO_NEXT_SESSION.md`**~~ | 5 min | **DONE** (session 314). Archived to `.archive/docs/`. |
 
 ---
