@@ -353,11 +353,14 @@ class ObservationCollector:
     """Background service that periodically analyzes operational data."""
 
     def __init__(self, config, interval_hours: float = 2,
-                 auto_consult: bool = False):
+                 auto_consult: bool = None):
         self.config = config
         self.interval = interval_hours * 3600
         self.lookback_hours = interval_hours * 2  # overlap to catch patterns
-        self.auto_consult = auto_consult  # if True, send findings to Claude
+        # Config-driven: toggle via config.yaml without code changes
+        if auto_consult is None:
+            auto_consult = config.get("self_evolution.auto_consult", False)
+        self.auto_consult = auto_consult
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._last_run: float = 0
