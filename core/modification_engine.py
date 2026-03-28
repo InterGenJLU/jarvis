@@ -21,6 +21,8 @@ import json
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -188,6 +190,15 @@ class ModificationEngine:
         # Step 5: Snapshot before changing
         snapshot_id = self._create_config_snapshot(config_data, key, current_value, value, proposal_id)
 
+        # Step 5.5: Pre-change smoke test baseline
+        pre_passed, pre_count, pre_total, pre_output = self._run_smoke_tests()
+        if not pre_passed:
+            logger.warning(
+                "Pre-change smoke tests failing (%d/%d) — proceeding with "
+                "change but rollback threshold based on current state",
+                pre_count, pre_total,
+            )
+
         # Step 6: Apply the change
         try:
             self._set_nested(config_data, key, value)
@@ -227,6 +238,56 @@ class ModificationEngine:
                 error="verification_read_failed",
             )
 
+        # Step 7.5: Post-change smoke test validation (S7)
+        post_passed, post_count, post_total, post_output = self._run_smoke_tests()
+        if pre_passed and not post_passed:
+            # Tests were passing before, now they're failing — rollback
+            logger.error(
+                "Post-change smoke tests REGRESSED (%d/%d → %d/%d) — rolling back %s",
+                pre_count, pre_total, post_count, post_total, key,
+            )
+            self.rollback(snapshot_id)
+            try:
+                from core.event_logger import get_event_logger
+                el = get_event_logger()
+                if el:
+                    el.emit(
+                        event="config_validation_failed",
+                        category="self_assessment",
+                        status="rolled_back",
+                        message=f"Config change rolled back: {key} = {value} caused test regression",
+                        metadata={
+                            "key": key,
+                            "new_value": str(value),
+                            "pre_tests": f"{pre_count}/{pre_total}",
+                            "post_tests": f"{post_count}/{post_total}",
+                            "proposal_id": proposal_id,
+                            "snapshot_id": snapshot_id,
+                        },
+                    )
+            except Exception:
+                pass
+            return ModificationResult(
+                success=False, change_type="config",
+                detail=f"Smoke tests regressed after changing {key}: "
+                       f"{pre_count}/{pre_total} → {post_count}/{post_total}. "
+                       f"Rolled back automatically.",
+                rollback_id=snapshot_id,
+                error="validation_regression",
+            )
+        elif not post_passed:
+            # Tests were already failing before — log warning but don't rollback
+            logger.warning(
+                "Post-change smoke tests still failing (%d/%d), but were "
+                "already failing before change — not rolling back",
+                post_count, post_total,
+            )
+        else:
+            logger.info(
+                "Post-change smoke tests passed (%d/%d) — change validated",
+                post_count, post_total,
+            )
+
         # Step 8: Log the event
         try:
             from core.event_logger import get_event_logger
@@ -243,6 +304,7 @@ class ModificationEngine:
                         "new_value": str(value),
                         "proposal_id": proposal_id,
                         "snapshot_id": snapshot_id,
+                        "validation": f"{post_count}/{post_total} passed",
                     },
                 )
         except Exception:
@@ -320,6 +382,54 @@ class ModificationEngine:
                 detail=f"Rollback failed: {e}",
                 error="rollback_failed",
             )
+
+    # -------------------------------------------------------------------
+    # Step 7: Smoke test validation
+    # -------------------------------------------------------------------
+
+    def _run_smoke_tests(self) -> tuple[bool, int, int, str]:
+        """Run the smoke test suite and return results.
+
+        Returns:
+            (passed: bool, pass_count: int, total: int, output: str)
+        """
+        smoke_path = self.project_root / "tests" / "test_smoke.py"
+        if not smoke_path.exists():
+            logger.warning("Smoke test not found at %s — skipping validation", smoke_path)
+            return True, 0, 0, "smoke test file not found, skipped"
+
+        try:
+            result = subprocess.run(
+                [sys.executable, str(smoke_path)],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(self.project_root),
+                env={**os.environ, "JARVIS_LOG_FILE_ONLY": "1"},
+            )
+            output = result.stdout + result.stderr
+
+            # Parse pass/total from output ("ALL 33 TESTS PASSED" or "FAILED: N test(s)")
+            pass_count = total = 0
+            for line in output.splitlines():
+                if "TESTS PASSED" in line:
+                    parts = line.split()
+                    for i, p in enumerate(parts):
+                        if p == "TESTS":
+                            try:
+                                # "ALL 33 TESTS PASSED"
+                                total = pass_count = int(parts[i - 1])
+                            except (ValueError, IndexError):
+                                pass
+                elif "FAILED:" in line:
+                    pass  # exit code handles this
+
+            passed = result.returncode == 0
+            return passed, pass_count, total, output
+
+        except subprocess.TimeoutExpired:
+            return False, 0, 0, "smoke tests timed out after 30s"
+        except Exception as e:
+            logger.error("Smoke test execution failed: %s", e)
+            return False, 0, 0, f"execution error: {e}"
 
     # -------------------------------------------------------------------
     # Validation helpers

@@ -24,7 +24,8 @@ vad:
   buffer_duration: 3.0
 llm:
   local:
-    model_path: /mnt/storage/jarvis/models/llm/Qwen3.5-35B-A3B-Q3_K_M.gguf
+    model_path: 
+      /mnt/storage/jarvis/models/llm/Qwen3.5-35B-A3B-Q3_K_M.gguf
     context_size: 32768
     gpu_layers: 999
     batch_size: 512
@@ -62,8 +63,10 @@ tts:
   # Example: { "nginx": "ˈɛndʒɪnˌɛks" }
   kokoro_pronunciations: {}
   # Piper settings (fallback)
-  model_path: /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx
-  config_path: /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx.json
+  model_path: 
+    /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx
+  config_path: 
+    /mnt/storage/jarvis/models/piper/en_GB-northern_english_male-medium.onnx.json
   piper_bin: /home/user/.local/bin/piper
   length_scale: 1.12
   noise_scale: 0.55
@@ -251,7 +254,7 @@ caldav:
   url: "https://caldav.icloud.com"
   username: ""    # iCloud Apple ID email
   password: ""    # App-specific password (NOT iCloud password)
-  calendar_name: null  # null = first available calendar
+  calendar_name:       # null = first available calendar
   timezone: "America/Your_Timezone"
   sync_interval_seconds: 300
 
@@ -265,85 +268,88 @@ news:
   max_per_category: 10
   feeds:
     # Technology
-    - name: "Ars Technica"
-      url: "https://feeds.arstechnica.com/arstechnica/index"
-      category: "tech"
-    - name: "TechCrunch"
-      url: "https://techcrunch.com/feed/"
-      category: "tech"
-    - name: "Hacker News"
-      url: "https://hnrss.org/newest?points=50"
-      category: "tech"
-    - name: "Wired"
-      url: "https://www.wired.com/feed/rss"
-      category: "tech"
-    - name: "The Verge"
-      url: "https://www.theverge.com/rss/index.xml"
-      category: "tech"
+  - name: "Ars Technica"
+    url: "https://feeds.arstechnica.com/arstechnica/index"
+    category: "tech"
+  - name: "TechCrunch"
+    url: "https://techcrunch.com/feed/"
+    category: "tech"
+  - name: "Hacker News"
+    url: "https://hnrss.org/newest?points=50"
+    category: "tech"
+  - name: "Wired"
+    url: "https://www.wired.com/feed/rss"
+    category: "tech"
+  - name: "The Verge"
+    url: "https://www.theverge.com/rss/index.xml"
+    category: "tech"
     # Politics
-    - name: "Daily Wire"
-      url: "https://www.dailywire.com/feeds/rss.xml"
-      category: "politics"
-    - name: "Fox News"
-      url: "https://moxie.foxnews.com/google-publisher/latest.xml"
-      category: "politics"
-    - name: "National Review"
-      url: "https://www.nationalreview.com/feed/"
-      category: "politics"
+  - name: "Daily Wire"
+    url: "https://www.dailywire.com/feeds/rss.xml"
+    category: "politics"
+  - name: "Fox News"
+    url: "https://moxie.foxnews.com/google-publisher/latest.xml"
+    category: "politics"
+  - name: "National Review"
+    url: "https://www.nationalreview.com/feed/"
+    category: "politics"
     # General
-    - name: "BBC News"
-      url: "https://feeds.bbci.co.uk/news/rss.xml"
-      category: "general"
-    - name: "AP News"
-      url: "https://news.google.com/rss/search?q=when:24h+allinurl:apnews.com&ceid=US:en&hl=en-US&gl=US"
-      category: "general"
+  - name: "BBC News"
+    url: "https://feeds.bbci.co.uk/news/rss.xml"
+    category: "general"
+  - name: "AP News"
+    url: "https://news.google.com/rss/search?q=when:24h+allinurl:apnews.com&ceid=US:en&hl=en-US&gl=US"
+    category: "general"
     # Cybersecurity
-    - name: "Krebs on Security"
-      url: "https://krebsonsecurity.com/feed/"
-      category: "cyber"
-    - name: "BleepingComputer"
-      url: "https://www.bleepingcomputer.com/feed/"
-      category: "cyber"
-    - name: "Dark Reading"
-      url: "https://www.darkreading.com/rss.xml"
-      category: "cyber"
-    - name: "The Hacker News"
-      url: "https://feeds.feedburner.com/TheHackersNews"
-      category: "cyber"
+  - name: "Krebs on Security"
+    url: "https://krebsonsecurity.com/feed/"
+    category: "cyber"
+  - name: "BleepingComputer"
+    url: "https://www.bleepingcomputer.com/feed/"
+    category: "cyber"
+  - name: "Dark Reading"
+    url: "https://www.darkreading.com/rss.xml"
+    category: "cyber"
+  - name: "The Hacker News"
+    url: "https://feeds.feedburner.com/TheHackersNews"
+    category: "cyber"
     # AI
-    - name: "MIT Technology Review AI"
-      url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
-      category: "ai"
-    - name: "VentureBeat AI"
-      url: "https://venturebeat.com/category/ai/feed/"
-      category: "ai"
-    - name: "The Decoder"
-      url: "https://the-decoder.com/feed/"
-      category: "ai"
+  - name: "MIT Technology Review AI"
+    url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"
+    category: "ai"
+  - name: "VentureBeat AI"
+    url: "https://venturebeat.com/category/ai/feed/"
+    category: "ai"
+  - name: "The Decoder"
+    url: "https://the-decoder.com/feed/"
+    category: "ai"
     # LLMs
-    - name: "Hugging Face Blog"
-      url: "https://huggingface.co/blog/feed.xml"
-      category: "llm"
-    - name: "AI News (LLM)"
-      url: "https://news.google.com/rss/search?q=when:7d+large+language+model&ceid=US:en&hl=en-US&gl=US"
-      category: "llm"
-    - name: "Towards AI"
-      url: "https://pub.towardsai.net/feed"
-      category: "llm"
+  - name: "Hugging Face Blog"
+    url: "https://huggingface.co/blog/feed.xml"
+    category: "llm"
+  - name: "AI News (LLM)"
+    url: "https://news.google.com/rss/search?q=when:7d+large+language+model&ceid=US:en&hl=en-US&gl=US"
+    category: "llm"
+  - name: "Towards AI"
+    url: "https://pub.towardsai.net/feed"
+    category: "llm"
     # Local LLMs
-    - name: "r/LocalLLaMA"
-      url: "https://www.reddit.com/r/LocalLLaMA/hot.rss"
-      category: "local_llm"
-    - name: "Ollama Blog"
-      url: "https://ollama.com/blog/rss.xml"
-      category: "local_llm"
-    - name: "Local AI News"
-      url: "https://news.google.com/rss/search?q=when:7d+local+llm+OR+ollama+OR+llama.cpp+OR+gguf&ceid=US:en&hl=en-US&gl=US"
-      category: "local_llm"
-    # Local (Your City)
-    - name: "Your Local News"
-      url: "https://news.google.com/rss/search?q=when:24h+Your+City&ceid=US:en&hl=en-US&gl=US"
-      category: "local"
+  - name: "r/LocalLLaMA"
+    url: "https://www.reddit.com/r/LocalLLaMA/hot.rss"
+    category: "local_llm"
+  - name: "Ollama Blog"
+    url: "https://ollama.com/blog/rss.xml"
+    category: "local_llm"
+  - name: "Local AI News"
+    url: "https://news.google.com/rss/search?q=when:7d+local+llm+OR+ollama+OR+llama.cpp+OR+gguf&ceid=US:en&hl=en-US&gl=US"
+    category: "local_llm"
+    # Local (Your City, ST)
+  - name: "AL.com Your City"
+    url: "https://news.google.com/rss/search?q=when:24h+Your City+Alabama&ceid=US:en&hl=en-US&gl=US"
+    category: "local"
+  - name: "Bham Now"
+    url: "https://localnews.example.com/feed/"
+    category: "local"
 
 # App launcher — voice-controlled app launching + window management
 app_launcher:
@@ -418,7 +424,8 @@ web:
 # Fine-tuned Whisper model (custom accent training)
 stt_finetuned:
   enabled: true
-  model_path: /mnt/storage/jarvis/models/voice_training/whisper_finetuned/final
+  model_path: 
+    /mnt/storage/jarvis/models/voice_training/whisper_finetuned/final
   user: christopher              # speaker this fine-tuned model belongs to
   fallback_model: base           # stock model for other / unknown speakers
 
