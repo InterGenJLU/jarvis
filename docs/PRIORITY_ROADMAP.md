@@ -1,60 +1,69 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 28, 2026 (session 314 — TTS prosody fixes, greeting pool revamp, gap analysis)
+**Updated:** March 28, 2026 (session 314 — full reprioritization against PRIME DIRECTIVE + ROI)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
-**Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
+**Ordering:** PRIME DIRECTIVE (serves the household?) + ROI (effort vs impact)
 
 ---
 
-## Priority Tier 1: Owner-Directed Priority Sequence
+## Immediate — Do Next
 
-*Ordered priority list. Work these in sequence.*
-*Strategic direction (session 166): prioritize features with highest cross-platform utility (desktop web UI + mobile). Vision and email are force multipliers.*
+*Foundation & bug fixes that directly improve daily experience or prevent future regressions.*
 
-| # | Item | Effort | Status | Notes |
-|---|------|--------|--------|-------|
-| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | NOT STARTED | Config stub + MCP bridge ready. Primary=Gmail, secondary=AOL |
-| 60 | **Mobile app** — web UI phase 1 done. Native iOS app planned (6 phases) | 5-8 days | **PHASE 1 DONE** | Plan: `memory/plan_mobile_ios_app.md` |
-| — | **CalDAV calendar (secondary user)** — Apple Calendar integration via CalDAV | 4-6 hours | BLOCKED — waiting on app-specific password | Full `caldav_calendar.py` exists, DB column exists, config present but `enabled: false` |
-| 61 | **Concurrent multi-user support** — handle two simultaneous mobile users | 4-8 hours | NOT STARTED | Depends on #60. Needs `--parallel 2`, per-user history, STT/TTS queuing |
-| 11 | **"Onscreen please" — retroactive visual display** | 2-3 hours | PARTIAL | Opens generated docs. Retroactive display of arbitrary artifacts NOT implemented |
+| # | Item | Effort | Why Now |
+|---|------|--------|---------|
+| H12 | **SYSTEM_MAPS refresh** — 8 maps stale since Mar 16 (~60 commits behind). Prompt injection map actively misled us during B10 fix. | 2-3 hrs | Safety: stale maps cause bugs. Must be current before any prompt work. |
+| S7 | **Self-evolution Step 7: Validation layer** — automated smoke tests before/after config changes | 2-3 hrs | Last gate for self-evolution stack. Unlocks D1/D2 decisions. |
+| B9 | **Weather tool ignores non-local locations** — "Sydney Australia" returned Your City weather | 30 min | Quick fix, real user-facing bug. |
+| H5 | **Ack bleed — JARVIS hears own speech as commands** | 2-3 hrs | Confuses the household, degrades trust. |
 
 ---
 
-## Priority Tier 2: High Value, Ready to Build
+## Near-Term — High PRIME DIRECTIVE Value
 
-| # | Item | Effort | ROI | Notes |
-|---|------|--------|-----|-------|
-| 17 | **LLM news classification** — activate `_llm_classify()` in news_manager.py | 2-3 hours | Better urgency classification than keyword rules | Dead code at `news_manager.py:393` — never called |
-| 44 | **Reminder snooze in P2 chain** — distinguish "got it" (ack) vs "snooze 10 min" (snooze) vs "what reminder" (query) | 2-3 hours | Currently blanket ack — loses snooze/query intent | Zero snooze references in conversation_router.py |
-| 7 | **Inject user facts into web search** — surface stored facts (location, preferences) during `stream_with_tools()` | 3-4 hours | Personalized search results ("best coffee near me" uses stored location) | Memory context passed to LLM for response gen, NOT injected into search queries |
+*Daily household interactions that are currently broken or degraded.*
 
----
-
-## Priority Tier 3: Medium Value
-
-| # | Item | Effort | ROI | Notes |
-|---|------|--------|-----|-------|
-| 43 | **Mid-rundown interruption** — item-by-item delivery with "continue"/"skip"/"stop"/"defer" | 4-6 hours | Currently `deliver_rundown()` blocks on single TTS call | Needs item-at-a-time loop + active listener |
-| 55 | **Network awareness skill** — device discovery, anomaly detection, threat alerts | 4-8 hours | Fits threat hunting background | Natural skill: `skills/system/network/` |
-| 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hours | Daily household utility | Shared access with secondary user |
-| 13 | **Audio recording skill** — voice-triggered recording, date-based playback, 6 intents | 4-6 hours | Meeting notes, voice memos, dictation | skills/personal/audio_recording/ |
-| 14 | **Music control (Apple Music)** — playlist learning, volume via pactl | 6-10 hours | Entertainment integration | Per-user playlists. Apple Music web interface finicky |
+| # | Item | Effort | Why |
+|---|------|--------|-----|
+| 44 | **Reminder snooze in P2 chain** — "snooze 10 min" vs "got it" vs "what reminder" | 2-3 hrs | Daily interaction, currently loses snooze/query intent. |
+| 17 | **LLM news classification** — activate dead `_llm_classify()` code | 2-3 hrs | Better urgency = better morning briefings. Code exists, just needs wiring. |
+| H8 | **Greeting latency review** — 11s face-detect-to-briefing pipeline | 1-2 hrs | Noticeable delay every time someone walks in. Prosody half addressed. |
+| 7 | **Inject user facts into web search** — location, preferences in search queries | 3-4 hrs | "Best coffee near me" should use stored location. Personalization multiplier. |
 
 ---
 
-## Priority Tier 4: Larger Investments
+## Medium-Term — Important, Bigger Scope
 
-| # | Item | Effort | ROI | Notes |
-|---|------|--------|-----|-------|
-| 21 | **Skill editing system** — "edit the weather skill" -> LLM code gen, review, apply with backup | 10-15 hours (5 phases) | Voice-controlled code modification | Full design at SKILL_EDITING_SYSTEM.md. Note: VS Code + Claude Code is faster in practice |
-| 22 | **Automated skill generation** — Q&A, build, test, review, deploy | 15-20 hours | End-to-end skill creation by voice. Depends on #21 | MASTER_DESIGN.md |
-| 23 | **Backup automation skill** — voice-triggered, SHA256 checksums, manifest, rotation | 6-8 hours | "Jarvis, backup the system." Automated 2 AM daily | MASTER_DESIGN.md |
-| 24 | **Voice authentication for sensitive ops** — re-verify voice before threat hunting, system changes | 4-6 hours | Security layer. Speaker ID Phase 3+ | MASTER_DESIGN.md |
-| 47 | **Docker container (web UI mode)** — community deployment, web UI only (no mic) | 3-5 days | Lowest barrier to community adoption | See `memory/plan_voice_windows_port.md` |
-| 48 | **Windows native port** — full JARVIS on Windows, abstraction layers | 2-3 weeks | Biggest community audience. Requires platform abstractions | See `memory/plan_voice_windows_port.md` |
-| 62 | **Usage data pipeline + CI/CD** — nightly metric extraction -> analysis -> regression testing | 1-2 days | Automated quality tracking at scale | Metrics tracker records to SQLite, no extraction/reporting. Depends on #60 + #61 |
+*Significant features that expand what JARVIS can do for the household.*
+
+| # | Item | Effort | Why |
+|---|------|--------|-----|
+| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | Force multiplier across all platforms. Config stub + MCP bridge ready. |
+| 43 | **Mid-rundown interruption** — "skip"/"go back"/"stop" during briefings | 4-6 hrs | Currently blocks on single TTS call. Major daily UX improvement. |
+| H11 | **Filesystem index service** — background poller, SQLite index, instant file queries | Research + 4-8 hrs | Research existing tools first. PRIME DIRECTIVE: JARVIS should know his own filesystem. |
+| — | **CalDAV calendar (secondary user)** — Apple Calendar for secondary user | 4-6 hrs | BLOCKED — waiting on app-specific password. Code ready. |
+| 60 | **Mobile app Phase 2+** — native iOS app | 5-8 days | Phase 1 done. Expands household reach. |
+| 61 | **Concurrent multi-user** — two simultaneous mobile users | 4-8 hrs | Depends on #60. |
+| 11 | **"Onscreen please"** — retroactive visual display | 2-3 hrs | Partial. Retroactive display of arbitrary artifacts not implemented. |
+
+---
+
+## Longer-Term — Build When Ready
+
+| # | Item | Effort | Notes |
+|---|------|--------|-------|
+| 55 | **Network awareness skill** — device discovery, anomaly detection | 4-8 hrs | Fits threat hunting background |
+| 10 | **Google Keep integration** — shared grocery/todo lists | 4-6 hrs | Daily household utility |
+| 13 | **Audio recording skill** — voice memos, meeting notes | 4-6 hrs | |
+| 14 | **Music control (Apple Music)** | 6-10 hrs | Per-user playlists |
+| 23 | **Backup automation skill** | 6-8 hrs | "Jarvis, backup the system." |
+| 24 | **Voice authentication for sensitive ops** | 4-6 hrs | Speaker ID Phase 3+ |
+| 62 | **Usage data pipeline + CI/CD** | 1-2 days | Depends on #60 + #61 |
+| 21 | **Skill editing system** | 10-15 hrs | VS Code + Claude Code is faster in practice |
+| 22 | **Automated skill generation** | 15-20 hrs | Depends on #21 |
+| 47 | **Docker container (web UI mode)** | 3-5 days | Community deployment |
+| 48 | **Windows native port** | 2-3 weeks | Biggest community audience |
 
 ---
 
@@ -89,30 +98,22 @@
 
 ---
 
-## Housekeeping / Tech Debt
+## Open Bugs & Housekeeping
 
-| # | Item | Effort | Notes |
-|---|------|--------|-------|
-| H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command. Needs investigation into pause timing around ack TTS. |
-| H7 | ~~**find_files: skip `du -sh` for list queries**~~ | 15 min | **DONE** (session 314). Skips du when `sort_by` is modified/size with limit set. |
-| H8 | **Presence greeting latency + prosody review** — greeting-to-briefing pipeline takes ~11s total. Kokoro prosody issue with certain phrases (wrong pitch). | 1-2 hours | Review latency budget for presence->briefing pipeline. Kokoro prosody issue may need pronunciation override or phrase replacement. |
-| H9 | ~~**Observation collector not initializing**~~ | — | **NOT A BUG** (session 314). Collector was running the whole time — logs go to `logs/web.log`, not journald. 60+ cycles since Mar 23, 1-6 findings each run. |
-| H11 | **Filesystem index service** — background poller that crawls the filesystem on a timer, stores path/size/mtime/type to SQLite. `find_files` queries the index instead of live disk calls (eliminates `du -sh` latency entirely). Research needed: evaluate existing tools (mlocate, plocate, fswatch, inotifywait, Tracker/tracker-miner-fs, recoll) before building custom. | Research + 4-8 hours | Discussed pre-session 312 but never captured. Aligns with PRIME DIRECTIVE — JARVIS should know his own filesystem instantly. |
-| H12 | **SYSTEM_MAPS refresh** — all 8 maps last updated Mar 15-16 (session 296). ~60 commits since then including dual-model dispatch, CAL phases, self-evolution stack, B10/B11 fixes. Prompt injection points map says "47 across 7 files" — likely wrong. Maps need full re-audit before they can be trusted as authoritative references. Add "last validated" date to each. | 2-3 hours | Stale maps are worse than no maps — they actively mislead. |
-| H10 | ~~**Deprecate `docs/TODO_NEXT_SESSION.md`**~~ | 5 min | **DONE** (session 314). Archived to `.archive/docs/`. |
-
----
-
-## Active Bugs / Loose Ends
+*Items promoted to the priority tiers above are not repeated here. This section tracks lower-priority items.*
 
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
 | B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
-| B9 | **Weather tool ignores non-local locations** — "Sydney Australia" returned Your City weather | Medium | Session 312 odd event. Tool doesn't detect or pass non-local locations to the API. |
-| B10 | ~~**LLM answers from training data instead of searching**~~ | Medium | **FIXED** (session 314). Three-layer fix: (1) system prompt adds explicit current-info search triggers, (2) `_TEMPORAL_SIGNAL` regex forces web_search for "latest/update/has X done Y" patterns, (3) resolved conflicting prompt instructions across 3 files (tool_registry, web_search, llm_router). |
-| B11 | ~~**Missing contextual ack on LLM fallback voice paths**~~ | Medium | **FIXED** (session 314). Ack suppression in `_stream_llm_response` was killing acks for short in-conversation queries. Now never suppresses in the LLM streaming path. |
-| B12 | **Wake word stripping too aggressive mid-conversation** — JARVIS name removed from utterances where it's part of the content | Low | Session 312 odd event. Edge case in wake word removal logic. |
-| B13 | **Context utilization hallucination** — LLM fabricates statistics/numbers in responses | Low | Session 312. Qwen occasionally generates confident but false data. May need grounding prompt fix. |
+| B12 | **Wake word stripping too aggressive mid-conversation** | Low | Edge case in wake word removal logic. |
+| B13 | **Context utilization hallucination** — LLM fabricates numbers | Low | Qwen behavior. May need grounding prompt fix. |
+
+### Resolved (Session 314)
+- ~~H7~~ find_files `du -sh` skip — **DONE**
+- ~~H9~~ Observation collector — **NOT A BUG** (logs to web.log, not journald)
+- ~~H10~~ Deprecate TODO_NEXT_SESSION.md — **DONE**
+- ~~B10~~ LLM answers from training data — **FIXED** (3-layer: prompt + temporal regex + conflict resolution)
+- ~~B11~~ Missing ack on LLM fallback — **FIXED** (never suppress ack in streaming path)
 
 ---
 
