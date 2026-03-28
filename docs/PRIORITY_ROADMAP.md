@@ -108,7 +108,7 @@
 |---|------|----------|-------|
 | B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
 | B9 | **Weather tool ignores non-local locations** — "Sydney Australia" returned Your City weather | Medium | Session 312 odd event. Tool doesn't detect or pass non-local locations to the API. |
-| B10 | **LLM answers from training data instead of searching** — current-info queries (Epic Fury, MJ AI investment) answered without web search | Medium | Multiple instances across sessions 312-313. Routing/prompt issue — LLM should trigger web search for current events. |
+| B10 | ~~**LLM answers from training data instead of searching**~~ | Medium | **FIXED** (session 314). Three-layer fix: (1) system prompt adds explicit current-info search triggers, (2) `_TEMPORAL_SIGNAL` regex forces web_search for "latest/update/has X done Y" patterns, (3) resolved conflicting prompt instructions across 3 files (tool_registry, web_search, llm_router). |
 | B11 | ~~**Missing contextual ack on LLM fallback voice paths**~~ | Medium | **FIXED** (session 314). Ack suppression in `_stream_llm_response` was killing acks for short in-conversation queries. Now never suppresses in the LLM streaming path. |
 | B12 | **Wake word stripping too aggressive mid-conversation** — JARVIS name removed from utterances where it's part of the content | Low | Session 312 odd event. Edge case in wake word removal logic. |
 | B13 | **Context utilization hallucination** — LLM fabricates statistics/numbers in responses | Low | Session 312. Qwen occasionally generates confident but false data. May need grounding prompt fix. |
