@@ -14,7 +14,7 @@
 | # | Item | Effort | Why Now |
 |---|------|--------|---------|
 | H12 | ~~**SYSTEM_MAPS refresh**~~ | 2-3 hrs | **DONE** (session 314). All 8 maps refreshed + new self_evolution_stack.md created. All maps now have "Last validated" dates. |
-| S7 | **Self-evolution Step 7: Validation layer** — automated smoke tests before/after config changes | 2-3 hrs | Last gate for self-evolution stack. Unlocks D1/D2 decisions. |
+| S7 | ~~**Self-evolution Step 7: Validation layer**~~ | 2-3 hrs | **DONE** (session 314). Smoke tests run before/after every config change. Auto-rollback on regression. Tested end-to-end. |
 | B9 | **Weather tool ignores non-local locations** — "Sydney Australia" returned Your City weather | 30 min | Quick fix, real user-facing bug. |
 | H5 | **Ack bleed — JARVIS hears own speech as commands** | 2-3 hrs | Confuses the household, degrades trust. |
 
