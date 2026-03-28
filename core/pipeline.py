@@ -1158,25 +1158,21 @@ class Coordinator:
         chunks_spoken = 0
         first_chunk_checked = False
 
-        # Decide whether to play an ack while LLM streams
-        ack_style, suppress_ack = self._classify_ack(
+        # Ack style for LLM streaming path. Unlike the pre-route ack,
+        # we NEVER suppress here — if we reached _stream_llm_response,
+        # routing didn't handle it, so the user is about to wait for LLM
+        # generation. They should always hear an ack. (B11 fix)
+        ack_style, _ = self._classify_ack(
             raw_command,
             in_conversation=in_conversation,
             jarvis_asked_question=self.conv_state.jarvis_asked_question,
         )
         self._llm_responded = False
-        ack_timer = None
-
-        if suppress_ack:
-            # Skip ack entirely — mark as already responded so callback never fires
-            self._llm_responded = True
-            self.logger.debug(f"Ack suppressed for: {raw_command!r} (style={ack_style})")
-        else:
-            ack_timer = threading.Timer(
-                0.3, self._play_ack_if_still_thinking, args=(ack_style,)
-            )
-            ack_timer.daemon = True
-            ack_timer.start()
+        ack_timer = threading.Timer(
+            0.3, self._play_ack_if_still_thinking, args=(ack_style,)
+        )
+        ack_timer.daemon = True
+        ack_timer.start()
 
         # Gapless audio pipeline (Kokoro only; Piper falls back to blocking)
         use_pipeline = (self.tts.engine == "kokoro")
