@@ -27,6 +27,7 @@ ENV/
 .vscode/
 .idea/
 .claude/plans/
+.claude/PLANS/
 *.swp
 *.swo
 *~
