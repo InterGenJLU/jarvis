@@ -359,31 +359,50 @@ class TextToSpeech:
     # All response templates from the conversation skill.
     # {honorific} placeholder gets resolved per-honorific during cache build.
     _CAL_L0_TEMPLATES = [
-        # Greetings (time-aware ones are handled dynamically, cache the generics)
+        # Greetings — presence detection pools (must match persona.py pools)
         "Good morning, {honorific}.",
         "Morning, {honorific}.",
-        "Good to see you up and about, {honorific}.",
         "Good morning, {honorific}. I trust you slept well.",
         "Morning, {honorific}. Another day, another opportunity.",
+        "Good to see you up and about, {honorific}.",
+        "Good morning, {honorific}, I hope the coffee is strong.",
         "Good afternoon, {honorific}.",
         "Afternoon, {honorific}.",
-        "Good afternoon, {honorific}. I hope the day is treating you well.",
+        "Good afternoon, {honorific}, I hope the day is treating you well.",
         "Afternoon, {honorific}. Productive day so far, I hope.",
+        "Good afternoon, {honorific}, good to see you.",
+        "Afternoon, {honorific}, what can I do for you?",
         "Good evening, {honorific}.",
         "Evening, {honorific}.",
         "Good evening, {honorific}. Winding down, or just getting started?",
         "Evening, {honorific}. I trust the day went well.",
+        "Good evening, {honorific}, good to have you back.",
+        "Evening, {honorific}, what can I do for you?",
+        "Good evening, {honorific}. I was beginning to wonder if you'd forgotten about me.",
+        # Return greetings
+        "Welcome back, {honorific}.",
+        "There you are, {honorific}. Good to see you.",
+        "Welcome back, {honorific}. I kept everything running while you were away.",
+        "Ah, {honorific}, welcome back.",
+        "Good to see you again, {honorific}.",
+        "Welcome back, {honorific}, I missed having someone to talk to.",
+        "There he is. Welcome back, {honorific}.",
+        # Return with reminders
+        "Welcome back, {honorific}. A few things came up while you were away, want me to go through them?",
+        "There you are, {honorific}. I held a few reminders for you, want to hear them?",
+        "Welcome back, {honorific}, you have some pending reminders. Shall I go through them?",
+        "Ah, {honorific}, welcome back. A couple of things to catch you up on, whenever you're ready.",
+        "Welcome back, {honorific}. I've been holding onto a few items for you.",
+        # Late night
         "Burning the midnight oil, I see.",
         "Still at it, {honorific}? I admire the dedication.",
-        "Good evening, {honorific}. I was beginning to wonder if you'd forgotten about me.",
         "Evening, {honorific}. I should point out it's well past a reasonable hour.",
+        # Generic greetings
         "Hello, {honorific}.",
         "At your service, {honorific}.",
-        "Ready when you are, {honorific}.",
         # Minimal greetings
         "How can I help, {honorific}?",
         "Standing by, {honorific}.",
-        "Ready, {honorific}.",
         "I'm listening, {honorific}.",
         "What do you need, {honorific}?",
         "Go ahead, {honorific}.",
@@ -546,7 +565,7 @@ class TextToSpeech:
             templates=self._CAL_L0_TEMPLATES,
             honorifics=self._CAL_L0_PRIMARY_HONORIFICS,
             synthesize_fn=self._synthesize_to_pcm,
-            version="1",
+            version="3",
             throttle_sleep=0.05,
         )
         self._cal_l0_generating = False
@@ -555,7 +574,10 @@ class TextToSpeech:
         )
 
     def _synthesize_to_pcm(self, text: str) -> bytes | None:
-        """Synthesize text to raw PCM bytes via Kokoro. Returns None on failure."""
+        """Synthesize text to raw PCM bytes via Kokoro. Returns None on failure.
+
+        Applies trim + fade to eliminate trailing silence and wisp artifacts.
+        """
         try:
             chunks = []
             for gs, ps, audio in self._kokoro_pipeline(
@@ -564,6 +586,8 @@ class TextToSpeech:
                 chunks.append(audio)
             if chunks:
                 full = self._np.concatenate(chunks)
+                full = self._trim_trailing_silence(full)
+                full = self._apply_fade(full)
                 return (full * 32767).astype(self._np.int16).tobytes()
         except Exception as e:
             self.logger.warning(f"CAL-L0 cache: failed to synthesize '{text[:50]}': {e}")
@@ -865,6 +889,24 @@ class TextToSpeech:
         result.append(audio_np[(last_voiced + 1) * window:])
         return np.concatenate(result)
 
+    def _apply_fade(self, audio_np, fade_ms=3):
+        """Apply fade-in and fade-out to an audio chunk.
+
+        Eliminates wisp artifacts from Kokoro's ISTFTNet vocoder at chunk
+        boundaries. 3ms is the sweet spot from VOQR research — long enough
+        to suppress transients, short enough to be inaudible.
+        """
+        np = self._np
+        fade_samples = int(self.sample_rate * fade_ms / 1000)
+        if len(audio_np) < fade_samples * 2:
+            return audio_np
+        fade_in = np.linspace(0.0, 1.0, fade_samples, dtype=audio_np.dtype)
+        fade_out = np.linspace(1.0, 0.0, fade_samples, dtype=audio_np.dtype)
+        audio_np = audio_np.copy()
+        audio_np[:fade_samples] *= fade_in
+        audio_np[-fade_samples:] *= fade_out
+        return audio_np
+
     def _speak_kokoro(self, text: str) -> bool:
         """Generate and play audio via Kokoro — streaming with lazy aplay.
 
@@ -886,6 +928,8 @@ class TextToSpeech:
                 text, voice=self._kokoro_voice, speed=self._kokoro_speed
             ):
                 audio_np = self._np.asarray(audio)
+                audio_np = self._trim_trailing_silence(audio_np)
+                audio_np = self._apply_fade(audio_np)
                 pcm = (audio_np * 32767).astype(self._np.int16).tobytes()
                 self.logger.debug("Kokoro chunk: %d samples, pcm=%d bytes",
                                   len(audio_np), len(pcm))

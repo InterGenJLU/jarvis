@@ -1,7 +1,7 @@
 # JARVIS Priority Development Roadmap
 
 **Created:** February 19, 2026 (session 6)
-**Updated:** March 21, 2026 (session 311 — CAL complete, dual-model live, latency optimization complete, component upgrades)
+**Updated:** March 28, 2026 (session 314 — TTS prosody fixes, greeting pool revamp, gap analysis)
 **Method:** Exhaustive sweep of all docs, archives, memory files, code comments, and design documents
 **Ordering:** Genuine ROI for effort — difficulty/complexity vs real-world payoff
 
@@ -96,6 +96,8 @@
 | H5 | **Ack bleed — JARVIS hears own speech as commands** — ack phrases picked up by mic and routed as new user input | 2-3 hours | Listening pause doesn't fully cover ack playback. Observed: "Let me pull that up" captured as user command. Needs investigation into pause timing around ack TTS. |
 | H7 | **find_files: skip `du -sh` for list queries** — `_find_list_files` calls `du -sh` on all visible subdirectories (4.7s). Skip when `sort_by='modified'` + limit set. Use `stat().st_size` for files only. | 15 min | Measured: 4,754ms -> ~50ms for "show me recent files" queries. |
 | H8 | **Presence greeting latency + prosody review** — greeting-to-briefing pipeline takes ~11s total. Kokoro prosody issue with certain phrases (wrong pitch). | 1-2 hours | Review latency budget for presence->briefing pipeline. Kokoro prosody issue may need pronunciation override or phrase replacement. |
+| H9 | **Observation collector not initializing** — code wired into jarvis-web (line 376), service running, but zero ObservationCollector log lines since boot. Needs investigation. | 1-2 hours | Noted Mar 24 check-in, still silent as of Mar 28. Self-evolution step 2 is functionally dead until this is fixed. |
+| H10 | **Deprecate `docs/TODO_NEXT_SESSION.md`** — stale since session 256 (Mar 12). Roadmap is the single source of truth. | 5 min | Remove or archive. Causes confusion about which file to trust. |
 
 ---
 
@@ -104,6 +106,22 @@
 | # | Item | Severity | Notes |
 |---|------|----------|-------|
 | B2 | Batch extraction (Phase 4) untested | Low | Feature works, zero test coverage |
+| B9 | **Weather tool ignores non-local locations** — "Sydney Australia" returned Your City weather | Medium | Session 312 odd event. Tool doesn't detect or pass non-local locations to the API. |
+| B10 | **LLM answers from training data instead of searching** — current-info queries (Epic Fury, MJ AI investment) answered without web search | Medium | Multiple instances across sessions 312-313. Routing/prompt issue — LLM should trigger web search for current events. |
+| B11 | **Missing contextual ack on LLM fallback voice paths** — "tell me more about that" → 5s silence before response | Medium | 17 occurrences in session 312. Ack phrases only fire on skill/tool paths, not LLM fallback. |
+| B12 | **Wake word stripping too aggressive mid-conversation** — JARVIS name removed from utterances where it's part of the content | Low | Session 312 odd event. Edge case in wake word removal logic. |
+| B13 | **Context utilization hallucination** — LLM fabricates statistics/numbers in responses | Low | Session 312. Qwen occasionally generates confident but false data. May need grounding prompt fix. |
+
+---
+
+## Open Decisions (awaiting owner input)
+
+| # | Item | Context | Notes |
+|---|------|---------|-------|
+| D1 | **Approval flow authentication mechanism** | Research complete (`approval_flow_security_research.md`). Speaker ID + spoken code (voice), authenticated session + review (web). | Owner was "thinking through the approach" as of session 312. Blocks self-evolution going fully autonomous. |
+| D2 | **API budget for Claude consultation** | Rule J5 defines framework. Values TBD: calls/day, tokens/call, model tier. | Can't set until observation collector is running (H9) and real packet sizes are known. |
+| D3 | **Three Rule Sets — owner review** | Draft finalized in session 312 (`governance_rule_sets_20260322/`). Claude↔Owner (6 rules), JARVIS↔Claude (6 rules), Ten Commandments (10). | Flagged as needing owner review. Status unknown. |
+| D4 | **Hardware build timing** | 4 options researched. Recommended: AM5 2-GPU ($11,491). 60-90 day purchase window (late May / mid-June 2026). | Owner decision on performance vs cost tradeoff pending. |
 
 ---
 

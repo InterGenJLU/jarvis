@@ -190,6 +190,31 @@ class TTSCache:
                 elif template not in needed:
                     needed[template] = (template, "")
 
+        # Invalidate entries with stale version so they get regenerated
+        if version:
+            conn = sqlite3.connect(self._db_path)
+            stale = conn.execute(
+                "SELECT phrase, filename FROM cache_entries WHERE version != ? AND phrase IN ({})".format(
+                    ",".join("?" for _ in needed)
+                ),
+                [version] + list(needed.keys()),
+            ).fetchall()
+            if stale:
+                for phrase, filename in stale:
+                    filepath = self._cache_dir / filename
+                    if filepath.exists():
+                        filepath.unlink()
+                    self._memory.pop(phrase, None)
+                conn.execute(
+                    "DELETE FROM cache_entries WHERE version != ? AND phrase IN ({})".format(
+                        ",".join("?" for _ in needed)
+                    ),
+                    [version] + list(needed.keys()),
+                )
+                conn.commit()
+                logger.info("TTS cache: invalidated %d stale entries (version != %s)", len(stale), version)
+            conn.close()
+
         # Check what's already cached
         existing = set(self._memory.keys())
         to_generate = {p: v for p, v in needed.items() if p not in existing}
