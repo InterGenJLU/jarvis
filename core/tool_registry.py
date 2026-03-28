@@ -141,19 +141,19 @@ def register_external_tool(name, schema, handler, system_prompt_rule, skill_name
 # ---------------------------------------------------------------------------
 
 _GLOBAL_RULES_PREFIX = [
-    "If a tool matches the user's request AND the question requires "
-    "current or real-time data, call the tool. For general knowledge, "
-    "definitions, explanations, how things work, or follow-ups to "
-    "prior context, answer directly from your training — do NOT search.",
+    "If a tool matches the user's request, call the tool. When in doubt "
+    "about whether information is current, SEARCH — do not guess from "
+    "training data. Only answer without tools for timeless knowledge "
+    "(definitions, science, math, how things work) or follow-ups to "
+    "your own previous answers.",
 ]
 
 _GLOBAL_RULES_SUFFIX = [
     "If the user asks for MULTIPLE things (e.g. 'time and weather'), "
     "call ALL relevant tools — one at a time.",
     "For greetings, small talk, casual questions (e.g. 'everything ok', "
-    "'what's going on', 'what's happening', 'how are you'), creative "
-    "requests, opinions, and follow-up elaborations, answer directly "
-    "without any tool.",
+    "'how are you'), creative requests, opinions, and follow-up "
+    "elaborations, answer directly without any tool.",
     "NEVER fabricate system info, file paths, or hardware specs. "
     "If unsure, call the tool.",
     "NEVER claim you completed an action (set, updated, deleted, cancelled, "

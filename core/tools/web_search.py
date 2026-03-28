@@ -31,11 +31,12 @@ SCHEMA = {
 }
 
 SYSTEM_PROMPT_RULE = (
-    "Call web_search ONLY for CURRENT or SPECIFIC real-world data: "
+    "Call web_search for CURRENT or SPECIFIC real-world data: "
     "breaking news, live scores, stock prices, product reviews, event dates, "
-    "weather alerts, people in the news, recent releases, local businesses. "
-    "Do NOT search for general knowledge you already know (science facts, "
-    "history, definitions, how things work, famous people's biographies). "
+    "weather alerts, people in the news, recent releases, local businesses, "
+    "what a person or company has recently done, invested in, or announced. "
+    "Do NOT search for timeless general knowledge (science facts, "
+    "history, definitions, how things work). "
     "When building the query, strip conversational filler ('can you find me', "
     "'I need', 'please'). Example: 'Can you find me a good pizza recipe?' "
     "→ query: 'best homemade pizza recipe'. "
