@@ -549,6 +549,9 @@ class ConversationRouter:
                     if category == "entertainment" and self._ENTERTAINMENT_LISTING.search(command):
                         result.force_web_search = True
                         logger.debug("Fallback: force_web_search=True (entertainment listing)")
+                    if self._TEMPORAL_SIGNAL.search(command):
+                        result.force_web_search = True
+                        logger.debug("Fallback: force_web_search=True (temporal/current-info signal)")
                     result.intent = "tool_calling"
         result.image_data = image_data
         # Ensure intent is always set
@@ -2591,6 +2594,14 @@ class ConversationRouter:
         r'\b(best|top|highest.{0,10}rated|reviews?|scores?|ratings?|'
         r'rank|recommend|worth.{0,10}(buying|playing|getting))\b', re.IGNORECASE)
 
+    # Temporal/current-info queries — force web search so the LLM doesn't
+    # answer from stale training data. (B10 fix)
+    _TEMPORAL_SIGNAL = re.compile(
+        r'\b(latest|update on|what.{0,5}happening|current status|'
+        r'has\s+\w[\w\s]{0,30}?(invested|announced|released|launched|said|done|signed|joined|left)|'
+        r'did\s+\w[\w\s]{0,30}?(invest|announce|release|launch|say|do|sign|join|leave)|'
+        r'recent(ly)?|breaking|just\s+(happened|announced|released))\b', re.IGNORECASE)
+
     # NOTE: New domain regexes omit trailing \b so stem-matches work
     # (e.g. "vaccin" matches "vaccination", "nanotechnol" matches "nanotechnology").
     # Leading \b still ensures matches start at a word boundary.
@@ -3002,6 +3013,9 @@ class ConversationRouter:
         if category == "gaming" and self._GAMING_OPINION.search(command):
             result.force_web_search = True
             logger.debug("P4-LLM: force_web_search=True (gaming opinion/review)")
+        if self._TEMPORAL_SIGNAL.search(command):
+            result.force_web_search = True
+            logger.debug("P4-LLM: force_web_search=True (temporal/current-info signal)")
         result.intent = "tool_calling"
 
         tool_names = [t["function"]["name"] for t in tools]
