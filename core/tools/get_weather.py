@@ -55,12 +55,14 @@ SCHEMA = {
 
 SYSTEM_PROMPT_RULE = (
     "For ANY question about weather, temperature, forecast, rain, sunrise, or sunset, "
-    "call get_weather. No location needed — it defaults to "
-    "the user's home location. "
+    "call get_weather. If the user names a specific city or location "
+    "(e.g. 'weather in Sydney', 'Paris forecast'), pass it as the location parameter. "
+    "Omit location for questions about local weather — it defaults to home. "
     "Examples: 'is it going to rain?' → rain_check, 'what's it like outside?' → current, "
     "'weather this week' → forecast, 'when is sunrise?' → sunrise, 'sunset today' → sunset, "
     "'weather this weekend' → period (period='this weekend'), "
-    "'next week weather' → period (period='next week'). "
+    "'next week weather' → period (period='next week'), "
+    "'weather in Tokyo' → current (location='Tokyo'). "
     "NOT for: climate change discussion, historical weather data, weather in fiction."
 )
 
@@ -81,8 +83,12 @@ _DEFAULT_LON = -86.8128
 _DEFAULT_CITY = "Gardendale"
 
 
-def _resolve_location(location: str | None) -> tuple[float, float, str]:
-    """Geocode a location name or return the default coordinates."""
+def _resolve_location(location: str | None) -> tuple[float, float, str] | str:
+    """Geocode a location name or return the default coordinates.
+
+    Returns (lat, lon, city) on success, or an error string if geocoding
+    a named location fails (never silently falls back to home).
+    """
     if not location:
         return _DEFAULT_LAT, _DEFAULT_LON, _DEFAULT_CITY
 
@@ -97,10 +103,12 @@ def _resolve_location(location: str | None) -> tuple[float, float, str]:
         data = resp.json()
         if data:
             return data[0]["lat"], data[0]["lon"], data[0]["name"]
+        else:
+            logger.warning(f"Geocoding returned no results for '{location}'")
+            return f"I couldn't find a location called '{location}'. Could you be more specific?"
     except Exception as e:
         logger.error(f"Geocoding error for '{location}': {e}")
-
-    return _DEFAULT_LAT, _DEFAULT_LON, _DEFAULT_CITY
+        return f"I had trouble looking up '{location}'. Please try again."
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +144,10 @@ def handler(args: dict) -> str:
         period_text = args.get("period", "")
         return _weather_period(period_text)
 
-    lat, lon, city = _resolve_location(location)
+    resolved = _resolve_location(location)
+    if isinstance(resolved, str):
+        return resolved  # Geocoding error message
+    lat, lon, city = resolved
     is_home = (location is None)
 
     if query_type == "forecast":

@@ -7,6 +7,7 @@ Falls back to live OpenWeatherMap API if DB is empty or stale.
 """
 
 import os
+import re
 import requests
 from datetime import datetime, date, timedelta
 from core.base_skill import BaseSkill
@@ -188,8 +189,23 @@ class WeatherSkill(BaseSkill):
     # Current Weather
     # ------------------------------------------------------------------
 
+    def _check_non_local(self) -> str | None:
+        """If the user asked about a non-local location, return None to decline.
+
+        The LLM tool path handles geocoding via get_weather(location=...).
+        This skill only serves local/home weather from the DB cache. (B9 fix)
+        """
+        command = getattr(self, '_last_user_text', '') or ''
+        if self._has_non_local_location(command):
+            self.logger.info("Weather skill declining — non-local location: %s", command[:80])
+            return None
+        return "OK"  # sentinel — caller checks for None
+
     def get_current_weather(self) -> str:
         """Get current weather for default location with conversational response"""
+        if self._check_non_local() is None:
+            return None
+
         # Away mobile user — use their GPS coords
         away = self._get_away_geo()
         if away:
@@ -394,6 +410,9 @@ class WeatherSkill(BaseSkill):
 
     def get_forecast(self) -> str:
         """Get 5-day forecast summary with conversational response"""
+        if self._check_non_local() is None:
+            return None
+
         # Away mobile user — use their GPS coords
         away = self._get_away_geo()
         if away:
@@ -886,6 +905,8 @@ class WeatherSkill(BaseSkill):
 
     def get_tomorrow_weather(self) -> str:
         """Get tomorrow's weather summary with conversational response"""
+        if self._check_non_local() is None:
+            return None
         # Away mobile user — use their GPS coords
         away = self._get_away_geo()
         if away:
@@ -1056,8 +1077,36 @@ class WeatherSkill(BaseSkill):
     # Intent dispatch
     # ------------------------------------------------------------------
 
+    # Detect non-local location in weather queries — decline so the LLM
+    # tool path handles geocoding via get_weather(location=...). (B9 fix)
+    _LOCATION_PATTERN = re.compile(
+        r'\b(?:in|for|at|near)\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)',
+    )
+    _LOCAL_NAMES = {"gardendale", "birmingham", "here", "home", "outside", "my area"}
+
+    def _has_non_local_location(self, command: str) -> bool:
+        """Check if the command mentions a non-local location."""
+        match = self._LOCATION_PATTERN.search(command)
+        if match:
+            place = match.group(1).lower()
+            return place not in self._LOCAL_NAMES
+        return False
+
     def handle_intent(self, intent: str, entities: dict) -> str:
-        """Handle matched intent"""
+        """Handle matched intent.
+
+        Returns None for non-local location queries so they fall through
+        to the LLM tool path where get_weather can geocode the location.
+        """
+        # Check original command for non-local locations
+        command = entities.get("original_text", "")
+        if command and self._has_non_local_location(command):
+            self.logger.info(
+                "Weather skill declining — non-local location detected in: %s",
+                command[:80],
+            )
+            return None
+
         if intent.startswith("<semantic:") and intent.endswith(">"):
             handler_name = intent[10:-1]
             for intent_id, data in self.semantic_intents.items():
