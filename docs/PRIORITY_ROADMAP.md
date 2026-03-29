@@ -26,6 +26,7 @@
 
 | # | Item | Effort | Why |
 |---|------|--------|-----|
+| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | Force multiplier across all platforms. Config stub + MCP bridge ready. Owner-promoted. |
 | 44 | **Reminder snooze in P2 chain** — "snooze 10 min" vs "got it" vs "what reminder" | 2-3 hrs | Daily interaction, currently loses snooze/query intent. |
 | 17 | **LLM news classification** — activate dead `_llm_classify()` code | 2-3 hrs | Better urgency = better morning briefings. Code exists, just needs wiring. |
 | H8 | **Greeting latency review** — 11s face-detect-to-briefing pipeline | 1-2 hrs | Noticeable delay every time someone walks in. Prosody half addressed. |
@@ -39,7 +40,6 @@
 
 | # | Item | Effort | Why |
 |---|------|--------|-----|
-| — | **IMAP email via MCP** — read, search, archive email by voice/web/mobile | Variable | Force multiplier across all platforms. Config stub + MCP bridge ready. |
 | 43 | **Mid-rundown interruption** — "skip"/"go back"/"stop" during briefings | 4-6 hrs | Currently blocks on single TTS call. Major daily UX improvement. |
 | H11 | **Filesystem index service** — background poller, SQLite index, instant file queries | Research + 4-8 hrs | Research existing tools first. PRIME DIRECTIVE: JARVIS should know his own filesystem. |
 | — | **CalDAV calendar (secondary user)** — Apple Calendar for secondary user | 4-6 hrs | BLOCKED — waiting on app-specific password. Code ready. |
