@@ -55,6 +55,7 @@ generated_images/
 # Audio files (generated/test artifacts)
 *.wav
 *.mp3
+wav_files/
 
 # Don't commit user data
 /mnt/storage/jarvis/chat_history/
