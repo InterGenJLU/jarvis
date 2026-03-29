@@ -172,6 +172,7 @@ class TTSNormalizer:
     # Words Kokoro consistently mispronounces — map to phonetic respellings.
     _KOKORO_OVERRIDES = {
         "rundown": "run-down",
+        "anytime": "any time",
     }
 
     def normalize_kokoro_overrides(self, text: str) -> str:

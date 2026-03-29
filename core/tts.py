@@ -565,7 +565,7 @@ class TextToSpeech:
             templates=self._CAL_L0_TEMPLATES,
             honorifics=self._CAL_L0_PRIMARY_HONORIFICS,
             synthesize_fn=self._synthesize_to_pcm,
-            version="3",
+            version="4",
             throttle_sleep=0.05,
         )
         self._cal_l0_generating = False
