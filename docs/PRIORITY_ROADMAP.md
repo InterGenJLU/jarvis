@@ -121,9 +121,9 @@
 
 | # | Item | Context | Notes |
 |---|------|---------|-------|
-| D1 | **Approval flow authentication mechanism** | Research complete (`approval_flow_security_research.md`). Speaker ID + spoken code (voice), authenticated session + review (web). | Owner was "thinking through the approach" as of session 312. Blocks self-evolution going fully autonomous. |
-| D2 | **API budget for Claude consultation** | Rule J5 defines framework. Values TBD: calls/day, tokens/call, model tier. | Can't set until observation collector is running (H9) and real packet sizes are known. |
-| D3 | **Three Rule Sets — owner review** | Draft finalized in session 312 (`governance_rule_sets_20260322/`). Claude↔Owner (6 rules), JARVIS↔Claude (6 rules), Ten Commandments (10). | Flagged as needing owner review. Status unknown. |
+| D1 | ~~**Approval flow authentication mechanism**~~ | Current 2FA (web review + sudo console password) is sufficient for Phase 1 (config-only). | **DECIDED** (session 314). Revisit if/when Phase 2 (prompt) or Phase 3 (code) modification is enabled. |
+| D2 | ~~**API budget for Claude consultation**~~ | ~$0.075/cycle, ~$27/month at current volume. No cap needed. | **DECIDED** (session 314). J5 updated: no limitations, owner reviews periodically, JARVIS cannot override any future constraints. |
+| D3 | ~~**Three Rule Sets — owner review**~~ | Claude↔Owner (6 rules), JARVIS↔Claude (6 rules), Ten Commandments (10). | **RATIFIED** (session 314). Owner reviewed and approved all three rule sets as written. |
 | D4 | **Hardware build timing** | 4 options researched. Recommended: AM5 2-GPU ($11,491). 60-90 day purchase window (late May / mid-June 2026). | Owner decision on performance vs cost tradeoff pending. |
 
 ---
