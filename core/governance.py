@@ -142,7 +142,7 @@ class Governance:
         # Internal state
         self._failure_log: list[float] = []  # timestamps of recent check failures
         self._circuit_open = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._proposals: dict[str, dict] = {}  # proposal_id -> proposal
         self._denial_log: dict[str, list[float]] = {}  # action -> denial timestamps
         self._stop_event = threading.Event()
