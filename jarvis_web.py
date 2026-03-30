@@ -132,8 +132,10 @@ async def auth_middleware(request, handler):
     """Reject requests without a valid auth token."""
     if Path(request.path).suffix in _PUBLIC_EXTENSIONS:
         return await handler(request)
-    # Governance confirm endpoint uses its own auth (sudo + governance password)
-    if request.path.endswith('/confirm') and request.path.startswith('/api/governance/'):
+    # Governance endpoints with their own auth (sudo + governance password)
+    if request.path.startswith('/api/governance/') and (
+        request.path.endswith('/confirm') or request.path.endswith('/reset')
+    ):
         return await handler(request)
     if not _check_auth_token(request):
         raise web.HTTPUnauthorized(text='Invalid or missing auth token')
