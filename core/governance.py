@@ -14,6 +14,7 @@ import hmac
 import json
 import os
 import secrets
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
@@ -146,6 +147,13 @@ class Governance:
         self._proposals: dict[str, dict] = {}  # proposal_id -> proposal
         self._denial_log: dict[str, list[float]] = {}  # action -> denial timestamps
         self._stop_event = threading.Event()
+
+        # Proposal persistence (H13) — SQLite backing store
+        storage_path = Path(config.get(
+            "system.storage_path", "/mnt/storage/jarvis"))
+        self._proposals_db_path = str(storage_path / "data" / "governance_proposals.db")
+        self._init_proposals_db()
+        self._load_proposals()
 
         # Verify integrity at startup
         self._startup_verified = False
@@ -502,6 +510,52 @@ class Governance:
             pass  # Event logging must never break governance
 
     # ------------------------------------------------------------------
+    # Proposal persistence (H13) — SQLite backing store
+    # ------------------------------------------------------------------
+
+    def _init_proposals_db(self):
+        """Create the proposals table if it doesn't exist."""
+        try:
+            conn = sqlite3.connect(self._proposals_db_path)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS proposals (
+                    id TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+            conn.close()
+            logger.info("Governance proposals DB: %s", self._proposals_db_path)
+        except Exception as e:
+            logger.error("Failed to init proposals DB: %s", e)
+
+    def _load_proposals(self):
+        """Load all proposals from SQLite into the in-memory dict."""
+        try:
+            conn = sqlite3.connect(self._proposals_db_path)
+            rows = conn.execute("SELECT id, data FROM proposals").fetchall()
+            conn.close()
+            for pid, data_json in rows:
+                self._proposals[pid] = json.loads(data_json)
+            if rows:
+                logger.info("Governance: loaded %d proposals from disk", len(rows))
+        except Exception as e:
+            logger.error("Failed to load proposals: %s", e)
+
+    def _save_proposal(self, proposal: dict):
+        """Write-through a single proposal to SQLite."""
+        try:
+            conn = sqlite3.connect(self._proposals_db_path)
+            conn.execute(
+                "INSERT OR REPLACE INTO proposals (id, data) VALUES (?, ?)",
+                (proposal["id"], json.dumps(proposal)),
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error("Failed to save proposal %s: %s", proposal.get("id"), e)
+
+    # ------------------------------------------------------------------
     # Approval Queue — proposals requiring owner authorization
     # ------------------------------------------------------------------
 
@@ -543,6 +597,7 @@ class Governance:
 
         with self._lock:
             self._proposals[proposal_id] = proposal
+            self._save_proposal(proposal)
 
         logger.info("Proposal queued: %s — %s (tier %d)", proposal_id, action, tier)
 
@@ -561,6 +616,7 @@ class Governance:
             for pid, p in list(self._proposals.items()):
                 if p["status"] == "pending" and now > p["expires_at"]:
                     p["status"] = "expired"
+                    self._save_proposal(p)
                     self._emit_proposal_event(p, "proposal_expired")
 
             results = []
@@ -607,6 +663,7 @@ class Governance:
 
             if decision == "reject":
                 p["status"] = "rejected"
+                self._save_proposal(p)
                 self._emit_proposal_event(p, "proposal_rejected")
                 self._record_denial(p["action"])
                 safe = dict(p)
@@ -615,6 +672,7 @@ class Governance:
 
             if decision == "defer":
                 p["status"] = "deferred"
+                self._save_proposal(p)
                 self._emit_proposal_event(p, "proposal_deferred")
                 safe = dict(p)
                 safe.pop("confirmation_code", None)
@@ -622,6 +680,7 @@ class Governance:
 
             if decision == "edit":
                 p["status"] = "editing"
+                self._save_proposal(p)
                 self._emit_proposal_event(p, "proposal_editing")
                 safe = dict(p)
                 safe.pop("confirmation_code", None)
@@ -634,6 +693,7 @@ class Governance:
             # Regenerate code and set a short expiry for the confirmation step
             p["confirmation_code"] = self._generate_confirmation_code()
             p["confirmation_expires"] = time.time() + 300  # 5 minutes to enter code
+            self._save_proposal(p)
 
             return dict(p)  # Includes confirmation_code
 
@@ -662,6 +722,7 @@ class Governance:
             # Check confirmation code expiry
             if time.time() > p.get("confirmation_expires", 0):
                 p["status"] = "confirmation_expired"
+                self._save_proposal(p)
                 self._emit_proposal_event(p, "proposal_confirmation_expired")
                 return GovernanceResult(
                     approved=False, reason="confirmation_expired",
@@ -684,6 +745,7 @@ class Governance:
             # Both factors verified — approve
             p["status"] = "confirmed"
             p["confirmed_at"] = time.time()
+            self._save_proposal(p)
             self._emit_proposal_event(p, "proposal_confirmed")
 
             logger.info("Proposal CONFIRMED: %s — %s", proposal_id, p["action"])
@@ -716,6 +778,7 @@ class Governance:
 
             if time.time() > p.get("confirmation_expires", 0):
                 p["status"] = "confirmation_expired"
+                self._save_proposal(p)
                 self._emit_proposal_event(p, "proposal_confirmation_expired")
                 return GovernanceResult(
                     approved=False, reason="confirmation_expired",
@@ -730,6 +793,7 @@ class Governance:
             # Code verified, password pre-verified — approve
             p["status"] = "confirmed"
             p["confirmed_at"] = time.time()
+            self._save_proposal(p)
             self._emit_proposal_event(p, "proposal_confirmed")
 
             logger.info("Proposal CONFIRMED: %s — %s", proposal_id, p["action"])
