@@ -16,6 +16,7 @@
 | H12 | ~~**SYSTEM_MAPS refresh**~~ | 2-3 hrs | **DONE** (session 314). All 8 maps refreshed + new self_evolution_stack.md created. All maps now have "Last validated" dates. |
 | S7 | ~~**Self-evolution Step 7: Validation layer**~~ | 2-3 hrs | **DONE** (session 314). Smoke tests run before/after every config change. Auto-rollback on regression. Tested end-to-end. |
 | B9 | ~~**Weather tool ignores non-local locations**~~ | 30 min | **FIXED** (session 314, 7 minutes). Weather skill now declines non-local queries → LLM tool path geocodes correctly. Prompt updated, geocoding errors no longer silently fall back to home. |
+| H13 | **Governance dashboard fixes** — (1) show proposal ID on cards, (2) reject button not working (frontend response handling?), (3) **CRITICAL: proposals are in-memory only — lost on service restart.** Need SQLite persistence. | 2-3 hrs | Owner-reported. Persistence is the priority — restarts wipe the entire governance queue. |
 | H5 | **Ack bleed — JARVIS hears own speech as commands** | 2-3 hrs | Confuses the household, degrades trust. |
 
 ---

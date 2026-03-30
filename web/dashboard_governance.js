@@ -105,7 +105,7 @@
                     </div>
                     <div class="proposal-description">${escHtml(p.description)}</div>
                     <div class="proposal-meta">
-                        Submitted ${fmtTime(p.created_at)} · Expires ${fmtTime(p.expires_at)}
+                        ID: <code>${escHtml(p.id)}</code> · Submitted ${fmtTime(p.created_at)} · Expires ${fmtTime(p.expires_at)}
                         ${p.review_comment ? ' · Comment: ' + escHtml(p.review_comment) : ''}
                     </div>
                 `;
